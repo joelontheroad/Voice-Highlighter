@@ -220,7 +220,9 @@ def burn_subtitles_to_video(video_path: str, ass_path: str, output_video_path: s
         "-vf", f"subtitles={ass_filename}",
         "-c:v", encoder_name,
         *encoder_flags,
+        "-pix_fmt", "yuv420p",
         "-c:a", "copy",
+        "-movflags", "+faststart",
         os.path.abspath(output_video_path)
     ]
     res = subprocess.run(cmd_primary, cwd=ass_dir, capture_output=True, text=True)
@@ -236,7 +238,9 @@ def burn_subtitles_to_video(video_path: str, ass_path: str, output_video_path: s
             "-c:v", "libx264",
             "-preset", "veryfast",
             "-crf", "22",
+            "-pix_fmt", "yuv420p",
             "-c:a", "copy",
+            "-movflags", "+faststart",
             os.path.abspath(output_video_path)
         ]
         res_cpu = subprocess.run(cmd_cpu, cwd=ass_dir, capture_output=True, text=True)

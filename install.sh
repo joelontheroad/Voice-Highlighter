@@ -85,6 +85,14 @@ if [ ! -d ".venv" ]; then
     python3 -m venv .venv
 fi
 
+if [ "$OS" = "Linux" ]; then
+    # Ensure system PyGObject / dist-packages are discoverable inside .venv
+    SITE_PACKAGES="$(find "$DIR/.venv/lib" -maxdepth 2 -name "site-packages" 2>/dev/null | head -n 1)"
+    if [ -n "$SITE_PACKAGES" ] && [ -d "/usr/lib/python3/dist-packages" ]; then
+        echo "/usr/lib/python3/dist-packages" > "$SITE_PACKAGES/system_dist_packages.pth"
+    fi
+fi
+
 source .venv/bin/activate
 pip install --upgrade pip --quiet
 

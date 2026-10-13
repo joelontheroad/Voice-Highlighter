@@ -1,4 +1,5 @@
 import os
+import sys
 import uuid
 import threading
 import hashlib
@@ -101,7 +102,12 @@ async def open_os_file_dialog(req: OpenFileDialogRequest):
     def run_picker():
         env = os.environ.copy()
         if "DISPLAY" not in env:
-            env["DISPLAY"] = ":1"
+            if os.path.exists("/tmp/.X11-unix/X0"):
+                env["DISPLAY"] = ":0"
+            elif os.path.exists("/tmp/.X11-unix/X1"):
+                env["DISPLAY"] = ":1"
+            else:
+                env["DISPLAY"] = ":0"
         try:
             res = subprocess.run(
                 cmd,
@@ -112,13 +118,13 @@ async def open_os_file_dialog(req: OpenFileDialogRequest):
             )
             if res.returncode != 0:
                 err_msg = res.stderr.strip() or res.stdout.strip() or f"Process failed with exit code {res.returncode}"
-                return {"success": False, "error": err_msg, "cancelled": True, "path": None}
+                return {"success": False, "error": err_msg, "cancelled": False, "path": None}
             data = json.loads(res.stdout.strip())
-            return {"success": True, **data}
+            return data
         except subprocess.TimeoutExpired:
             return {"success": False, "error": "File dialog timed out", "cancelled": True, "path": None}
         except Exception as e:
-            return {"success": False, "error": str(e), "cancelled": True, "path": None}
+            return {"success": False, "error": str(e), "cancelled": False, "path": None}
 
     result = await asyncio.to_thread(run_picker)
     return result

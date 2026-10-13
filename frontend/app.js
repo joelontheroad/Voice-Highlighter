@@ -297,6 +297,171 @@ document.addEventListener("DOMContentLoaded", () => {
   const VIDEOS_DIR = "~/Videos";
   const PROJECT_DIR = ".";
 
+  // File Browser Modal Elements
+  const modalFileBrowser = document.getElementById("modalFileBrowser");
+  const btnCloseFileBrowser = document.getElementById("btnCloseFileBrowser");
+  const btnCancelFileBrowser = document.getElementById("btnCancelFileBrowser");
+  const btnSelectFileBrowser = document.getElementById("btnSelectFileBrowser");
+  const browserCurrentPathDisplay = document.getElementById("browserCurrentPathDisplay");
+  const browserFolderList = document.getElementById("browserFolderList");
+  const browserFileList = document.getElementById("browserFileList");
+  const browserSelectedFileCode = document.getElementById("browserSelectedFileCode");
+  const btnBrowserUpDir = document.getElementById("btnBrowserUpDir");
+  const btnBrowserRefresh = document.getElementById("btnBrowserRefresh");
+  const btnOpenInAppBrowser = document.getElementById("btnOpenInAppBrowser");
+
+  let browserState = {
+    currentDir: "",
+    parentDir: null,
+    selectedFilePath: null
+  };
+
+  async function loadBrowserDir(dirPath = null) {
+    if (!browserFolderList || !browserFileList) return;
+    browserFolderList.innerHTML = `<div class="browser-empty-list"><span class="spinner-sm"></span> Loading folders...</div>`;
+    browserFileList.innerHTML = `<div class="browser-empty-list"><span class="spinner-sm"></span> Loading video files...</div>`;
+    if (browserSelectedFileCode) browserSelectedFileCode.textContent = "None selected";
+    if (btnSelectFileBrowser) {
+      btnSelectFileBrowser.disabled = true;
+      btnSelectFileBrowser.classList.add("disabled");
+    }
+    browserState.selectedFilePath = null;
+
+    try {
+      const url = "/api/browse-files" + (dirPath ? `?dir=${encodeURIComponent(dirPath)}` : "");
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (!data.success) throw new Error(data.detail || "Failed to read directory");
+
+      browserState.currentDir = data.current_dir;
+      browserState.parentDir = data.parent_dir;
+
+      if (browserCurrentPathDisplay) {
+        browserCurrentPathDisplay.textContent = data.current_dir;
+        browserCurrentPathDisplay.title = data.current_dir;
+      }
+
+      if (btnBrowserUpDir) {
+        btnBrowserUpDir.disabled = !data.parent_dir;
+      }
+
+      // Populate directories
+      browserFolderList.innerHTML = "";
+      if (!data.directories || data.directories.length === 0) {
+        browserFolderList.innerHTML = `<div class="browser-empty-list">No subfolders found</div>`;
+      } else {
+        data.directories.forEach(d => {
+          const item = document.createElement("div");
+          item.className = "browser-item";
+          item.innerHTML = `
+            <div class="browser-item-left">
+              <span class="browser-item-icon">📁</span>
+              <span class="browser-item-name" title="${d.path}">${d.name}</span>
+            </div>
+            <span class="browser-item-meta">Dir</span>
+          `;
+          item.addEventListener("click", () => loadBrowserDir(d.path));
+          browserFolderList.appendChild(item);
+        });
+      }
+
+      // Populate video / audio files
+      browserFileList.innerHTML = "";
+      if (!data.videos || data.videos.length === 0) {
+        browserFileList.innerHTML = `<div class="browser-empty-list">No video/audio files found in this folder</div>`;
+      } else {
+        data.videos.forEach(f => {
+          const item = document.createElement("div");
+          item.className = "browser-item";
+          const icon = f.ext === ".wav" || f.ext === ".mp3" ? "🎵" : "🎬";
+          item.innerHTML = `
+            <div class="browser-item-left">
+              <span class="browser-item-icon">${icon}</span>
+              <span class="browser-item-name" title="${f.path}">${f.name}</span>
+            </div>
+            <span class="browser-item-meta">${f.size_mb} MB</span>
+          `;
+          item.addEventListener("click", () => {
+            // Unselect all other items
+            browserFileList.querySelectorAll(".browser-item").forEach(el => el.classList.remove("active"));
+            item.classList.add("active");
+            browserState.selectedFilePath = f.path;
+            if (browserSelectedFileCode) {
+              browserSelectedFileCode.textContent = f.name;
+              browserSelectedFileCode.title = f.path;
+            }
+            if (btnSelectFileBrowser) {
+              btnSelectFileBrowser.disabled = false;
+              btnSelectFileBrowser.classList.remove("disabled");
+            }
+          });
+          item.addEventListener("dblclick", () => {
+            selectAndLoadFile(f.path);
+          });
+          browserFileList.appendChild(item);
+        });
+      }
+    } catch (err) {
+      console.error("Directory browse error:", err);
+      if (browserFolderList) browserFolderList.innerHTML = `<div class="browser-empty-list" style="color: #ef4444;">Error: ${err.message}</div>`;
+      if (browserFileList) browserFileList.innerHTML = `<div class="browser-empty-list" style="color: #ef4444;">Error: ${err.message}</div>`;
+    }
+  }
+
+  function openFileBrowserModal(initialDir = null) {
+    if (!modalFileBrowser) return;
+    modalFileBrowser.classList.remove("hidden");
+    loadBrowserDir(initialDir);
+  }
+
+  function closeFileBrowserModal() {
+    if (modalFileBrowser) modalFileBrowser.classList.add("hidden");
+  }
+
+  function selectAndLoadFile(filePath) {
+    if (!filePath) return;
+    if (videoPathInput) videoPathInput.value = filePath;
+    state.videoPath = filePath;
+    closeFileBrowserModal();
+    loadVideoInfo(filePath);
+  }
+
+  // Modal event bindings
+  if (btnCloseFileBrowser) btnCloseFileBrowser.addEventListener("click", closeFileBrowserModal);
+  if (btnCancelFileBrowser) btnCancelFileBrowser.addEventListener("click", closeFileBrowserModal);
+  if (btnSelectFileBrowser) {
+    btnSelectFileBrowser.addEventListener("click", () => {
+      if (browserState.selectedFilePath) {
+        selectAndLoadFile(browserState.selectedFilePath);
+      }
+    });
+  }
+  if (btnBrowserUpDir) {
+    btnBrowserUpDir.addEventListener("click", () => {
+      if (browserState.parentDir) loadBrowserDir(browserState.parentDir);
+    });
+  }
+  if (btnBrowserRefresh) {
+    btnBrowserRefresh.addEventListener("click", () => {
+      loadBrowserDir(browserState.currentDir);
+    });
+  }
+
+  // Bookmark chips
+  const chipBmVideos = document.getElementById("chipBmVideos");
+  const chipBmMovies = document.getElementById("chipBmMovies");
+  const chipBmDownloads = document.getElementById("chipBmDownloads");
+  const chipBmHome = document.getElementById("chipBmHome");
+  const chipBmProject = document.getElementById("chipBmProject");
+
+  if (chipBmVideos) chipBmVideos.addEventListener("click", () => loadBrowserDir("~/Videos"));
+  if (chipBmMovies) chipBmMovies.addEventListener("click", () => loadBrowserDir("~/Movies"));
+  if (chipBmDownloads) chipBmDownloads.addEventListener("click", () => loadBrowserDir("~/Downloads"));
+  if (chipBmHome) chipBmHome.addEventListener("click", () => loadBrowserDir("~"));
+  if (chipBmProject) chipBmProject.addEventListener("click", () => loadBrowserDir("."));
+  if (btnOpenInAppBrowser) btnOpenInAppBrowser.addEventListener("click", () => openFileBrowserModal());
+
   async function openNativeFileDialog(initialDir = null) {
     const target = initialDir || (videoPathInput ? videoPathInput.value.trim() : "") || null;
     const originalBrowseHtml = btnBrowseFiles ? btnBrowseFiles.innerHTML : "";
@@ -322,13 +487,16 @@ document.addEventListener("DOMContentLoaded", () => {
         if (videoPathInput) videoPathInput.value = data.path;
         state.videoPath = data.path;
         await loadVideoInfo(data.path);
-      } else if (data.error) {
-        console.warn("Desktop file chooser error:", data.error);
-        alert("Desktop file chooser issue: " + data.error);
+      } else if (data.success && data.cancelled) {
+        // User closed or cancelled native dialog
+      } else {
+        // Native OS picker unavailable on this system or failed -> open integrated file explorer
+        console.warn("Native file dialog unavailable, opening in-app file browser:", data.error);
+        openFileBrowserModal(target);
       }
     } catch (err) {
-      console.error("Failed to open native file dialog:", err);
-      alert("Error opening native file dialog: " + err.message);
+      console.warn("Failed to open native file dialog, falling back to in-app file browser:", err);
+      openFileBrowserModal(target);
     } finally {
       if (btnBrowseFiles) {
         btnBrowseFiles.disabled = false;

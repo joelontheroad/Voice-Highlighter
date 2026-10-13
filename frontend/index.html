@@ -100,6 +100,9 @@
               <button type="button" class="quick-chip" id="btnJumpProject" title="Jump to project folder">
                 📁 Project Dir
               </button>
+              <button type="button" class="quick-chip" id="btnOpenInAppBrowser" title="Open in-app file browser">
+                🗂️ File Browser
+              </button>
             </div>
           </div>
 
@@ -874,9 +877,72 @@
         </div>
       </div>
     </div>
+  <!-- Local Filesystem Browser Modal -->
+  <div class="modal-overlay hidden" id="modalFileBrowser" role="dialog" aria-modal="true" aria-labelledby="modalBrowserTitle">
+    <div class="modal-card file-browser-modal-card">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <span class="modal-icon">📁</span>
+          <div>
+            <h2 id="modalBrowserTitle">Local File Explorer</h2>
+            <p class="modal-subtitle">Browse and select a video or audio file directly from your disk</p>
+          </div>
+        </div>
+        <div class="modal-header-actions">
+          <button type="button" class="modal-close-btn" id="btnCloseFileBrowser" aria-label="Close File Browser">&times;</button>
+        </div>
+      </div>
+
+      <!-- Quick Bookmarks -->
+      <div class="browser-bookmarks-bar">
+        <span class="bookmarks-label">Quick Folders:</span>
+        <button type="button" class="browser-bookmark-chip" id="chipBmVideos">📁 Videos</button>
+        <button type="button" class="browser-bookmark-chip" id="chipBmMovies">🎬 Movies</button>
+        <button type="button" class="browser-bookmark-chip" id="chipBmDownloads">📥 Downloads</button>
+        <button type="button" class="browser-bookmark-chip" id="chipBmHome">🏠 Home</button>
+        <button type="button" class="browser-bookmark-chip" id="chipBmProject">📦 Project Root</button>
+      </div>
+
+      <!-- Path Toolbar -->
+      <div class="browser-path-toolbar">
+        <button type="button" class="btn btn-secondary btn-sm" id="btnBrowserUpDir" title="Go to parent directory">⬆ Up</button>
+        <div class="browser-current-path" id="browserCurrentPathDisplay">/path/to/folder</div>
+        <button type="button" class="btn btn-secondary btn-sm" id="btnBrowserRefresh" title="Refresh current folder">🔄 Refresh</button>
+      </div>
+
+      <!-- File Browser Body -->
+      <div class="file-browser-body">
+        <div class="browser-columns-wrap">
+          <div class="browser-pane">
+            <div class="browser-pane-title">📁 Subfolders</div>
+            <div class="browser-item-list" id="browserFolderList">
+              <!-- Populated dynamically -->
+            </div>
+          </div>
+          <div class="browser-pane">
+            <div class="browser-pane-title">🎬 Video & Audio Files</div>
+            <div class="browser-item-list" id="browserFileList">
+              <!-- Populated dynamically -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="browser-footer">
+        <div class="browser-selection-preview">
+          <span class="selection-label">Selected:</span>
+          <code id="browserSelectedFileCode">None selected</code>
+        </div>
+        <div class="browser-footer-actions">
+          <button type="button" id="btnCancelFileBrowser" class="btn btn-secondary">Cancel</button>
+          <button type="button" id="btnSelectFileBrowser" class="btn btn-primary-gradient disabled" disabled>Select & Load Video</button>
+        </div>
+      </div>
+    </div>
   </div>
 
-  <script src="app.js?v=4.3"></script>
+  <script src="app.js?v=4.4"></script>
 </body>
 </html>
 
