@@ -1,0 +1,56 @@
+# Python Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+*.pyvenv*
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Voice Highlighter scratch & transient outputs
+scratch/
+bin/
+*.log
+
+# Generated deliverables & media (prevent huge files in git)
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
+*.wav
+*.mp3
+*.m4a
+*.ass
+*.srt
+!frontend/
+!assets/
+
+# Whisper / HuggingFace model caches
+.cache/
+models/
+
+# OS metadata
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE configuration
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Notes media artifacts (keep text notes, ignore heavy 40MB+ graphics/scans)
+JG Notes/*.png
+JG Notes/*.svg
+JG Notes/*.odg

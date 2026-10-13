@@ -1,0 +1,48 @@
+/plan Let's rethink the interface.  Once the user has configured the text to their liking, they have a few tasks to get the text burned into the video. They can:
+1) Generate the .ass file and burn the text into the video, potentially initially used once for a quick review
+2) Generate the .ass file only - used to make sure the text is accurate
+3) edit the .ass file - edit the text because whisperX isn't 100% accurate.
+4) burn an existing .ass file into the video - used when iterating on step 3
+
+Currently, the interface is confusing when it comes to each of these tasks, especially task 3 and 4 above.
+
+Iterate on the existing design and give me three idea on how to make these steps visually clear to the user.  
+
+-------------
+
+/plan The software is using the sample video to render to the final product.  It's putting it in the sample video location, not the location of the actual video as I have requested.
+
+Fix this.
+
+Also, we're going to change the interface.  There is no preview until a source video file is loaded.  You will capture the poster frame from that video to display.  As there is no .ass created from the audio yet, you will display "lorem ipsum" text over the video with the highlight animation until the .ass file is created. 
+
+We don't need a "download video" button if the final video is put into the same directory as the source video.  When titles are succesffuly burned, create a message saying so.  Allow the user to click a button so that the video can open in the default player. 
+
+----
+/plan  The program is not saving file in the right place.  It's saving it here:
+/mnt/joelg-docs/Personal/Software Projects/Voice-Highlighter/scratch/uploads/
+
+Also, it changes the path when loading via "Load Video" button.  
+
+When I ran the program, the source file came from here:
+/mnt/joelg-docs/Personal/Politics/Katie Kam City Council District 9/katie-videos/Win-Win-Katie/Creative-Funding-Parking-Benefit-Districts/Rendered Movies/
+
+However, it displayed it as coming from here in the text field to the left of the "Load Video" button. 
+/mnt/joelg-docs/Personal/Software Projects/Voice-Highlighter/scratch/uploads/
+
+This is incorrect.
+
+Also, when the user clicks on step 1, step 2, or step 3, the resulting interface changes should happen right below those buttons, not at the bottom of the screen. The general design principle is this: when the user takes an action, the resulting change in the interface should be next to where the user took an action.  Not seprated from it by other blocks.
+
+Finally this: The Burn Video and Transcribe & Burn Video buttons should result in horizontal thermometer meters that show progress.
+-------------
+/plan  I want to distribute this program via github and I want it to run on MacOS and Windows as natively as possible.
+
+Create a plan for:
+1) Distributing via github. I have an existing github account.
+2) Running natively, or as natively as possible on MacOS.  Perhaps a program Icon that simply opens a browser with a URL to the program instead of a native app.  You choose.
+3) Likewise Windows.
+4) Creating an install program for Linux, MacOS, and Windows. Perhaps separate programs for each operating system...or not. If all can run bash scripts, perhaps one install program is the solution.  Make a recommendation.
+
+
+

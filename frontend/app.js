@@ -1,0 +1,2763 @@
+// Voice Highlighter Client Application Logic
+
+document.addEventListener("DOMContentLoaded", () => {
+  // State
+  const state = {
+    videoPath: (document.getElementById("videoPathInput") ? document.getElementById("videoPathInput").value.trim() : "") || "",
+    videoMeta: null,
+    hasLoadedVideo: false,
+    lastBurnedVideoPath: null,
+    posX: 50,
+    posY: 78,
+    fontFamily: "Montserrat",
+    fontSize: 68,
+    bold: true,
+    italic: false,
+    textBaseColor: "#FFFFFF",
+    outlineColor: "#000000",
+    outlineWidth: 3.5,
+    highlightStyle: "color", // 'color' or 'box'
+    highlightColor: "#FFDF00",
+    highlightScalePct: 100, // 100% to 180% active word font boost
+    boxType: "word", // 'word' or 'block'
+    boxBgColor: "#000000",
+    boxOpacity: 0.85,
+    boxFontColor: "#FFFFFF",
+    maxLines: 1,
+    maxChars: 28,
+    lineWidthPct: 82,
+    outputMode: "ass", // 'ass' or 'burn'
+    outputFilename: "",
+    socialPlatform: "none", // 'none', 'youtube', 'instagram', 'facebook'
+    socialDevice: "mobile", // 'mobile', 'web'
+    previewText: "Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt.",
+    activeWordIndex: 0,
+    currentTaskId: null,
+    pollInterval: null,
+    hasExistingAss: false,
+    existingAssPath: null,
+    hasExistingWav: false,
+    existingWavPath: null
+  };
+
+  // DOM Elements
+  const videoPathInput = document.getElementById("videoPathInput");
+  const btnLoadVideo = document.getElementById("btnLoadVideo");
+
+  const stagePlaceholder = document.getElementById("stagePlaceholder");
+  const stagePoster = document.getElementById("stagePoster");
+  const videoStage = document.getElementById("videoStage");
+  const subtitleDragBox = document.getElementById("subtitleDragBox");
+  const subtitleRenderedText = document.getElementById("subtitleRenderedText");
+  const safeZoneOverlay = document.getElementById("safeZoneOverlay");
+  const metaRes = document.getElementById("metaRes");
+  const metaDuration = document.getElementById("metaDuration");
+
+  // Burned Video Delivery DOM Elements
+  const burnedDeliveryBanner = document.getElementById("burnedDeliveryBanner");
+  const burnedVideoPathText = document.getElementById("burnedVideoPathText");
+  const btnCopyBurnedPath = document.getElementById("btnCopyBurnedPath");
+  const copyBurnedBtnText = document.getElementById("copyBurnedBtnText");
+  const btnOpenVideo = document.getElementById("btnOpenVideo");
+
+  function updateStageVisibility() {
+    if (!state.hasLoadedVideo) {
+      if (stagePlaceholder) stagePlaceholder.classList.remove("hidden");
+      if (stagePoster) {
+        stagePoster.classList.add("hidden");
+        stagePoster.src = "";
+      }
+      if (subtitleDragBox) subtitleDragBox.classList.add("hidden");
+      if (safeZoneOverlay) safeZoneOverlay.classList.add("hidden");
+      if (socialUiLayer) socialUiLayer.classList.add("hidden");
+      if (metaRes) metaRes.textContent = "Resolution: --";
+      if (metaDuration) metaDuration.textContent = "Duration: --";
+    } else {
+      if (stagePlaceholder) stagePlaceholder.classList.add("hidden");
+      if (stagePoster) stagePoster.classList.remove("hidden");
+      if (subtitleDragBox) subtitleDragBox.classList.remove("hidden");
+      if (safeZoneOverlay) safeZoneOverlay.classList.remove("hidden");
+      if (state.socialPlatform !== "none" && socialUiLayer) {
+        socialUiLayer.classList.remove("hidden");
+      }
+    }
+  }
+
+  // Sibling Asset DOM Elements
+  const badgeExistingWav = document.getElementById("badgeExistingWav");
+  const badgeExistingWavText = document.getElementById("badgeExistingWavText");
+  const badgeExistingAss = document.getElementById("badgeExistingAss");
+  const badgeExistingAssText = document.getElementById("badgeExistingAssText");
+  const wrapReuseAssToggle = document.getElementById("wrapReuseAssToggle");
+  const chkReuseExistingAss = document.getElementById("chkReuseExistingAss");
+
+  // Positioning
+  const sliderPosY = document.getElementById("sliderPosY");
+  const sliderPosX = document.getElementById("sliderPosX");
+  const labelPosY = document.getElementById("labelPosY");
+  const labelPosX = document.getElementById("labelPosX");
+  const presetBtns = document.querySelectorAll(".preset-btn");
+  const btnResetPos = document.getElementById("btnResetPos");
+
+  // Font & Style
+  const selectFontFamily = document.getElementById("selectFontFamily");
+  const sliderFontSize = document.getElementById("sliderFontSize");
+  const labelFontSize = document.getElementById("labelFontSize");
+  const colorTextBase = document.getElementById("colorTextBase");
+  const codeTextBase = document.getElementById("codeTextBase");
+  const colorOutline = document.getElementById("colorOutline");
+  const codeOutline = document.getElementById("codeOutline");
+  const sliderOutlineWidth = document.getElementById("sliderOutlineWidth");
+  const labelOutlineWidth = document.getElementById("labelOutlineWidth");
+  const checkBold = document.getElementById("checkBold");
+  const checkItalic = document.getElementById("checkItalic");
+
+  // Highlight
+  const btnStyleColor = document.getElementById("btnStyleColor");
+  const btnStyleBox = document.getElementById("btnStyleBox");
+  const paneHighlightColor = document.getElementById("paneHighlightColor");
+  const paneHighlightBox = document.getElementById("paneHighlightBox");
+  const colorHighlightText = document.getElementById("colorHighlightText");
+  const codeHighlightText = document.getElementById("codeHighlightText");
+  const selectBoxType = document.getElementById("selectBoxType");
+  const sliderBoxOpacity = document.getElementById("sliderBoxOpacity");
+  const labelBoxOpacity = document.getElementById("labelBoxOpacity");
+  const colorBoxBg = document.getElementById("colorBoxBg");
+  const codeBoxBg = document.getElementById("codeBoxBg");
+  const colorBoxFont = document.getElementById("colorBoxFont");
+  const codeBoxFont = document.getElementById("codeBoxFont");
+  const swatchBtns = document.querySelectorAll(".swatch-btn");
+  const sliderHighlightScale = document.getElementById("sliderHighlightScale");
+  const labelHighlightScale = document.getElementById("labelHighlightScale");
+
+  // Lines & Line Width
+  const linePillBtns = document.querySelectorAll("#lineCountSelector .pill-btn");
+  const sliderMaxChars = document.getElementById("sliderMaxChars");
+  const labelMaxChars = document.getElementById("labelMaxChars");
+  const sliderLineWidth = document.getElementById("sliderLineWidth");
+  const labelLineWidth = document.getElementById("labelLineWidth");
+
+  // Style Presets & Templates
+  const selectPreset = document.getElementById("selectPreset");
+  const optgroupCustom = document.getElementById("optgroupCustom");
+  const btnApplyPreset = document.getElementById("btnApplyPreset");
+  const btnSavePreset = document.getElementById("btnSavePreset");
+  const btnRenamePreset = document.getElementById("btnRenamePreset");
+  const btnDeletePreset = document.getElementById("btnDeletePreset");
+  const btnExportPreset = document.getElementById("btnExportPreset");
+  const btnImportPresetTrigger = document.getElementById("btnImportPresetTrigger");
+  const presetFileInput = document.getElementById("presetFileInput");
+  const presetNameDrawer = document.getElementById("presetNameDrawer");
+  const drawerTitle = document.getElementById("drawerTitle");
+  const presetNameInput = document.getElementById("presetNameInput");
+  const btnConfirmPresetName = document.getElementById("btnConfirmPresetName");
+  const btnDismissPresetName = document.getElementById("btnDismissPresetName");
+  const btnCancelPresetName = document.getElementById("btnCancelPresetName");
+  const presetStatusMsg = document.getElementById("presetStatusMsg");
+
+  // Output Deliverables & Custom Filename
+  const outputModeBtns = document.querySelectorAll("#outputModeSelector .pill-btn");
+  const outputModeHint = document.getElementById("outputModeHint");
+  const outputFilenameInput = document.getElementById("outputFilenameInput");
+  const filenameExtBadge = document.getElementById("filenameExtBadge");
+
+  // Social Media Overlay Controls
+  const socialPlatformBtns = document.querySelectorAll("#socialPlatformSelector .mini-pill-btn");
+  const socialDeviceBtns = document.querySelectorAll("#socialDeviceSelector .mini-pill-btn");
+  const socialUiLayer = document.getElementById("socialUiLayer");
+
+  // Preview Controls
+  const btnTextDefault = document.getElementById("btnTextDefault");
+  const btnTextLorem = document.getElementById("btnTextLorem");
+  const previewTextInput = document.getElementById("previewTextInput");
+
+  // Actions & Results
+  const btnSubmit = document.getElementById("btnSubmit");
+  const btnSubmitText = document.getElementById("btnSubmitText");
+  const btnSubmitSubtext = document.getElementById("btnSubmitSubtext");
+  const cardStatus = document.getElementById("cardStatus");
+  const progressBarFill = document.getElementById("progressBarFill");
+  const statusStageMessage = document.getElementById("statusStageMessage");
+  const statusPercent = document.getElementById("statusPercent");
+  const cardResults = document.getElementById("cardResults");
+  const resultsTitle = document.getElementById("resultsTitle");
+  const resultsHint = document.getElementById("resultsHint");
+  const btnDownloadVideo = document.getElementById("btnDownloadVideo");
+  const btnDownloadAss = document.getElementById("btnDownloadAss");
+  const btnDownloadAssText = document.getElementById("btnDownloadAssText");
+  const btnCopyAss = document.getElementById("btnCopyAss");
+  const copyBtnText = document.getElementById("copyBtnText");
+  const codeBodyPreview = document.getElementById("codeBodyPreview");
+
+  // Studio Stepper & Pipeline Elements (Idea #3)
+  const cardStudio = document.getElementById("cardStudio");
+  const chipPipelineStatus = document.getElementById("chipPipelineStatus");
+  const wfStep1 = document.getElementById("wfStep1");
+  const wfStep2 = document.getElementById("wfStep2");
+  const wfStep3 = document.getElementById("wfStep3");
+  const wfSub1 = document.getElementById("wfSub1");
+  const wfSub2 = document.getElementById("wfSub2");
+  const wfSub3 = document.getElementById("wfSub3");
+  const btnGenerateAssOnly = document.getElementById("btnGenerateAssOnly");
+  const titleGenerateAss = document.getElementById("titleGenerateAss");
+  const descGenerateAss = document.getElementById("descGenerateAss");
+  const btnBurnOnly = document.getElementById("btnBurnOnly");
+  const btnTranscribeAndBurn = document.getElementById("btnTranscribeAndBurn");
+
+  // Subtitle Review & Fast-Edit Drawer Elements
+  const cardSubtitleDrawer = document.getElementById("cardSubtitleDrawer");
+  const drawerHeaderToggle = document.getElementById("drawerHeaderToggle");
+  const drawerChevron = document.getElementById("drawerChevron");
+  const drawerLineCountBadge = document.getElementById("drawerLineCountBadge");
+  const drawerSearchInput = document.getElementById("drawerSearchInput");
+  const btnDrawerOpenModal = document.getElementById("btnDrawerOpenModal");
+  const drawerBody = document.getElementById("drawerBody");
+  const drawerEmptyState = document.getElementById("drawerEmptyState");
+  const drawerDialogueList = document.getElementById("drawerDialogueList");
+  const drawerFooter = document.getElementById("drawerFooter");
+  const drawerStatusDot = document.getElementById("drawerStatusDot");
+  const drawerStatusText = document.getElementById("drawerStatusText");
+  const btnDrawerRevert = document.getElementById("btnDrawerRevert");
+  const btnDrawerBurn = document.getElementById("btnDrawerBurn");
+  const valActiveAss = document.getElementById("valActiveAss");
+  const valActiveVideo = document.getElementById("valActiveVideo");
+  const btnModalSaveAndBurn = document.getElementById("btnModalSaveAndBurn");
+
+  // Stepper Nodes
+  const stepNodeExtract = document.getElementById("stepNodeExtract");
+  const stepNodeWhisper = document.getElementById("stepNodeWhisper");
+  const stepNodeAlign = document.getElementById("stepNodeAlign");
+  const stepNodeAss = document.getElementById("stepNodeAss");
+  const stepLine4 = document.getElementById("stepLine4");
+  const stepNodeBurn = document.getElementById("stepNodeBurn");
+
+  // Step 2 Action Overview Card Elements
+  const btnFocusStep2 = document.getElementById("btnFocusStep2");
+  const chipStep2Count = document.getElementById("chipStep2Count");
+
+  // ----------------------------------------------------
+  // Dynamic Hardware Engine Display
+  // ----------------------------------------------------
+  async function fetchSystemInfo() {
+    try {
+      const res = await fetch("/api/system-info");
+      if (!res.ok) return;
+      const info = await res.json();
+      const badgeWrap = document.getElementById("hardwareBadge");
+      const badgeText = document.getElementById("hardwareBadgeText");
+      const whisperDevice = document.getElementById("whisperModelDevice");
+      const wfSub1 = document.getElementById("wfSub1");
+      const wfSub3 = document.getElementById("wfSub3");
+      const deliveryEngineTag = document.getElementById("deliveryEngineTag");
+
+      if (badgeText && info.active_badge_text) {
+        badgeText.textContent = info.active_badge_text;
+      }
+
+      if (badgeWrap) {
+        badgeWrap.classList.remove("engine-gpu", "engine-cpu");
+        if (info.is_gpu) {
+          badgeWrap.classList.add("engine-gpu");
+        } else {
+          badgeWrap.classList.add("engine-cpu");
+        }
+
+        let tooltip = `Rendering: ${info.burn_engine}\nTranscription: ${info.whisper_engine}`;
+        if (info.gpu_diagnostic) {
+          tooltip += `\n⚠️ Note: ${info.gpu_diagnostic}`;
+        }
+        badgeWrap.title = tooltip;
+      }
+
+      if (whisperDevice) {
+        whisperDevice.textContent = info.engine_type || (info.is_gpu ? "GPU" : "CPU");
+      }
+      if (wfSub1 && info.short_engine) {
+        wfSub1.textContent = info.whisper_engine || `WhisperX (${info.short_engine})`;
+      }
+      if (wfSub3 && info.burn_engine) {
+        wfSub3.textContent = `${info.burn_engine} (~3s)`;
+      }
+      if (deliveryEngineTag && info.burn_engine) {
+        deliveryEngineTag.textContent = info.burn_engine;
+      }
+    } catch (err) {
+      console.warn("Could not fetch system info:", err);
+    }
+  }
+
+  // ----------------------------------------------------
+  // 1. Native Desktop OS File Dialog & Direct File Loading
+  // ----------------------------------------------------
+  const btnBrowseFiles = document.getElementById("btnBrowseFiles");
+  const btnJumpVideos = document.getElementById("btnJumpVideos");
+  const btnJumpProject = document.getElementById("btnJumpProject");
+
+  // Standard directory paths
+  const VIDEOS_DIR = "~/Videos";
+  const PROJECT_DIR = ".";
+
+  async function openNativeFileDialog(initialDir = null) {
+    const target = initialDir || (videoPathInput ? videoPathInput.value.trim() : "") || null;
+    const originalBrowseHtml = btnBrowseFiles ? btnBrowseFiles.innerHTML : "";
+    if (btnBrowseFiles) {
+      btnBrowseFiles.disabled = true;
+      btnBrowseFiles.innerHTML = `<span class="spinner-sm"></span> <span>Opening Dialog...</span>`;
+    }
+
+    try {
+      const res = await fetch("/api/open-os-file-dialog", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          initial_path: target,
+          title: "Select Video File"
+        })
+      });
+      if (!res.ok) {
+        throw new Error(`Server returned status ${res.status}`);
+      }
+      const data = await res.json();
+      if (data.success && !data.cancelled && data.path) {
+        if (videoPathInput) videoPathInput.value = data.path;
+        state.videoPath = data.path;
+        await loadVideoInfo(data.path);
+      } else if (data.error) {
+        console.warn("Desktop file chooser error:", data.error);
+        alert("Desktop file chooser issue: " + data.error);
+      }
+    } catch (err) {
+      console.error("Failed to open native file dialog:", err);
+      alert("Error opening native file dialog: " + err.message);
+    } finally {
+      if (btnBrowseFiles) {
+        btnBrowseFiles.disabled = false;
+        btnBrowseFiles.innerHTML = originalBrowseHtml || `
+          <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+          </svg>
+          <span>Browse...</span>`;
+      }
+    }
+  }
+
+  // Bind browser triggers
+  if (btnBrowseFiles) {
+    btnBrowseFiles.addEventListener("click", () => openNativeFileDialog());
+  }
+
+  if (btnJumpVideos) {
+    btnJumpVideos.addEventListener("click", () => openNativeFileDialog(VIDEOS_DIR));
+  }
+  if (btnJumpProject) {
+    btnJumpProject.addEventListener("click", () => openNativeFileDialog(PROJECT_DIR));
+  }
+
+  // Load Video Button
+  if (btnLoadVideo) {
+    btnLoadVideo.addEventListener("click", () => {
+      const p = videoPathInput ? videoPathInput.value.trim() : "";
+      if (!p) {
+        openNativeFileDialog();
+      } else {
+        loadVideoInfo(p);
+      }
+    });
+  }
+
+  if (videoPathInput) {
+    videoPathInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const p = videoPathInput.value.trim();
+        if (p) loadVideoInfo(p);
+      }
+    });
+  }
+
+  async function loadVideoInfo(path) {
+    if (!path) return;
+    try {
+      metaRes.textContent = "Loading video info...";
+      const res = await fetch("/api/video-info", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ video_path: path })
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to load video: ${res.statusText}`);
+      }
+      const data = await res.json();
+      state.videoPath = data.path;
+      if (videoPathInput) videoPathInput.value = data.path;
+      state.videoMeta = data.meta;
+      state.hasLoadedVideo = true;
+      updateStageVisibility();
+      
+      // Update frame and badges
+      stagePoster.src = data.preview_frame_url + "?t=" + Date.now();
+      metaRes.textContent = `Resolution: ${data.meta.width} × ${data.meta.height} (${data.meta.is_vertical ? '9:16' : '16:9'})`;
+      metaDuration.textContent = `Duration: ${Math.round(data.meta.duration)}s`;
+
+      // Update suggested deliverable filename if not customized yet
+      if (data.suggested_filename) {
+        state.outputFilename = data.suggested_filename;
+        if (outputFilenameInput) {
+          outputFilenameInput.value = data.suggested_filename;
+        }
+      }
+
+      // Set aspect ratio of stage
+      if (data.meta.width && data.meta.height) {
+        videoStage.style.aspectRatio = `${data.meta.width} / ${data.meta.height}`;
+      }
+
+      // Check and display sibling .ass and .wav asset detection
+      if (data.has_existing_ass) {
+        state.hasExistingAss = true;
+        state.existingAssPath = data.existing_ass_path;
+        if (valActiveAss) valActiveAss.textContent = data.existing_ass_name || data.existing_ass_path;
+        if (badgeExistingAss) {
+          badgeExistingAss.classList.remove("hidden");
+          if (badgeExistingAssText) {
+            badgeExistingAssText.textContent = `✓ Existing subtitles (.ass) found: ${data.existing_ass_name || 'subtitles.ass'} (${data.existing_ass_dialogues || 0} lines)`;
+          }
+        }
+        if (btnBurnOnly) {
+          btnBurnOnly.classList.remove("disabled");
+          btnBurnOnly.title = "Click to burn existing subtitles into video with GPU NVENC";
+        }
+        if (titleGenerateAss) titleGenerateAss.textContent = "Re-Transcribe Subtitles (.ass format)";
+        if (descGenerateAss) descGenerateAss.textContent = "Generate text from speech. You can edit the transcription in Step 2.";
+        if (codeBodyPreview && data.existing_ass_preview) {
+          codeBodyPreview.textContent = data.existing_ass_preview;
+        }
+
+        // Auto-load subtitles into the inline drawer
+        loadDrawerSubtitles({
+          mediaPath: path,
+          assPath: data.existing_ass_path
+        });
+      } else {
+        state.hasExistingAss = false;
+        state.existingAssPath = null;
+        if (valActiveAss) valActiveAss.textContent = "None generated yet";
+        if (badgeExistingAss) badgeExistingAss.classList.add("hidden");
+        if (btnBurnOnly) {
+          btnBurnOnly.classList.add("disabled");
+          btnBurnOnly.title = "Generate or load subtitles first";
+        }
+        if (titleGenerateAss) titleGenerateAss.textContent = "Generate Subtitles (.ass format)";
+        if (descGenerateAss) descGenerateAss.textContent = "Generate text from speech. You can edit the transcription in Step 2.";
+        updateWorkflowStepper('idle');
+
+        // As there is no .ass created from audio yet, display "lorem ipsum" text with animated highlighting
+        state.previewText = "Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt.";
+        if (previewTextInput) previewTextInput.value = state.previewText;
+        if (btnTextLorem) btnTextLorem.classList.add("active");
+        if (btnTextDefault) btnTextDefault.classList.remove("active");
+        state.activeWordIndex = 0;
+        renderSubtitlePreview();
+
+        // Reset drawer
+        renderDrawerDialogueItems([]);
+      }
+
+      if (data.has_existing_wav) {
+        state.hasExistingWav = true;
+        state.existingWavPath = data.existing_wav_path;
+        if (badgeExistingWav) {
+          badgeExistingWav.classList.remove("hidden");
+          if (badgeExistingWavText) {
+            badgeExistingWavText.textContent = `✓ Existing audio (.wav) found: ${data.existing_wav_name || 'audio.wav'}`;
+          }
+        }
+      } else {
+        state.hasExistingWav = false;
+        state.existingWavPath = null;
+        if (badgeExistingWav) badgeExistingWav.classList.add("hidden");
+      }
+    } catch (err) {
+      console.warn("Could not load video preview frame automatically:", err);
+      metaRes.textContent = "Custom Video File";
+    }
+  }
+
+  // ----------------------------------------------------
+  // 2. Position Updates & Drag-and-Drop
+  // ----------------------------------------------------
+  function updatePosition(x, y, updateSliders = true) {
+    state.posX = Math.max(10, Math.min(90, Math.round(x)));
+    state.posY = Math.max(15, Math.min(92, Math.round(y)));
+
+    subtitleDragBox.style.left = `${state.posX}%`;
+    subtitleDragBox.style.top = `${state.posY}%`;
+
+    if (updateSliders) {
+      sliderPosX.value = state.posX;
+      sliderPosY.value = state.posY;
+      labelPosX.textContent = `${state.posX}%`;
+      labelPosY.textContent = `${state.posY}%`;
+    }
+  }
+
+  // Drag on preview stage
+  let isDragging = false;
+
+  subtitleDragBox.addEventListener("mousedown", (e) => {
+    isDragging = true;
+    subtitleDragBox.classList.add("dragging");
+    e.preventDefault();
+  });
+
+  window.addEventListener("mouseup", () => {
+    if (isDragging) {
+      isDragging = false;
+      subtitleDragBox.classList.remove("dragging");
+    }
+  });
+
+  window.addEventListener("mousemove", (e) => {
+    if (!isDragging) return;
+    const rect = videoStage.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    let pctX = (mouseX / rect.width) * 100;
+    let pctY = (mouseY / rect.height) * 100;
+
+    // Center snap tolerance (50%)
+    if (Math.abs(pctX - 50) < 3.5) {
+      pctX = 50;
+    }
+
+    updatePosition(pctX, pctY, true);
+  });
+
+  // Touch support for dragging
+  subtitleDragBox.addEventListener("touchstart", (e) => {
+    isDragging = true;
+    subtitleDragBox.classList.add("dragging");
+  }, { passive: true });
+
+  window.addEventListener("touchend", () => {
+    isDragging = false;
+    subtitleDragBox.classList.remove("dragging");
+  });
+
+  window.addEventListener("touchmove", (e) => {
+    if (!isDragging || !e.touches[0]) return;
+    const rect = videoStage.getBoundingClientRect();
+    const touch = e.touches[0];
+    const mouseX = touch.clientX - rect.left;
+    const mouseY = touch.clientY - rect.top;
+
+    let pctX = (mouseX / rect.width) * 100;
+    let pctY = (mouseY / rect.height) * 100;
+
+    if (Math.abs(pctX - 50) < 3.5) pctX = 50;
+    updatePosition(pctX, pctY, true);
+  }, { passive: true });
+
+  // Slider events
+  sliderPosY.addEventListener("input", (e) => {
+    labelPosY.textContent = `${e.target.value}%`;
+    updatePosition(state.posX, parseFloat(e.target.value), false);
+  });
+
+  sliderPosX.addEventListener("input", (e) => {
+    labelPosX.textContent = `${e.target.value}%`;
+    updatePosition(parseFloat(e.target.value), state.posY, false);
+  });
+
+  // Preset Buttons
+  presetBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      presetBtns.forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      const y = parseFloat(btn.dataset.y);
+      const x = parseFloat(btn.dataset.x);
+      updatePosition(x, y, true);
+    });
+  });
+
+  btnResetPos.addEventListener("click", () => {
+    updatePosition(50, 78, true);
+  });
+
+  // ----------------------------------------------------
+  // 3. Styling & Live Preview Rendering
+  // ----------------------------------------------------
+  function renderSubtitlePreview() {
+    // 1. Text styling
+    const font = state.fontFamily;
+    const weight = state.bold ? "700" : "400";
+    const style = state.italic ? "italic" : "normal";
+    const outlineW = state.outlineWidth;
+    const outlineC = state.outlineColor;
+    const baseC = state.textBaseColor;
+
+    subtitleRenderedText.style.fontFamily = `"${font}", sans-serif`;
+    subtitleRenderedText.style.fontWeight = weight;
+    subtitleRenderedText.style.fontStyle = style;
+    subtitleRenderedText.style.color = baseC;
+
+    // Scale font size proportionally to preview box height (~500px vs 1920px video)
+    const scaleRatio = 0.28;
+    subtitleRenderedText.style.fontSize = `${Math.round(state.fontSize * scaleRatio)}px`;
+
+    // Construct text shadow outline
+    if (outlineW > 0) {
+      const o = outlineW * scaleRatio;
+      subtitleRenderedText.style.textShadow = `
+        -${o}px -${o}px 0 ${outlineC},
+         ${o}px -${o}px 0 ${outlineC},
+        -${o}px  ${o}px 0 ${outlineC},
+         ${o}px  ${o}px 0 ${outlineC}
+      `;
+    } else {
+      subtitleRenderedText.style.textShadow = "none";
+    }
+
+    // Line Block Box styling if applicable
+    if (state.highlightStyle === "box" && state.boxType === "block") {
+      const alphaHex = Math.round(state.boxOpacity * 255).toString(16).padStart(2, '0');
+      subtitleRenderedText.style.background = `${state.boxBgColor}${alphaHex}`;
+      subtitleRenderedText.style.padding = "6px 14px";
+      subtitleRenderedText.style.borderRadius = "8px";
+    } else {
+      subtitleRenderedText.style.background = "transparent";
+      subtitleRenderedText.style.padding = "0";
+      subtitleRenderedText.style.borderRadius = "0";
+    }
+
+    // Set subtitle drag box width based on user line width setting
+    subtitleDragBox.style.width = `${state.lineWidthPct}%`;
+    subtitleDragBox.style.maxWidth = `${state.lineWidthPct}%`;
+
+    // 2. Format words into lines according to maxLines, maxChars, and lineWidthPct
+    const cleanedPreview = (state.previewText || "")
+      .replace(/\\N/gi, " ")
+      .replace(/\\h/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const words = cleanedPreview ? cleanedPreview.split(/\s+/) : [];
+    if (words.length === 0) return;
+
+    // Calculate effective character budget based on selected line width percentage
+    const widthCharBudget = Math.max(12, Math.floor((state.lineWidthPct / 100) * 35));
+    const effectiveMaxChars = Math.min(state.maxChars, widthCharBudget);
+
+    // 2. Chunk preview text into discrete blocks of maxLines (Option A)
+    const blocks = [];
+    let currentBlock = [];
+    let currentLine = [];
+    let currentLen = 0;
+
+    for (const w of words) {
+      if (currentLen + w.length + (currentLen > 0 ? 1 : 0) > effectiveMaxChars && currentLine.length > 0) {
+        currentBlock.push(currentLine);
+        currentLine = [];
+        currentLen = 0;
+        if (currentBlock.length >= state.maxLines) {
+          blocks.push(currentBlock);
+          currentBlock = [];
+        }
+      }
+      currentLine.push(w);
+      currentLen += w.length + 1;
+    }
+    if (currentLine.length > 0) {
+      currentBlock.push(currentLine);
+    }
+    if (currentBlock.length > 0) {
+      blocks.push(currentBlock);
+    }
+    if (blocks.length === 0) return;
+
+    // Total words across the preview text
+    const totalWords = words.length;
+    if (state.activeWordIndex >= totalWords) {
+      state.activeWordIndex = 0;
+    }
+
+    // Determine which block is currently active
+    let wordCounter = 0;
+    let activeBlock = blocks[0];
+    let activeWordIndexInBlock = 0;
+
+    for (const b of blocks) {
+      const bWordsCount = b.flat().length;
+      if (state.activeWordIndex >= wordCounter && state.activeWordIndex < wordCounter + bWordsCount) {
+        activeBlock = b;
+        activeWordIndexInBlock = state.activeWordIndex - wordCounter;
+        break;
+      }
+      wordCounter += bWordsCount;
+    }
+
+    // Rebuild HTML for ONLY the active block (immediately erasing any previous block/line)
+    let blockWordIdx = 0;
+    const htmlLines = activeBlock.map(line => {
+      const lineHtml = line.map(w => {
+        const isActive = (blockWordIdx === activeWordIndexInBlock);
+        blockWordIdx++;
+
+        let extraClass = "";
+        let inlineStyle = "";
+
+        if (isActive) {
+          const scale = state.highlightScalePct / 100;
+          const scaleTransform = `transform: scale(${scale}); transform-origin: center bottom; display: inline-block;`;
+          const marginSpacing = (state.highlightScalePct > 100)
+            ? `margin: 0 ${Math.max(2.5, (state.highlightScalePct - 100) * 0.12)}px;`
+            : "";
+
+          if (state.highlightStyle === "color") {
+            extraClass = "active-color";
+            inlineStyle = `color: ${state.highlightColor} !important; ${scaleTransform} ${marginSpacing}`;
+          } else if (state.highlightStyle === "box") {
+            if (state.boxType === "word") {
+              extraClass = "active-pill";
+              const alphaHex = Math.round(state.boxOpacity * 255).toString(16).padStart(2, '0');
+              inlineStyle = `background: ${state.boxBgColor}${alphaHex} !important; color: ${state.boxFontColor} !important; border-color: ${state.boxBgColor} !important; ${scaleTransform} ${marginSpacing}`;
+            } else {
+              // Block line box: active word font changes color
+              inlineStyle = `color: ${state.highlightColor} !important; ${scaleTransform} ${marginSpacing}`;
+            }
+          }
+        }
+
+        return `<span class="subtitle-word ${extraClass}" style="${inlineStyle}">${w}</span>`;
+      }).join(" ");
+      return `<div>${lineHtml}</div>`;
+    });
+
+    subtitleRenderedText.innerHTML = htmlLines.join("");
+  }
+
+  // Animated Word Highlight Loop (simulates speech word highlight)
+  setInterval(() => {
+    state.activeWordIndex++;
+    renderSubtitlePreview();
+  }, 420);
+
+  // ----------------------------------------------------
+  // 4. Style Controls Event Listeners
+  // ----------------------------------------------------
+  selectFontFamily.addEventListener("change", (e) => {
+    state.fontFamily = e.target.value;
+    renderSubtitlePreview();
+  });
+
+  sliderFontSize.addEventListener("input", (e) => {
+    state.fontSize = parseInt(e.target.value);
+    labelFontSize.textContent = `${state.fontSize} pt`;
+    renderSubtitlePreview();
+  });
+
+  colorTextBase.addEventListener("input", (e) => {
+    state.textBaseColor = e.target.value.toUpperCase();
+    codeTextBase.textContent = state.textBaseColor;
+    renderSubtitlePreview();
+  });
+
+  colorOutline.addEventListener("input", (e) => {
+    state.outlineColor = e.target.value.toUpperCase();
+    codeOutline.textContent = state.outlineColor;
+    renderSubtitlePreview();
+  });
+
+  sliderOutlineWidth.addEventListener("input", (e) => {
+    state.outlineWidth = parseFloat(e.target.value);
+    labelOutlineWidth.textContent = `${state.outlineWidth} px`;
+    renderSubtitlePreview();
+  });
+
+  checkBold.addEventListener("change", (e) => {
+    state.bold = e.target.checked;
+    renderSubtitlePreview();
+  });
+
+  checkItalic.addEventListener("change", (e) => {
+    state.italic = e.target.checked;
+    renderSubtitlePreview();
+  });
+
+  // Highlight Segment Controls
+  btnStyleColor.addEventListener("click", () => {
+    state.highlightStyle = "color";
+    btnStyleColor.classList.add("active");
+    btnStyleBox.classList.remove("active");
+    paneHighlightColor.classList.remove("hidden");
+    paneHighlightBox.classList.add("hidden");
+    renderSubtitlePreview();
+  });
+
+  btnStyleBox.addEventListener("click", () => {
+    state.highlightStyle = "box";
+    btnStyleBox.classList.add("active");
+    btnStyleColor.classList.remove("active");
+    paneHighlightBox.classList.remove("hidden");
+    paneHighlightColor.classList.add("hidden");
+    renderSubtitlePreview();
+  });
+
+  colorHighlightText.addEventListener("input", (e) => {
+    state.highlightColor = e.target.value.toUpperCase();
+    codeHighlightText.textContent = state.highlightColor;
+    renderSubtitlePreview();
+  });
+
+  swatchBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      const c = btn.dataset.color;
+      state.highlightColor = c;
+      colorHighlightText.value = c;
+      codeHighlightText.textContent = c;
+      renderSubtitlePreview();
+    });
+  });
+
+  selectBoxType.addEventListener("change", (e) => {
+    state.boxType = e.target.value;
+    renderSubtitlePreview();
+  });
+
+  sliderBoxOpacity.addEventListener("input", (e) => {
+    state.boxOpacity = parseInt(e.target.value) / 100;
+    labelBoxOpacity.textContent = `${e.target.value}%`;
+    renderSubtitlePreview();
+  });
+
+  colorBoxBg.addEventListener("input", (e) => {
+    state.boxBgColor = e.target.value.toUpperCase();
+    codeBoxBg.textContent = state.boxBgColor;
+    renderSubtitlePreview();
+  });
+
+  colorBoxFont.addEventListener("input", (e) => {
+    state.boxFontColor = e.target.value.toUpperCase();
+    codeBoxFont.textContent = state.boxFontColor;
+    renderSubtitlePreview();
+  });
+
+  // Highlight Font Size Boost Slider
+  if (sliderHighlightScale) {
+    sliderHighlightScale.addEventListener("input", (e) => {
+      state.highlightScalePct = parseInt(e.target.value);
+      if (labelHighlightScale) labelHighlightScale.textContent = `${state.highlightScalePct}%`;
+      renderSubtitlePreview();
+    });
+  }
+
+  // Line Limits
+  linePillBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      linePillBtns.forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      state.maxLines = parseInt(btn.dataset.lines);
+      renderSubtitlePreview();
+    });
+  });
+
+  sliderMaxChars.addEventListener("input", (e) => {
+    state.maxChars = parseInt(e.target.value);
+    labelMaxChars.textContent = `${state.maxChars} chars`;
+    renderSubtitlePreview();
+  });
+
+  // Line Width Slider Listener
+  sliderLineWidth.addEventListener("input", (e) => {
+    state.lineWidthPct = parseInt(e.target.value);
+    labelLineWidth.textContent = `${state.lineWidthPct}%`;
+    renderSubtitlePreview();
+  });
+
+  // Output Mode Selector (if present)
+  if (outputModeBtns && outputModeBtns.length > 0) {
+    outputModeBtns.forEach(btn => {
+      btn.addEventListener("click", () => {
+        outputModeBtns.forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        state.outputMode = btn.dataset.mode;
+      });
+    });
+  }
+
+  // Custom Output Filename Input
+  if (outputFilenameInput) {
+    outputFilenameInput.addEventListener("input", (e) => {
+      state.outputFilename = e.target.value.trim();
+    });
+  }
+
+  // Social Media Platform & Device Selectors
+  socialPlatformBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      socialPlatformBtns.forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      state.socialPlatform = btn.dataset.platform;
+      renderSocialOverlay();
+    });
+  });
+
+  socialDeviceBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      socialDeviceBtns.forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      state.socialDevice = btn.dataset.device;
+      renderSocialOverlay();
+    });
+  });
+
+  // ----------------------------------------------------
+  // Social Media UI Overlay Generator
+  // ----------------------------------------------------
+  function renderSocialOverlay() {
+    if (state.socialPlatform === "none") {
+      socialUiLayer.classList.add("hidden");
+      socialUiLayer.innerHTML = "";
+      return;
+    }
+
+    socialUiLayer.classList.remove("hidden");
+    const isMobile = state.socialDevice === "mobile";
+
+    if (state.socialPlatform === "youtube") {
+      if (isMobile) {
+        // YouTube Shorts Mobile App UI
+        socialUiLayer.innerHTML = `
+          <div class="social-top-bar">
+            <span>Shorts</span>
+            <div class="social-top-icons">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"></path><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"></circle><circle cx="12" cy="12" r="2"></circle><circle cx="12" cy="19" r="2"></circle></svg>
+            </div>
+          </div>
+
+          <div class="social-right-bar">
+            <div class="social-action-btn">
+              <div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z"/></svg></div>
+              <span class="social-action-count">184K</span>
+            </div>
+            <div class="social-action-btn">
+              <div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z"/></svg></div>
+              <span class="social-action-count">Dislike</span>
+            </div>
+            <div class="social-action-btn">
+              <div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z"/></svg></div>
+              <span class="social-action-count">1.4K</span>
+            </div>
+            <div class="social-action-btn">
+              <div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
+              <span class="social-action-count">Share</span>
+            </div>
+            <div class="yt-sound-disc"></div>
+          </div>
+
+          <div class="social-bottom-bar">
+            <div class="social-user-row">
+              <div class="social-avatar yt-avatar">CS</div>
+              <span class="social-username">@creator_studio</span>
+              <span class="social-follow-pill yt-pill">Subscribe</span>
+            </div>
+            <div class="social-caption">Captivating vertical content with AI animated word highlights.</div>
+            <div class="social-audio-tag">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+              <span>Original audio — Creator Studio</span>
+            </div>
+          </div>
+        `;
+      } else {
+        // YouTube Shorts Web Desktop UI
+        socialUiLayer.innerHTML = `
+          <div class="web-player-chrome">
+            <div class="web-top-bar">
+              <span>▶ YouTube Shorts (Web Browser)</span>
+              <span>1080p • 60fps</span>
+            </div>
+            <div class="social-right-bar" style="bottom: 75px;">
+              <div class="social-action-btn"><div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z"/></svg></div><span class="social-action-count">184K</span></div>
+              <div class="social-action-btn"><div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg></div><span class="social-action-count">1.4K</span></div>
+              <div class="social-action-btn"><div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div><span class="social-action-count">Share</span></div>
+            </div>
+            <div class="web-bottom-bar">
+              <div class="web-progress-track"><div class="web-progress-fill"></div></div>
+              <div class="web-controls-row">
+                <span>0:14 / 0:45</span>
+                <span class="social-username">@creator_studio • Subscribe</span>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+    } else if (state.socialPlatform === "instagram") {
+      if (isMobile) {
+        // Instagram Reels Mobile App UI
+        socialUiLayer.innerHTML = `
+          <div class="social-top-bar">
+            <span class="ig-reels-title">Reels ▾</span>
+            <div class="social-top-icons">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+            </div>
+          </div>
+
+          <div class="social-right-bar">
+            <div class="social-action-btn">
+              <div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></div>
+              <span class="social-action-count">94.2K</span>
+            </div>
+            <div class="social-action-btn">
+              <div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18zM18 14H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg></div>
+              <span class="social-action-count">830</span>
+            </div>
+            <div class="social-action-btn">
+              <div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></div>
+              <span class="social-action-count">Share</span>
+            </div>
+            <div class="social-action-btn">
+              <div class="social-action-icon"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"></circle><circle cx="12" cy="12" r="2"></circle><circle cx="19" cy="12" r="2"></circle></svg></div>
+            </div>
+            <div class="social-avatar" style="border-radius: 4px; width: 26px; height: 26px;">♫</div>
+          </div>
+
+          <div class="social-bottom-bar">
+            <div class="social-user-row">
+              <div class="social-avatar">CS</div>
+              <span class="social-username">creator_studio</span>
+              <span class="social-follow-pill ig-pill">Follow</span>
+            </div>
+            <div class="social-caption">Captivating vertical reels with AI animated word highlights... <strong>more</strong></div>
+            <div class="social-audio-tag">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+              <span>creator_studio • Original Audio</span>
+            </div>
+          </div>
+        `;
+      } else {
+        // Instagram Reels Web Desktop UI
+        socialUiLayer.innerHTML = `
+          <div class="web-player-chrome">
+            <div class="web-top-bar">
+              <span>📷 Instagram Reels (Web Browser)</span>
+              <span>🔊 Audio On</span>
+            </div>
+            <div class="social-right-bar" style="bottom: 60px;">
+              <div class="social-action-btn"><div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></div><span class="social-action-count">94.2K</span></div>
+              <div class="social-action-btn"><div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18z"/></svg></div><span class="social-action-count">830</span></div>
+            </div>
+            <div class="social-bottom-bar" style="bottom: 12px;">
+              <div class="social-user-row">
+                <div class="social-avatar">CS</div>
+                <span class="social-username">creator_studio • Follow</span>
+              </div>
+              <div class="social-caption">High-impact vertical video styling and word highlighting</div>
+            </div>
+          </div>
+        `;
+      }
+    } else if (state.socialPlatform === "facebook") {
+      if (isMobile) {
+        // Facebook Reels Mobile UI
+        socialUiLayer.innerHTML = `
+          <div class="social-top-bar">
+            <span>Reels</span>
+            <div class="social-top-icons">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"></circle><circle cx="12" cy="12" r="2"></circle><circle cx="12" cy="19" r="2"></circle></svg>
+            </div>
+          </div>
+
+          <div class="social-right-bar">
+            <div class="social-action-btn">
+              <div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z"/></svg></div>
+              <span class="social-action-count">45K</span>
+            </div>
+            <div class="social-action-btn">
+              <div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg></div>
+              <span class="social-action-count">612</span>
+            </div>
+            <div class="social-action-btn">
+              <div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg></div>
+              <span class="social-action-count">Share</span>
+            </div>
+          </div>
+
+          <div class="social-bottom-bar">
+            <div class="social-user-row">
+              <div class="social-avatar fb-avatar">CS</div>
+              <span class="social-username">Creator Studio</span>
+              <span class="social-follow-pill fb-pill">Follow</span>
+            </div>
+            <div class="social-caption">Captivating video content with AI animated word highlights.</div>
+          </div>
+        `;
+      } else {
+        // Facebook Video Web Desktop UI
+        socialUiLayer.innerHTML = `
+          <div class="web-player-chrome">
+            <div class="web-top-bar">
+              <span>Facebook Video Player (Web Browser)</span>
+              <span>HD 1080p</span>
+            </div>
+            <div class="web-bottom-bar">
+              <div class="web-progress-track"><div class="web-progress-fill" style="background:#1877f2;"></div></div>
+              <div class="web-controls-row">
+                <span>▶ 0:18 / 0:45 • 🔊</span>
+                <span>Creator Studio</span>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+    }
+  }
+
+  // Preview Text Switcher
+  if (btnTextDefault) {
+    btnTextDefault.addEventListener("click", () => {
+      btnTextDefault.classList.add("active");
+      if (btnTextLorem) btnTextLorem.classList.remove("active");
+      if (editorState.dialogues && editorState.dialogues.length > 0 && editorState.dialogues[0].clean_text) {
+        previewTextInput.value = editorState.dialogues[0].clean_text.replace(/\\N/gi, " ").replace(/\\h/gi, " ").replace(/\s+/g, " ").trim();
+      } else {
+        previewTextInput.value = "Voice Highlighter Subtitles Preview";
+      }
+      state.previewText = previewTextInput.value;
+      state.activeWordIndex = 0;
+      renderSubtitlePreview();
+    });
+  }
+
+  if (btnTextLorem) {
+    btnTextLorem.addEventListener("click", () => {
+      btnTextLorem.classList.add("active");
+      if (btnTextDefault) btnTextDefault.classList.remove("active");
+      previewTextInput.value = "Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt.";
+      state.previewText = previewTextInput.value;
+      state.activeWordIndex = 0;
+      renderSubtitlePreview();
+    });
+  }
+
+  if (previewTextInput) {
+    previewTextInput.addEventListener("input", (e) => {
+      state.previewText = e.target.value || "Lorem ipsum dolor sit amet";
+      state.activeWordIndex = 0;
+      renderSubtitlePreview();
+    });
+  }
+
+  if (btnLoadVideo) {
+    btnLoadVideo.addEventListener("click", () => {
+      const path = videoPathInput.value.trim();
+      if (path) {
+        loadVideoInfo(path);
+      }
+    });
+  }
+
+  if (videoPathInput) {
+    videoPathInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const path = videoPathInput.value.trim();
+        if (path) loadVideoInfo(path);
+      }
+    });
+
+    videoPathInput.addEventListener("input", (e) => {
+      state.videoPath = e.target.value.trim();
+    });
+  }
+
+  if (outputFilenameInput) {
+    outputFilenameInput.addEventListener("input", (e) => {
+      state.outputFilename = e.target.value.trim();
+    });
+  }
+
+  // ----------------------------------------------------
+  // 5. Submit Job & Progress Polling
+  // ----------------------------------------------------
+  function updateStepper(step) {
+    stepNodeExtract.classList.remove("active", "completed");
+    stepNodeWhisper.classList.remove("active", "completed");
+    stepNodeAlign.classList.remove("active", "completed");
+    stepNodeAss.classList.remove("active", "completed");
+    if (stepNodeBurn) stepNodeBurn.classList.remove("active", "completed");
+
+    if (step === 1) {
+      stepNodeExtract.classList.add("active");
+    } else if (step === 2) {
+      stepNodeExtract.classList.add("completed");
+      stepNodeWhisper.classList.add("active");
+    } else if (step === 3) {
+      stepNodeExtract.classList.add("completed");
+      stepNodeWhisper.classList.add("completed");
+      stepNodeAlign.classList.add("active");
+    } else if (step === 4) {
+      stepNodeExtract.classList.add("completed");
+      stepNodeWhisper.classList.add("completed");
+      stepNodeAlign.classList.add("completed");
+      stepNodeAss.classList.add("active");
+    } else if (step === 5) {
+      stepNodeExtract.classList.add("completed");
+      stepNodeWhisper.classList.add("completed");
+      stepNodeAlign.classList.add("completed");
+      stepNodeAss.classList.add("completed");
+      if (stepNodeBurn) stepNodeBurn.classList.add("active");
+    } else if (step >= 6) {
+      stepNodeExtract.classList.add("completed");
+      stepNodeWhisper.classList.add("completed");
+      stepNodeAlign.classList.add("completed");
+      stepNodeAss.classList.add("completed");
+      if (stepNodeBurn) stepNodeBurn.classList.add("completed");
+    }
+  }
+
+  // ----------------------------------------------------
+  // In-Place Studio Progress Thermometer & Delivery Controls
+  // ----------------------------------------------------
+  const studioProgressThermometer = document.getElementById("studioProgressThermometer");
+  const thermometerTitle = document.getElementById("thermometerTitle");
+  const thermometerPercentBadge = document.getElementById("thermometerPercentBadge");
+  const thermometerFill = document.getElementById("thermometerFill");
+  const thermometerStageMessage = document.getElementById("thermometerStageMessage");
+  const msAudio = document.getElementById("msAudio");
+  const msWhisper = document.getElementById("msWhisper");
+  const msAlign = document.getElementById("msAlign");
+  const msAss = document.getElementById("msAss");
+  const msBurn = document.getElementById("msBurn");
+  const btnInspectAssStudio = document.getElementById("btnInspectAssStudio");
+
+  function showThermometer(title, initialPercent = 0, initialMsg = "Initializing...") {
+    if (burnedDeliveryBanner) burnedDeliveryBanner.classList.add("hidden");
+    if (studioProgressThermometer) {
+      studioProgressThermometer.classList.remove("hidden");
+      if (thermometerTitle) thermometerTitle.textContent = title;
+      if (thermometerPercentBadge) thermometerPercentBadge.textContent = `${initialPercent}%`;
+      if (thermometerFill) thermometerFill.style.width = `${initialPercent}%`;
+      if (thermometerStageMessage) {
+        thermometerStageMessage.textContent = initialMsg;
+        thermometerStageMessage.style.color = "#93c5fd";
+      }
+    }
+  }
+
+  function updateThermometer(percent, stageMsg, milestoneIndex = 1, customTitle = null) {
+    if (!studioProgressThermometer) return;
+    studioProgressThermometer.classList.remove("hidden");
+    const pct = Math.max(0, Math.min(100, Math.round(percent)));
+    if (thermometerPercentBadge) thermometerPercentBadge.textContent = `${pct}%`;
+    if (thermometerFill) thermometerFill.style.width = `${pct}%`;
+    if (stageMsg && thermometerStageMessage) thermometerStageMessage.textContent = stageMsg;
+    if (customTitle && thermometerTitle) thermometerTitle.textContent = customTitle;
+
+    const milestones = [msAudio, msWhisper, msAlign, msAss, msBurn];
+    milestones.forEach((el, idx) => {
+      if (!el) return;
+      const num = idx + 1;
+      if (num < milestoneIndex) {
+        el.className = "milestone-pill completed";
+      } else if (num === milestoneIndex) {
+        el.className = "milestone-pill active";
+      } else {
+        el.className = "milestone-pill";
+      }
+    });
+  }
+
+  function hideThermometer() {
+    if (studioProgressThermometer) {
+      studioProgressThermometer.classList.add("hidden");
+    }
+  }
+
+  function showDeliveryBanner(videoPath, filename = null) {
+    hideThermometer();
+    if (burnedDeliveryBanner) {
+      burnedDeliveryBanner.classList.remove("hidden");
+      if (burnedVideoPathText) burnedVideoPathText.textContent = videoPath;
+      state.lastBurnedVideoPath = videoPath;
+      if (valActiveVideo) {
+        valActiveVideo.textContent = filename || videoPath.split("/").pop() || videoPath;
+      }
+      burnedDeliveryBanner.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+
+  if (btnInspectAssStudio) {
+    btnInspectAssStudio.addEventListener("click", () => {
+      if (cardSubtitleDrawer) {
+        cardSubtitleDrawer.classList.remove("collapsed");
+        cardSubtitleDrawer.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    });
+  }
+
+  async function pollStatus(taskId) {
+    try {
+      const res = await fetch(`/api/status/${taskId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+
+      const milestone = data.progress < 25 ? 1 : data.progress < 60 ? 2 : data.progress < 85 ? 3 : data.progress < 94 ? 4 : 5;
+      updateThermometer(
+        data.progress,
+        data.stage_message,
+        milestone,
+        data.burn_video ? "Transcribing & Burning Video (RTX A5000 NVENC)..." : "Generating Subtitles (.ass) with WhisperX..."
+      );
+
+      // Keep legacy anchors updated for backwards compatibility
+      if (progressBarFill) progressBarFill.style.width = `${data.progress}%`;
+      if (statusPercent) statusPercent.textContent = `${data.progress}%`;
+      if (statusStageMessage) statusStageMessage.textContent = data.stage_message;
+
+      if (data.status === "completed") {
+        clearInterval(state.pollInterval);
+        updateThermometer(100, "Done! Process completed successfully.", 5);
+        setTimeout(() => hideThermometer(), 1000);
+
+        state.currentTaskId = data.task_id;
+        state.hasExistingAss = true;
+        state.existingAssPath = data.download_url;
+
+        if (btnDownloadAss) {
+          btnDownloadAss.href = data.download_url;
+          if (data.custom_filename) btnDownloadAss.download = `${data.custom_filename}.ass`;
+        }
+        if (valActiveAss) {
+          valActiveAss.textContent = `${data.custom_filename || 'subtitles'}.ass`;
+        }
+
+        if (data.video_download_url || data.video_file) {
+          const finalVideoPath = data.video_file || `${state.videoPath || ''}`;
+          state.lastBurnedVideoPath = finalVideoPath;
+          showDeliveryBanner(finalVideoPath, data.video_filename || data.custom_filename);
+          updateWorkflowStepper('burned');
+        } else {
+          if (burnedDeliveryBanner) burnedDeliveryBanner.classList.add("hidden");
+          updateWorkflowStepper('subtitles_ready');
+          // Automatically reveal and expand the subtitle verification drawer right below buttons
+          if (cardSubtitleDrawer) {
+            cardSubtitleDrawer.classList.remove('collapsed');
+            cardSubtitleDrawer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        }
+
+        if (codeBodyPreview) codeBodyPreview.textContent = data.ass_preview || "; Generated Subtitles Ready";
+        if (btnGenerateAssOnly) btnGenerateAssOnly.classList.remove('disabled');
+        if (btnTranscribeAndBurn) btnTranscribeAndBurn.classList.remove('disabled');
+        if (btnBurnOnly) btnBurnOnly.classList.remove('disabled');
+
+        // Automatically populate dialogue list
+        loadDrawerSubtitles(data.task_id);
+      } else if (data.status === "error") {
+        clearInterval(state.pollInterval);
+        updateThermometer(100, `Error: ${data.error}`, 1, "Failed");
+        if (thermometerStageMessage) thermometerStageMessage.style.color = "#f87171";
+        if (btnGenerateAssOnly) btnGenerateAssOnly.classList.remove('disabled');
+        if (btnTranscribeAndBurn) btnTranscribeAndBurn.classList.remove('disabled');
+        updateWorkflowStepper('idle');
+      }
+    } catch (e) {
+      console.error("Polling error:", e);
+    }
+  }
+
+  // ----------------------------------------------------
+  // Primary Workflow Execution Functions (Tasks 1, 2, 4)
+  // ----------------------------------------------------
+  async function executeTranscription(burnVideo = false) {
+    const videoPath = (videoPathInput ? videoPathInput.value.trim() : "") || state.videoPath;
+    if (!videoPath) {
+      alert("Please provide or browse to a valid video file.");
+      openNativeFileDialog();
+      return;
+    }
+    state.videoPath = videoPath;
+
+    const selectModelName = document.getElementById("selectModelName");
+    const chosenModel = selectModelName ? selectModelName.value : "large-v3";
+    const customFilename = outputFilenameInput ? outputFilenameInput.value.trim() : state.outputFilename;
+
+    const payload = {
+      video_path: videoPath,
+      model_name: chosenModel,
+      burn_video: burnVideo,
+      output_filename: customFilename || null,
+      reuse_existing_ass: false,
+      reuse_existing_wav: true,
+      styling: {
+        font_name: state.fontFamily,
+        font_size: state.fontSize,
+        bold: state.bold,
+        italic: state.italic,
+        primary_color: state.textBaseColor,
+        outline_color: state.outlineColor,
+        outline_width: state.outlineWidth,
+        highlight_style: state.highlightStyle,
+        highlight_color: state.highlightColor,
+        highlight_scale_pct: state.highlightScalePct,
+        box_type: state.boxType,
+        box_bg_color: state.boxBgColor,
+        box_opacity: state.boxOpacity,
+        box_font_color: state.boxFontColor,
+        pos_x_pct: state.posX,
+        pos_y_pct: state.posY,
+        max_lines: state.maxLines,
+        max_chars_per_line: state.maxChars,
+        line_width_pct: state.lineWidthPct
+      }
+    };
+
+    updateWorkflowStepper(burnVideo ? 'burning' : 'transcribing');
+    if (btnGenerateAssOnly) btnGenerateAssOnly.classList.add('disabled');
+    if (btnTranscribeAndBurn) btnTranscribeAndBurn.classList.add('disabled');
+
+    // Show horizontal thermometer directly below action buttons
+    showThermometer(
+      burnVideo ? "Transcribing & Burning Video (WhisperX + NVENC)..." : "Generating Subtitles (.ass) with WhisperX...",
+      5,
+      "Initializing WhisperX speech recognition pipeline..."
+    );
+
+    try {
+      const res = await fetch("/api/transcribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Submission failed");
+      }
+      const data = await res.json();
+      state.currentTaskId = data.task_id;
+
+      if (state.pollInterval) clearInterval(state.pollInterval);
+      state.pollInterval = setInterval(() => pollStatus(state.currentTaskId), 850);
+      pollStatus(state.currentTaskId);
+    } catch (err) {
+      alert(`Error starting transcription: ${err.message}`);
+      if (btnGenerateAssOnly) btnGenerateAssOnly.classList.remove('disabled');
+      if (btnTranscribeAndBurn) btnTranscribeAndBurn.classList.remove('disabled');
+      hideThermometer();
+      updateWorkflowStepper('idle');
+    }
+  }
+
+  // Task 4: Fast NVENC Burn Video from Current / Edited ASS
+  async function executeBurnVideo() {
+    const videoPath = (videoPathInput ? videoPathInput.value.trim() : '') || state.videoPath;
+    if (!videoPath) {
+      alert("Please provide or load a video file first.");
+      openNativeFileDialog();
+      return;
+    }
+    state.videoPath = videoPath;
+
+    const effectiveAss = editorState.assPath || state.existingAssPath;
+    if (!effectiveAss && !editorState.currentContent) {
+      alert("No subtitles (.ass) found to burn. Please generate subtitles first using Step 1.");
+      return;
+    }
+
+    updateWorkflowStepper('burning');
+    updateDrawerStatus('Burning subtitles with NVIDIA RTX A5000 NVENC...', 'normal');
+    if (btnBurnOnly) btnBurnOnly.classList.add('disabled');
+    if (btnDrawerBurn) {
+      btnDrawerBurn.disabled = true;
+      btnDrawerBurn.textContent = 'Burning...';
+    }
+    if (btnModalSaveAndBurn) {
+      btnModalSaveAndBurn.disabled = true;
+      btnModalSaveAndBurn.textContent = 'Burning...';
+    }
+
+    // Show horizontal thermometer progress meter directly below buttons
+    showThermometer("Burning Video with NVIDIA RTX A5000 NVENC...", 15, "Compiling ASS dialogue events and starting NVENC encode...");
+    let burnProgress = 15;
+    const burnProgressTimer = setInterval(() => {
+      burnProgress = Math.min(88, burnProgress + Math.floor(Math.random() * 12) + 6);
+      updateThermometer(burnProgress, "Burning styled word highlights with GPU hardware acceleration...", 5);
+    }, 400);
+
+    try {
+      const payload = {
+        video_path: videoPath,
+        ass_path: effectiveAss,
+        task_id: state.currentTaskId || editorState.taskId,
+        output_filename: (outputFilenameInput ? outputFilenameInput.value.trim() : null) || state.outputFilename,
+        content: editorState.isDirty ? editorState.currentContent : null
+      };
+
+      const res = await fetch('/api/burn-video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      clearInterval(burnProgressTimer);
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Subtitle burning failed');
+      }
+
+      const data = await res.json();
+      editorState.isDirty = false;
+      if (btnDrawerRevert) btnDrawerRevert.disabled = true;
+
+      updateWorkflowStepper('burned');
+      updateDrawerStatus(`✓ Video burned successfully: ${data.video_filename}`, 'success');
+
+      state.lastBurnedVideoPath = data.video_path || data.video_file;
+      if (valActiveVideo) valActiveVideo.textContent = data.video_filename || data.video_file;
+
+      updateThermometer(100, "✓ NVENC hardware burn complete in ~3 seconds!", 5);
+      setTimeout(() => {
+        showDeliveryBanner(state.lastBurnedVideoPath, data.video_filename);
+      }, 700);
+
+      if (btnDownloadAss && data.download_url) {
+        btnDownloadAss.href = data.download_url;
+        if (data.ass_filename) btnDownloadAss.download = data.ass_filename;
+      }
+
+      if (modalAssEditor && !modalAssEditor.classList.contains('hidden')) {
+        setTimeout(() => { modalAssEditor.classList.add('hidden'); }, 500);
+      }
+    } catch (err) {
+      clearInterval(burnProgressTimer);
+      console.error("Burn video error:", err);
+      alert(`Error burning video: ${err.message}`);
+      updateThermometer(100, `Error: ${err.message}`, 5, "Burn Failed");
+      updateDrawerStatus(`Burn error: ${err.message}`, 'error');
+      updateWorkflowStepper('subtitles_ready');
+    } finally {
+      if (btnBurnOnly) btnBurnOnly.classList.remove('disabled');
+      if (btnDrawerBurn) {
+        btnDrawerBurn.disabled = false;
+        btnDrawerBurn.innerHTML = `
+          <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.2" fill="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          <span>Burn Video (.mp4)</span>
+        `;
+      }
+      if (btnModalSaveAndBurn) {
+        btnModalSaveAndBurn.disabled = false;
+        btnModalSaveAndBurn.innerHTML = `
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          <span>Save & Burn Video (.mp4)</span>
+        `;
+      }
+    }
+  }
+
+  // Wire primary action triggers
+  if (btnGenerateAssOnly) {
+    btnGenerateAssOnly.addEventListener("click", () => executeTranscription(false));
+  }
+  if (btnTranscribeAndBurn) {
+    btnTranscribeAndBurn.addEventListener("click", () => executeTranscription(true));
+  }
+  if (btnBurnOnly) {
+    btnBurnOnly.addEventListener("click", () => executeBurnVideo());
+  }
+  if (btnSubmit) {
+    btnSubmit.addEventListener("click", () => executeTranscription(state.outputMode === "burn"));
+  }
+
+  // Copy ASS code
+  btnCopyAss.addEventListener("click", () => {
+    navigator.clipboard.writeText(codeBodyPreview.textContent).then(() => {
+      copyBtnText.textContent = "Copied to Clipboard!";
+      setTimeout(() => { copyBtnText.textContent = "Copy ASS Script"; }, 2000);
+    });
+  });
+
+  // ----------------------------------------------------
+  // Presets Management System (LocalStorage + JSON Export/Import)
+  // ----------------------------------------------------
+  const PRESET_STORAGE_KEY = "voice_highlighter_custom_presets";
+  const PRESET_LAST_ACTIVE_KEY = "voice_highlighter_last_active_preset";
+
+  const FACTORY_PRESETS = {
+    "factory:tiktok_pop": {
+      name: "🔥 Viral TikTok (Yellow Pop)",
+      styling: {
+        posX: 50,
+        posY: 78,
+        fontFamily: "Montserrat",
+        fontSize: 22,
+        primaryColor: "#ffffff",
+        outlineColor: "#000000",
+        outlineWidth: 4,
+        bold: true,
+        italic: false,
+        highlightStyle: "color",
+        highlightColor: "#ffd700",
+        highlightScale: 125,
+        maxLines: 1,
+        lineWidthPct: 82,
+        maxChars: 28
+      }
+    },
+    "factory:hormozi_box": {
+      name: "🏷️ Hormozi Pill Box",
+      styling: {
+        posX: 50,
+        posY: 78,
+        fontFamily: "Montserrat",
+        fontSize: 22,
+        primaryColor: "#ffffff",
+        outlineColor: "#000000",
+        outlineWidth: 0,
+        bold: true,
+        italic: false,
+        highlightStyle: "box",
+        boxType: "word",
+        boxOpacity: 0.90,
+        boxBgColor: "#ffd700",
+        boxFontColor: "#000000",
+        highlightScale: 115,
+        maxLines: 1,
+        lineWidthPct: 82,
+        maxChars: 28
+      }
+    },
+    "factory:classic_sub": {
+      name: "🎬 Classic Subtitle (2 Lines)",
+      styling: {
+        posX: 50,
+        posY: 82,
+        fontFamily: "Inter",
+        fontSize: 20,
+        primaryColor: "#ffffff",
+        outlineColor: "#000000",
+        outlineWidth: 3,
+        bold: false,
+        italic: false,
+        highlightStyle: "color",
+        highlightColor: "#00e5ff",
+        highlightScale: 100,
+        maxLines: 2,
+        lineWidthPct: 85,
+        maxChars: 32
+      }
+    },
+    "factory:clean_minimal": {
+      name: "✨ Clean Minimalist",
+      styling: {
+        posX: 50,
+        posY: 75,
+        fontFamily: "Inter",
+        fontSize: 18,
+        primaryColor: "#ffffff",
+        outlineColor: "#000000",
+        outlineWidth: 2,
+        bold: false,
+        italic: false,
+        highlightStyle: "color",
+        highlightColor: "#10b981",
+        highlightScale: 105,
+        maxLines: 1,
+        lineWidthPct: 80,
+        maxChars: 26
+      }
+    }
+  };
+
+  let presetDrawerMode = "save"; // 'save' or 'rename'
+
+  function getCustomPresets() {
+    try {
+      const raw = localStorage.getItem(PRESET_STORAGE_KEY);
+      const presets = raw ? JSON.parse(raw) : {};
+      // Purge any personal developer presets so only standard presets ship
+      let modified = false;
+      Object.keys(presets).forEach(key => {
+        if (key.includes("katie") || (presets[key].name && presets[key].name.toLowerCase().includes("katie"))) {
+          delete presets[key];
+          modified = true;
+        }
+      });
+      if (modified) {
+        localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify(presets));
+      }
+      return presets;
+    } catch (e) {
+      console.warn("Failed to read presets from localStorage:", e);
+      return {};
+    }
+  }
+
+  function setCustomPresets(presets) {
+    try {
+      localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify(presets));
+    } catch (e) {
+      console.warn("Failed to write presets to localStorage:", e);
+    }
+  }
+
+  function showPresetStatus(msg) {
+    if (!presetStatusMsg) return;
+    presetStatusMsg.textContent = msg;
+    presetStatusMsg.style.display = "block";
+    setTimeout(() => {
+      if (presetStatusMsg) presetStatusMsg.style.display = "none";
+    }, 3200);
+  }
+
+  function populatePresetDropdown(selectedId) {
+    if (!optgroupCustom || !selectPreset) return;
+    optgroupCustom.innerHTML = "";
+    const custom = getCustomPresets();
+    const ids = Object.keys(custom);
+
+    ids.forEach(id => {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = `★ ${custom[id].name}`;
+      optgroupCustom.appendChild(opt);
+    });
+
+    if (selectedId) {
+      selectPreset.value = selectedId;
+    }
+    updatePresetToolbarState();
+  }
+
+  function updatePresetToolbarState() {
+    const val = selectPreset.value;
+    const isCustom = val && val.startsWith("custom_");
+    if (btnRenamePreset) btnRenamePreset.disabled = !isCustom;
+    if (btnDeletePreset) btnDeletePreset.disabled = !isCustom;
+  }
+
+  function getCurrentStylingSnapshot() {
+    return {
+      posX: state.posX,
+      posY: state.posY,
+      fontFamily: state.fontFamily,
+      fontSize: state.fontSize,
+      primaryColor: state.primaryColor,
+      outlineColor: state.outlineColor,
+      outlineWidth: state.outlineWidth,
+      bold: state.bold,
+      italic: state.italic,
+      highlightStyle: state.highlightStyle,
+      highlightColor: state.highlightColor,
+      highlightScale: state.highlightScale,
+      boxType: state.boxType,
+      boxOpacity: state.boxOpacity,
+      boxBgColor: state.boxBgColor,
+      boxFontColor: state.boxFontColor,
+      maxLines: state.maxLines,
+      lineWidthPct: state.lineWidthPct,
+      maxChars: state.maxChars
+    };
+  }
+
+  function applyPresetStyling(styling) {
+    if (!styling) return;
+
+    // Position
+    if (styling.posX !== undefined && styling.posY !== undefined) {
+      updatePosition(styling.posX, styling.posY, true);
+    }
+
+    // Font Family
+    if (styling.fontFamily && selectFontFamily) {
+      selectFontFamily.value = styling.fontFamily;
+      state.fontFamily = styling.fontFamily;
+    }
+
+    // Font Size
+    if (styling.fontSize !== undefined && sliderFontSize) {
+      sliderFontSize.value = styling.fontSize;
+      if (labelFontSize) labelFontSize.textContent = `${styling.fontSize}px`;
+      state.fontSize = Number(styling.fontSize);
+    }
+
+    // Colors
+    if (styling.primaryColor && colorTextBase) {
+      colorTextBase.value = styling.primaryColor;
+      if (codeTextBase) codeTextBase.value = styling.primaryColor;
+      state.primaryColor = styling.primaryColor;
+    }
+
+    if (styling.outlineColor && colorOutline) {
+      colorOutline.value = styling.outlineColor;
+      if (codeOutline) codeOutline.value = styling.outlineColor;
+      state.outlineColor = styling.outlineColor;
+    }
+
+    if (styling.outlineWidth !== undefined && sliderOutlineWidth) {
+      sliderOutlineWidth.value = styling.outlineWidth;
+      if (labelOutlineWidth) labelOutlineWidth.textContent = `${styling.outlineWidth}px`;
+      state.outlineWidth = Number(styling.outlineWidth);
+    }
+
+    // Bold / Italic
+    if (styling.bold !== undefined && checkBold) {
+      checkBold.checked = Boolean(styling.bold);
+      state.bold = Boolean(styling.bold);
+    }
+    if (styling.italic !== undefined && checkItalic) {
+      checkItalic.checked = Boolean(styling.italic);
+      state.italic = Boolean(styling.italic);
+    }
+
+    // Highlight Style
+    if (styling.highlightStyle) {
+      state.highlightStyle = styling.highlightStyle;
+      if (styling.highlightStyle === "box") {
+        if (btnStyleBox) btnStyleBox.classList.add("active");
+        if (btnStyleColor) btnStyleColor.classList.remove("active");
+        if (paneHighlightBox) paneHighlightBox.style.display = "block";
+        if (paneHighlightColor) paneHighlightColor.style.display = "none";
+      } else {
+        if (btnStyleColor) btnStyleColor.classList.add("active");
+        if (btnStyleBox) btnStyleBox.classList.remove("active");
+        if (paneHighlightColor) paneHighlightColor.style.display = "block";
+        if (paneHighlightBox) paneHighlightBox.style.display = "none";
+      }
+    }
+
+    if (styling.highlightColor && colorHighlightText) {
+      colorHighlightText.value = styling.highlightColor;
+      if (codeHighlightText) codeHighlightText.value = styling.highlightColor;
+      state.highlightColor = styling.highlightColor;
+    }
+
+    // Highlight Font Size Boost
+    if (styling.highlightScale !== undefined && sliderHighlightScale) {
+      sliderHighlightScale.value = styling.highlightScale;
+      if (labelHighlightScale) labelHighlightScale.textContent = `${styling.highlightScale}%`;
+      state.highlightScale = Number(styling.highlightScale);
+    }
+
+    // Box settings
+    if (styling.boxType && selectBoxType) {
+      selectBoxType.value = styling.boxType;
+      state.boxType = styling.boxType;
+    }
+
+    if (styling.boxOpacity !== undefined && sliderBoxOpacity) {
+      sliderBoxOpacity.value = styling.boxOpacity;
+      if (labelBoxOpacity) labelBoxOpacity.textContent = `${Math.round(styling.boxOpacity * 100)}%`;
+      state.boxOpacity = Number(styling.boxOpacity);
+    }
+
+    if (styling.boxBgColor && colorBoxBg) {
+      colorBoxBg.value = styling.boxBgColor;
+      if (codeBoxBg) codeBoxBg.value = styling.boxBgColor;
+      state.boxBgColor = styling.boxBgColor;
+    }
+
+    if (styling.boxFontColor && colorBoxFont) {
+      colorBoxFont.value = styling.boxFontColor;
+      if (codeBoxFont) codeBoxFont.value = styling.boxFontColor;
+      state.boxFontColor = styling.boxFontColor;
+    }
+
+    // Lines & layout
+    if (styling.maxLines !== undefined) {
+      state.maxLines = Number(styling.maxLines);
+      linePillBtns.forEach(btn => {
+        btn.classList.toggle("active", Number(btn.dataset.lines) === state.maxLines);
+      });
+    }
+
+    if (styling.lineWidthPct !== undefined && sliderLineWidth) {
+      sliderLineWidth.value = styling.lineWidthPct;
+      if (labelLineWidth) labelLineWidth.textContent = `${styling.lineWidthPct}%`;
+      state.lineWidthPct = Number(styling.lineWidthPct);
+    }
+
+    const chars = styling.maxChars || styling.maxCharsPerLine;
+    if (chars !== undefined && sliderMaxChars) {
+      sliderMaxChars.value = chars;
+      if (labelMaxChars) labelMaxChars.textContent = chars;
+      state.maxChars = Number(chars);
+    }
+
+    // Refresh live preview canvas
+    renderSubtitlePreview();
+  }
+
+  function loadAndApplyPreset(presetId) {
+    if (!presetId) return;
+
+    if (presetId.startsWith("factory:")) {
+      const template = FACTORY_PRESETS[presetId];
+      if (template) {
+        applyPresetStyling(template.styling);
+        showPresetStatus(`Applied template: ${template.name}`);
+        localStorage.setItem(PRESET_LAST_ACTIVE_KEY, presetId);
+      }
+    } else {
+      const custom = getCustomPresets();
+      const p = custom[presetId];
+      if (p) {
+        applyPresetStyling(p.styling);
+        showPresetStatus(`Applied preset: ${p.name}`);
+        localStorage.setItem(PRESET_LAST_ACTIVE_KEY, presetId);
+      }
+    }
+    updatePresetToolbarState();
+  }
+
+  // Preset Selection Listener
+  if (selectPreset) {
+    selectPreset.addEventListener("change", (e) => {
+      loadAndApplyPreset(e.target.value);
+    });
+  }
+
+  if (btnApplyPreset) {
+    btnApplyPreset.addEventListener("click", () => {
+      loadAndApplyPreset(selectPreset.value);
+    });
+  }
+
+  // Save New Preset Trigger
+  if (btnSavePreset && presetNameDrawer) {
+    btnSavePreset.addEventListener("click", () => {
+      presetDrawerMode = "save";
+      if (drawerTitle) drawerTitle.textContent = "Save New Preset";
+      if (presetNameInput) {
+        presetNameInput.value = "";
+        presetNameInput.placeholder = "Enter preset name (e.g. TikTok Yellow Pop)";
+      }
+      presetNameDrawer.style.display = "block";
+      setTimeout(() => { if (presetNameInput) presetNameInput.focus(); }, 50);
+    });
+  }
+
+  // Rename Preset Trigger
+  if (btnRenamePreset && presetNameDrawer) {
+    btnRenamePreset.addEventListener("click", () => {
+      const val = selectPreset.value;
+      if (!val || !val.startsWith("custom_")) return;
+      const custom = getCustomPresets();
+      const p = custom[val];
+      if (!p) return;
+
+      presetDrawerMode = "rename";
+      if (drawerTitle) drawerTitle.textContent = `Rename Preset: "${p.name}"`;
+      if (presetNameInput) {
+        presetNameInput.value = p.name;
+      }
+      presetNameDrawer.style.display = "block";
+      setTimeout(() => {
+        if (presetNameInput) {
+          presetNameInput.focus();
+          presetNameInput.select();
+        }
+      }, 50);
+    });
+  }
+
+  // Confirm Name / Rename
+  if (btnConfirmPresetName) {
+    btnConfirmPresetName.addEventListener("click", () => {
+      const name = (presetNameInput ? presetNameInput.value.trim() : "");
+      if (!name) {
+        alert("Please enter a preset name.");
+        return;
+      }
+
+      const custom = getCustomPresets();
+
+      if (presetDrawerMode === "save") {
+        const id = "custom_" + Date.now();
+        custom[id] = {
+          id: id,
+          name: name,
+          updated_at: new Date().toISOString(),
+          styling: getCurrentStylingSnapshot()
+        };
+        setCustomPresets(custom);
+        populatePresetDropdown(id);
+        localStorage.setItem(PRESET_LAST_ACTIVE_KEY, id);
+        showPresetStatus(`Preset "${name}" saved!`);
+      } else if (presetDrawerMode === "rename") {
+        const id = selectPreset.value;
+        if (id && custom[id]) {
+          custom[id].name = name;
+          custom[id].updated_at = new Date().toISOString();
+          setCustomPresets(custom);
+          populatePresetDropdown(id);
+          showPresetStatus(`Preset renamed to "${name}"!`);
+        }
+      }
+
+      if (presetNameDrawer) presetNameDrawer.style.display = "none";
+    });
+  }
+
+  // Enter key support in preset name input
+  if (presetNameInput) {
+    presetNameInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        if (btnConfirmPresetName) btnConfirmPresetName.click();
+      } else if (e.key === "Escape") {
+        if (btnDismissPresetName) btnDismissPresetName.click();
+      }
+    });
+  }
+
+  if (btnDismissPresetName) {
+    btnDismissPresetName.addEventListener("click", () => {
+      if (presetNameDrawer) presetNameDrawer.style.display = "none";
+    });
+  }
+
+  if (btnCancelPresetName) {
+    btnCancelPresetName.addEventListener("click", () => {
+      if (presetNameDrawer) presetNameDrawer.style.display = "none";
+    });
+  }
+
+  // Delete Preset Trigger
+  if (btnDeletePreset) {
+    btnDeletePreset.addEventListener("click", () => {
+      const id = selectPreset.value;
+      if (!id || !id.startsWith("custom_")) return;
+      const custom = getCustomPresets();
+      const p = custom[id];
+      if (!p) return;
+
+      if (confirm(`Are you sure you want to delete preset "${p.name}"?`)) {
+        delete custom[id];
+        setCustomPresets(custom);
+        populatePresetDropdown("factory:tiktok_pop");
+        loadAndApplyPreset("factory:tiktok_pop");
+        showPresetStatus(`Preset "${p.name}" deleted.`);
+      }
+    });
+  }
+
+  // Export Preset (.json)
+  if (btnExportPreset) {
+    btnExportPreset.addEventListener("click", () => {
+      const val = selectPreset.value;
+      let presetName = "voice_highlighter_preset";
+      let stylingData = getCurrentStylingSnapshot();
+
+      if (val && val.startsWith("factory:")) {
+        const f = FACTORY_PRESETS[val];
+        if (f) {
+          presetName = f.name.replace(/[^a-zA-Z0-9_-]/g, "_");
+          stylingData = f.styling;
+        }
+      } else if (val && val.startsWith("custom_")) {
+        const custom = getCustomPresets();
+        if (custom[val]) {
+          presetName = custom[val].name.replace(/[^a-zA-Z0-9_-]/g, "_");
+          stylingData = custom[val].styling;
+        }
+      }
+
+      const payload = {
+        name: presetName,
+        version: "1.0",
+        exported_at: new Date().toISOString(),
+        styling: stylingData
+      };
+
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(payload, null, 2));
+      const downloadAnchor = document.createElement("a");
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", `${presetName}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+
+      showPresetStatus(`Exported preset "${presetName}.json"`);
+    });
+  }
+
+  // Import Preset (.json)
+  if (btnImportPresetTrigger && presetFileInput) {
+    btnImportPresetTrigger.addEventListener("click", () => {
+      presetFileInput.click();
+    });
+
+    presetFileInput.addEventListener("change", (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const parsed = JSON.parse(event.target.result);
+          if (!parsed || !parsed.styling) {
+            alert("Invalid preset file format: missing 'styling' object.");
+            return;
+          }
+
+          const rawName = parsed.name || file.name.replace(/\.json$/i, "");
+          const cleanName = rawName.replace(/^[🔥🏷️🎬✨★\s]+/, "").trim() || "Imported Preset";
+
+          const custom = getCustomPresets();
+          const id = "custom_" + Date.now();
+          custom[id] = {
+            id: id,
+            name: cleanName,
+            updated_at: new Date().toISOString(),
+            styling: parsed.styling
+          };
+
+          setCustomPresets(custom);
+          populatePresetDropdown(id);
+          applyPresetStyling(parsed.styling);
+          localStorage.setItem(PRESET_LAST_ACTIVE_KEY, id);
+          showPresetStatus(`Imported & applied preset "${cleanName}"!`);
+        } catch (err) {
+          alert(`Failed to parse preset JSON file: ${err.message}`);
+        }
+      };
+      reader.readAsText(file);
+      presetFileInput.value = "";
+    });
+  }
+
+  // =========================================
+  // SUBTITLE TEXT EDITOR CONTROLLER
+  // =========================================
+  const btnOpenAssEditor = document.getElementById("btnOpenAssEditor");
+  const editAssHint = document.getElementById("editAssHint");
+  const btnEditAssResults = document.getElementById("btnEditAssResults");
+  const modalAssEditor = document.getElementById("modalAssEditor");
+  const btnCloseAssModal = document.getElementById("btnCloseAssModal");
+  const btnCancelAssEditor = document.getElementById("btnCancelAssEditor");
+  const btnResetAssEditor = document.getElementById("btnResetAssEditor");
+  const btnSaveAssEditor = document.getElementById("btnSaveAssEditor");
+  const editorFilenameBadge = document.getElementById("editorFilenameBadge");
+  const tabDialogueView = document.getElementById("tabDialogueView");
+  const tabRawView = document.getElementById("tabRawView");
+  const paneDialogueView = document.getElementById("paneDialogueView");
+  const paneRawView = document.getElementById("paneRawView");
+  const dialogueListContainer = document.getElementById("dialogueListContainer");
+  const rawAssTextarea = document.getElementById("rawAssTextarea");
+  const editorStatusDot = document.getElementById("editorStatusDot");
+  const editorStatusText = document.getElementById("editorStatusText");
+  const editorTabHint = document.getElementById("editorTabHint");
+
+  let editorState = {
+    taskId: null,
+    mediaPath: "",
+    assPath: "",
+    filePath: "",
+    initialContent: "",
+    currentContent: "",
+    dialogues: [],
+    activeTab: "dialogue",
+    isDirty: false
+  };
+
+  function updateEditorStatus(text, type = "normal") {
+    if (!editorStatusText) return;
+    editorStatusText.textContent = text;
+    if (editorStatusDot) {
+      if (type === "success") {
+        editorStatusDot.style.background = "#10b981";
+        editorStatusDot.style.boxShadow = "0 0 6px #10b981";
+      } else if (type === "warning") {
+        editorStatusDot.style.background = "#f59e0b";
+        editorStatusDot.style.boxShadow = "0 0 6px #f59e0b";
+      } else if (type === "error") {
+        editorStatusDot.style.background = "#ef4444";
+        editorStatusDot.style.boxShadow = "0 0 6px #ef4444";
+      } else {
+        editorStatusDot.style.background = "#00e5ff";
+        editorStatusDot.style.boxShadow = "0 0 6px #00e5ff";
+      }
+    }
+  }
+
+  function switchEditorTab(tabName) {
+    editorState.activeTab = tabName;
+    if (tabName === "dialogue") {
+      if (tabDialogueView) tabDialogueView.classList.add("active");
+      if (tabRawView) tabRawView.classList.remove("active");
+      if (paneDialogueView) paneDialogueView.classList.remove("hidden");
+      if (paneRawView) paneRawView.classList.add("hidden");
+      if (editorTabHint) editorTabHint.textContent = "Edit spoken words directly per sentence line";
+    } else {
+      if (tabRawView) tabRawView.classList.add("active");
+      if (tabDialogueView) tabDialogueView.classList.remove("active");
+      if (paneRawView) paneRawView.classList.remove("hidden");
+      if (paneDialogueView) paneDialogueView.classList.add("hidden");
+      if (editorTabHint) editorTabHint.textContent = "Full raw ASS v4.00+ script editor (supports manual tags)";
+      if (rawAssTextarea) rawAssTextarea.value = editorState.currentContent;
+    }
+  }
+
+  if (tabDialogueView && tabRawView) {
+    tabDialogueView.addEventListener("click", () => switchEditorTab("dialogue"));
+    tabRawView.addEventListener("click", () => switchEditorTab("raw"));
+  }
+
+  function renderDialogueEditorItems(dialogues) {
+    if (!dialogueListContainer) return;
+    dialogueListContainer.innerHTML = "";
+
+    if (!dialogues || dialogues.length === 0) {
+      dialogueListContainer.innerHTML = `
+        <div style="text-align: center; padding: 40px; color: var(--text-muted);">
+          <p>No standard dialogue lines detected. Switch to the <strong>Raw .ASS Script</strong> tab to edit the file directly.</p>
+        </div>
+      `;
+      return;
+    }
+
+    dialogues.forEach((item, index) => {
+      const row = document.createElement("div");
+      row.className = "dialogue-item-row";
+      row.dataset.lineIndex = item.line_index;
+
+      row.innerHTML = `
+        <div class="dialogue-meta-row">
+          <span class="dialogue-time-badge">⏱ ${item.start} → ${item.end}</span>
+          <span class="dialogue-line-num">Line ${index + 1} (${item.style})</span>
+        </div>
+        <input type="text" class="dialogue-input" value="${item.clean_text.replace(/"/g, '&quot;')}" placeholder="Enter corrected spoken text...">
+      `;
+
+      const input = row.querySelector(".dialogue-input");
+      input.addEventListener("input", (e) => {
+        item.clean_text = e.target.value;
+        editorState.isDirty = true;
+        updateEditorStatus("Unsaved edits in dialogue lines", "warning");
+
+        const allLines = editorState.currentContent.split("\n");
+        const targetLine = allLines[item.line_index];
+        if (targetLine && targetLine.startsWith("Dialogue:")) {
+          const parts = targetLine.split(",", 9);
+          if (parts.length >= 9) {
+            const rawTextAfter = targetLine.slice(parts.join(",").length + 1);
+            const posTagMatch = rawTextAfter.match(/^(\{\\an\d\\pos\([^)]+\)\})/);
+            const posTag = posTagMatch ? posTagMatch[1] : "";
+            allLines[item.line_index] = parts.join(",") + "," + posTag + e.target.value;
+            editorState.currentContent = allLines.join("\n");
+            if (rawAssTextarea) rawAssTextarea.value = editorState.currentContent;
+          }
+        }
+      });
+
+      dialogueListContainer.appendChild(row);
+    });
+  }
+
+  async function openAssEditorModal(target) {
+    let taskId = null;
+    let mediaPath = state.videoPath || "";
+    let assPath = state.existingAssPath || "";
+
+    if (typeof target === "string") {
+      taskId = target;
+    } else if (target && typeof target === "object") {
+      taskId = target.taskId || null;
+      mediaPath = target.mediaPath || mediaPath;
+      assPath = target.assPath || assPath;
+    } else {
+      taskId = state.currentTaskId || null;
+    }
+
+    editorState.taskId = taskId;
+    editorState.mediaPath = mediaPath;
+    editorState.assPath = assPath;
+
+    if (modalAssEditor) modalAssEditor.classList.remove("hidden");
+    updateEditorStatus("Loading subtitles from server...", "normal");
+
+    try {
+      let url = "";
+      if (taskId) {
+        url = `/api/ass-content/${encodeURIComponent(taskId)}`;
+        if (mediaPath) url += `?media_path=${encodeURIComponent(mediaPath)}`;
+      } else {
+        url = `/api/ass-content?media_path=${encodeURIComponent(mediaPath)}`;
+        if (assPath) url += `&ass_path=${encodeURIComponent(assPath)}`;
+      }
+
+      const res = await fetch(url);
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.detail || "Could not load subtitle file");
+      }
+      const data = await res.json();
+
+      editorState.initialContent = data.content;
+      editorState.currentContent = data.content;
+      editorState.dialogues = data.dialogues || [];
+      editorState.isDirty = false;
+      editorState.filePath = data.file_path;
+
+      if (editorFilenameBadge) editorFilenameBadge.textContent = data.filename || "subtitles.ass";
+      if (rawAssTextarea) rawAssTextarea.value = data.content;
+      renderDialogueEditorItems(editorState.dialogues);
+      switchEditorTab("dialogue");
+      updateEditorStatus("Ready to edit • Click Save when done", "normal");
+    } catch (err) {
+      console.error("Failed to load ASS content:", err);
+      updateEditorStatus(`Error: ${err.message}`, "error");
+    }
+  }
+
+  function closeAssEditorModal() {
+    if (editorState.isDirty) {
+      if (!confirm("You have unsaved changes. Discard and close editor?")) {
+        return;
+      }
+    }
+    if (modalAssEditor) modalAssEditor.classList.add("hidden");
+  }
+
+  if (btnCloseAssModal) btnCloseAssModal.addEventListener("click", closeAssEditorModal);
+  if (btnCancelAssEditor) btnCancelAssEditor.addEventListener("click", closeAssEditorModal);
+
+  if (btnResetAssEditor) {
+    btnResetAssEditor.addEventListener("click", () => {
+      if (!confirm("Revert all edits back to initially loaded subtitles?")) return;
+      openAssEditorModal({
+        taskId: editorState.taskId,
+        assPath: editorState.assPath,
+        mediaPath: editorState.mediaPath
+      });
+    });
+  }
+
+  // ----------------------------------------------------
+  // Studio Stepper & Subtitle Review Drawer Controllers
+  // ----------------------------------------------------
+  function updateWorkflowStepper(stage) {
+    if (!wfStep1 || !wfStep2 || !wfStep3) return;
+
+    if (stage === 'idle') {
+      wfStep1.className = 'wf-step active';
+      wfStep2.className = 'wf-step';
+      wfStep3.className = 'wf-step';
+      if (chipPipelineStatus) {
+        chipPipelineStatus.textContent = 'Ready for Subtitles';
+        chipPipelineStatus.className = 'pipeline-chip';
+      }
+    } else if (stage === 'transcribing') {
+      wfStep1.className = 'wf-step active';
+      wfStep2.className = 'wf-step';
+      wfStep3.className = 'wf-step';
+      if (chipPipelineStatus) {
+        chipPipelineStatus.textContent = 'Transcribing (WhisperX)...';
+        chipPipelineStatus.className = 'pipeline-chip chip-busy';
+      }
+    } else if (stage === 'subtitles_ready') {
+      wfStep1.className = 'wf-step completed';
+      wfStep2.className = 'wf-step active';
+      wfStep3.className = 'wf-step';
+      if (chipPipelineStatus) {
+        chipPipelineStatus.textContent = `Subtitles Ready (${editorState.dialogues.length} lines)`;
+        chipPipelineStatus.className = 'pipeline-chip chip-success';
+      }
+      if (btnBurnOnly) {
+        btnBurnOnly.classList.remove('disabled');
+        btnBurnOnly.title = 'Click to burn subtitles into video with GPU NVENC';
+      }
+      if (titleGenerateAss) titleGenerateAss.textContent = 'Re-Transcribe Subtitles (.ass format)';
+      if (descGenerateAss) descGenerateAss.textContent = 'Generate text from speech. You can edit the transcription in Step 2.';
+    } else if (stage === 'burning') {
+      wfStep1.className = 'wf-step completed';
+      wfStep2.className = 'wf-step completed';
+      wfStep3.className = 'wf-step active';
+      if (chipPipelineStatus) {
+        chipPipelineStatus.textContent = 'Burning Video (NVENC)...';
+        chipPipelineStatus.className = 'pipeline-chip chip-busy';
+      }
+    } else if (stage === 'burned') {
+      wfStep1.className = 'wf-step completed';
+      wfStep2.className = 'wf-step completed';
+      wfStep3.className = 'wf-step completed';
+      if (chipPipelineStatus) {
+        chipPipelineStatus.textContent = 'Burned Video Ready (.mp4)';
+        chipPipelineStatus.className = 'pipeline-chip chip-success';
+      }
+      if (btnBurnOnly) {
+        btnBurnOnly.classList.remove('disabled');
+      }
+    }
+  }
+
+  function updateDrawerStatus(text, type = "normal") {
+    if (!drawerStatusText) return;
+    drawerStatusText.textContent = text;
+    if (drawerStatusDot) {
+      drawerStatusDot.className = "drawer-status-dot";
+      if (type === "warning") drawerStatusDot.classList.add("dot-warning");
+      else if (type === "error") drawerStatusDot.classList.add("dot-error");
+    }
+  }
+
+  function renderDrawerDialogueItems(dialogues) {
+    if (!drawerDialogueList) return;
+    drawerDialogueList.innerHTML = "";
+
+    if (!dialogues || dialogues.length === 0) {
+      if (drawerEmptyState) drawerEmptyState.classList.remove("hidden");
+      if (drawerDialogueList) drawerDialogueList.classList.add("hidden");
+      if (drawerFooter) drawerFooter.classList.add("hidden");
+      if (drawerLineCountBadge) {
+        drawerLineCountBadge.textContent = "0 lines";
+        drawerLineCountBadge.classList.remove("has-lines");
+      }
+      if (chipStep2Count) {
+        chipStep2Count.textContent = "0 lines";
+      }
+      return;
+    }
+
+    if (drawerEmptyState) drawerEmptyState.classList.add("hidden");
+    if (drawerDialogueList) drawerDialogueList.classList.remove("hidden");
+    if (drawerFooter) drawerFooter.classList.remove("hidden");
+    if (drawerLineCountBadge) {
+      drawerLineCountBadge.textContent = `${dialogues.length} lines`;
+      drawerLineCountBadge.classList.add("has-lines");
+    }
+    if (chipStep2Count) {
+      chipStep2Count.textContent = `${dialogues.length} lines`;
+    }
+
+    const query = (drawerSearchInput ? drawerSearchInput.value.toLowerCase().trim() : "");
+
+    dialogues.forEach((item, index) => {
+      const row = document.createElement("div");
+      row.className = "drawer-line-row";
+      row.dataset.lineIndex = item.line_index;
+
+      if (query && !item.clean_text.toLowerCase().includes(query)) {
+        row.style.display = "none";
+      }
+
+      row.innerHTML = `
+        <div class="drawer-line-meta">
+          <span class="drawer-time-badge">⏱ ${item.start} → ${item.end}</span>
+          <span class="drawer-line-number">Line ${index + 1} (${item.style || 'Default'})</span>
+        </div>
+        <input type="text" class="drawer-line-input" value="${item.clean_text.replace(/"/g, '&quot;')}" placeholder="Edit spoken phrase...">
+      `;
+
+      const input = row.querySelector(".drawer-line-input");
+      input.addEventListener("input", (e) => {
+        item.clean_text = e.target.value;
+        editorState.isDirty = true;
+        updateDrawerStatus("Unsaved edits in subtitle lines", "warning");
+        if (btnDrawerRevert) btnDrawerRevert.disabled = false;
+
+        // Keep raw ASS script content in sync
+        const allLines = editorState.currentContent.split("\n");
+        const targetLine = allLines[item.line_index];
+        if (targetLine && targetLine.startsWith("Dialogue:")) {
+          const parts = targetLine.split(",", 9);
+          if (parts.length >= 9) {
+            const rawTextAfter = targetLine.slice(parts.join(",").length + 1);
+            const posTagMatch = rawTextAfter.match(/^(\{\\an\d\\pos\([^)]+\)\})/);
+            const posTag = posTagMatch ? posTagMatch[1] : "";
+            allLines[item.line_index] = parts.join(",") + "," + posTag + e.target.value;
+            editorState.currentContent = allLines.join("\n");
+            if (rawAssTextarea) rawAssTextarea.value = editorState.currentContent;
+            if (codeBodyPreview) codeBodyPreview.textContent = editorState.currentContent.split("\n").slice(0, 60).join("\n");
+          }
+        }
+      });
+
+      drawerDialogueList.appendChild(row);
+    });
+  }
+
+  async function loadDrawerSubtitles(target) {
+    let taskId = null;
+    let mediaPath = state.videoPath || "";
+    let assPath = state.existingAssPath || "";
+
+    if (typeof target === "string") {
+      if (target.endsWith(".ass") || target.includes("/")) {
+        mediaPath = target;
+      } else {
+        taskId = target;
+      }
+    } else if (target && typeof target === "object") {
+      taskId = target.taskId || null;
+      mediaPath = target.mediaPath || mediaPath;
+      assPath = target.assPath || assPath;
+    }
+
+    try {
+      let url = "";
+      if (taskId) {
+        url = `/api/ass-content/${encodeURIComponent(taskId)}`;
+        if (mediaPath) url += `?media_path=${encodeURIComponent(mediaPath)}`;
+      } else {
+        url = `/api/ass-content?media_path=${encodeURIComponent(mediaPath)}`;
+        if (assPath) url += `&ass_path=${encodeURIComponent(assPath)}`;
+      }
+
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const data = await res.json();
+
+      editorState.taskId = taskId;
+      editorState.mediaPath = mediaPath;
+      editorState.assPath = data.file_path;
+      editorState.filePath = data.file_path;
+      editorState.initialContent = data.content;
+      editorState.currentContent = data.content;
+      editorState.dialogues = data.dialogues || [];
+      editorState.isDirty = false;
+
+      state.existingAssPath = data.file_path;
+      state.hasExistingAss = true;
+
+      if (valActiveAss) valActiveAss.textContent = data.filename || data.file_path;
+      if (valActiveVideo && data.has_burned_video) valActiveVideo.textContent = 'Burned video ready';
+
+      renderDrawerDialogueItems(editorState.dialogues);
+      updateDrawerStatus('Subtitles ready • Click any row to edit', 'normal');
+      updateWorkflowStepper(data.has_burned_video ? 'burned' : 'subtitles_ready');
+
+      // Update preview text to dialogue line 1 if available
+      if (editorState.dialogues && editorState.dialogues.length > 0 && editorState.dialogues[0].clean_text) {
+        const cleanPhrase = editorState.dialogues[0].clean_text.replace(/\\N/gi, " ").replace(/\\h/gi, " ").replace(/\s+/g, " ").trim();
+        state.previewText = cleanPhrase;
+        if (previewTextInput) previewTextInput.value = cleanPhrase;
+        if (btnTextDefault) {
+          btnTextDefault.textContent = "Transcript Dialogue";
+          btnTextDefault.classList.add("active");
+        }
+        if (btnTextLorem) btnTextLorem.classList.remove("active");
+        state.activeWordIndex = 0;
+        renderSubtitlePreview();
+      }
+
+      if (cardSubtitleDrawer && cardSubtitleDrawer.classList.contains("collapsed")) {
+        cardSubtitleDrawer.classList.remove("collapsed");
+      }
+    } catch (err) {
+      console.error("Could not load subtitles into drawer:", err);
+    }
+  }
+
+  async function saveAssSubtitles() {
+    if (editorState.activeTab === "raw" && rawAssTextarea) {
+      editorState.currentContent = rawAssTextarea.value;
+    }
+
+    updateDrawerStatus("Saving subtitles to disk...", "normal");
+    updateEditorStatus("Saving subtitles to server...", "normal");
+    if (btnSaveAssEditor) btnSaveAssEditor.disabled = true;
+
+    try {
+      const payload = {
+        content: editorState.currentContent,
+        reburn_video: false,
+        media_path: editorState.mediaPath || state.videoPath,
+        ass_path: editorState.assPath || state.existingAssPath,
+        output_filename: state.outputFilename
+      };
+
+      const saveUrl = editorState.taskId
+        ? `/api/ass-content/${encodeURIComponent(editorState.taskId)}`
+        : `/api/ass-content`;
+
+      const res = await fetch(saveUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || "Failed to save subtitles");
+      }
+      const data = await res.json();
+
+      editorState.initialContent = editorState.currentContent;
+      editorState.isDirty = false;
+      if (data.file_path) {
+        state.existingAssPath = data.file_path;
+        state.hasExistingAss = true;
+      }
+      updateDrawerStatus(`✓ Subtitles saved to ${data.filename || 'file'}!`, "normal");
+      updateEditorStatus("Saved successfully!", "success");
+
+      if (btnDrawerRevert) btnDrawerRevert.disabled = true;
+      if (codeBodyPreview && data.preview) {
+        codeBodyPreview.textContent = data.preview;
+      }
+      if (valActiveAss) valActiveAss.textContent = data.filename || data.file_path;
+      renderDrawerDialogueItems(editorState.dialogues);
+
+      if (modalAssEditor && !modalAssEditor.classList.contains("hidden")) {
+        setTimeout(() => { modalAssEditor.classList.add("hidden"); }, 500);
+      }
+    } catch (err) {
+      console.error("Save error:", err);
+      updateDrawerStatus(`Save failed: ${err.message}`, "error");
+      updateEditorStatus(`Save failed: ${err.message}`, "error");
+    } finally {
+      if (btnSaveAssEditor) btnSaveAssEditor.disabled = false;
+    }
+  }
+
+  // Drawer event bindings
+  if (btnFocusStep2) {
+    btnFocusStep2.addEventListener("click", () => {
+      if (cardSubtitleDrawer) {
+        cardSubtitleDrawer.classList.remove("collapsed");
+        cardSubtitleDrawer.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+      if (drawerSearchInput) {
+        drawerSearchInput.focus();
+      }
+    });
+  }
+
+  if (drawerHeaderToggle) {
+    drawerHeaderToggle.addEventListener("click", () => {
+      cardSubtitleDrawer.classList.toggle("collapsed");
+    });
+  }
+
+  if (drawerSearchInput) {
+    drawerSearchInput.addEventListener("input", () => {
+      renderDrawerDialogueItems(editorState.dialogues);
+    });
+  }
+
+  if (btnDrawerOpenModal) {
+    btnDrawerOpenModal.addEventListener("click", () => {
+      openAssEditorModal({
+        taskId: editorState.taskId,
+        assPath: editorState.assPath,
+        mediaPath: editorState.mediaPath
+      });
+    });
+  }
+
+  if (btnDrawerRevert) {
+    btnDrawerRevert.addEventListener("click", () => {
+      if (!confirm("Revert all edits back to initially loaded subtitles?")) return;
+      loadDrawerSubtitles(editorState.assPath || state.existingAssPath);
+    });
+  }
+
+  if (btnDrawerBurn) {
+    btnDrawerBurn.addEventListener("click", () => executeBurnVideo());
+  }
+
+  if (btnModalSaveAndBurn) {
+    btnModalSaveAndBurn.addEventListener("click", () => executeBurnVideo());
+  }
+
+  if (btnSaveAssEditor) {
+    btnSaveAssEditor.addEventListener("click", () => saveAssSubtitles());
+  }
+
+  if (btnOpenAssEditor) {
+    btnOpenAssEditor.addEventListener("click", () => {
+      if (state.hasExistingAss || state.currentTaskId) {
+        openAssEditorModal({
+          taskId: state.currentTaskId,
+          assPath: state.existingAssPath,
+          mediaPath: state.videoPath
+        });
+      } else {
+        alert("No .ass subtitle file found yet for this media.\n\nPlease click 'Generate Subtitles (.ass)' to create subtitles first.");
+      }
+    });
+  }
+
+  if (btnEditAssResults) {
+    btnEditAssResults.addEventListener("click", () => {
+      openAssEditorModal({
+        taskId: state.currentTaskId,
+        assPath: state.existingAssPath,
+        mediaPath: state.videoPath
+      });
+    });
+  }
+
+  if (btnOpenVideo) {
+    btnOpenVideo.addEventListener("click", async () => {
+      const targetVideo = state.lastBurnedVideoPath || state.videoPath;
+      if (!targetVideo) {
+        alert("No burned video available to open yet.");
+        return;
+      }
+      try {
+        btnOpenVideo.disabled = true;
+        const origHtml = btnOpenVideo.innerHTML;
+        btnOpenVideo.innerHTML = `<svg class="spin-icon" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><circle cx="12" cy="12" r="10"></circle></svg> Launching player...`;
+        const res = await fetch("/api/open-video", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            video_path: targetVideo,
+            task_id: state.currentTaskId
+          })
+        });
+        const respData = await res.json();
+        if (!res.ok) {
+          throw new Error(respData.detail || "Failed to open video in player");
+        }
+        btnOpenVideo.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.5" fill="none"><polyline points="20 6 9 17 4 12"></polyline></svg> Opened in Default Player!`;
+        setTimeout(() => {
+          btnOpenVideo.innerHTML = origHtml;
+          btnOpenVideo.disabled = false;
+        }, 2500);
+      } catch (err) {
+        alert(`Could not launch default player:\n${err.message}`);
+        btnOpenVideo.disabled = false;
+        btnOpenVideo.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2.2" fill="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> <span>Open in Default Player</span>`;
+      }
+    });
+  }
+
+  if (btnCopyBurnedPath) {
+    btnCopyBurnedPath.addEventListener("click", () => {
+      const pathText = (burnedVideoPathText ? burnedVideoPathText.textContent : state.lastBurnedVideoPath) || "";
+      if (pathText) {
+        navigator.clipboard.writeText(pathText).then(() => {
+          if (copyBurnedBtnText) copyBurnedBtnText.textContent = "Copied!";
+          setTimeout(() => {
+            if (copyBurnedBtnText) copyBurnedBtnText.textContent = "Copy Path";
+          }, 2000);
+        });
+      }
+    });
+  }
+
+  // Initialize
+  fetchSystemInfo();
+  updatePosition(state.posX, state.posY, true);
+  updateStageVisibility();
+  renderSubtitlePreview();
+  renderSocialOverlay();
+  if (state.videoPath) {
+    loadVideoInfo(state.videoPath);
+  }
+
+  // Initialize Presets from localStorage (default strictly to standard factory preset)
+  let savedActivePreset = localStorage.getItem(PRESET_LAST_ACTIVE_KEY) || "factory:tiktok_pop";
+  if (!savedActivePreset || savedActivePreset.includes("katie")) {
+    savedActivePreset = "factory:tiktok_pop";
+    localStorage.setItem(PRESET_LAST_ACTIVE_KEY, "factory:tiktok_pop");
+  }
+  populatePresetDropdown(savedActivePreset);
+  loadAndApplyPreset(savedActivePreset);
+});

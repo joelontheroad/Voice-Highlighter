@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Voice Highlighter — AI Word-Level Subtitle Generator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Montserrat:wght@600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=4.3">
+  <style>
+    /* Critical 3-column layout enforcement (guaranteed zero-cache override) */
+    .main-layout {
+      display: grid !important;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr) minmax(0, 1fr) !important;
+      gap: 18px !important;
+      max-width: 1540px !important;
+      margin: 20px auto !important;
+      padding: 0 20px 50px !important;
+      align-items: start !important;
+    }
+    .layout-column {
+      display: flex !important;
+      flex-direction: column !important;
+      min-width: 0 !important;
+    }
+    @media (max-width: 880px) {
+      .main-layout {
+        grid-template-columns: 1fr !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-background"></div>
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="header-container">
+      <div class="brand">
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            <line x1="12" y1="19" x2="12" y2="22"></line>
+            <line x1="8" y1="22" x2="16" y2="22"></line>
+          </svg>
+        </div>
+        <div>
+          <h1 class="app-title">Voice Highlighter</h1>
+          <p class="app-subtitle">Word-level animated subtitle generator powered by WhisperX</p>
+        </div>
+      </div>
+      <div class="hardware-badge" id="hardwareBadge" title="Detecting rendering engine...">
+        <span class="gpu-indicator" id="hardwareIndicator"></span>
+        <span id="hardwareBadgeText">Detecting engine...</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Application Grid -->
+  <main class="main-layout">
+    <!-- Left Column: Video Source, Presets & Subtitle Positioning -->
+    <section class="layout-column column-left">
+      <!-- Video Source Section -->
+      <div class="card glass-card card-video-source" id="cardVideoSource">
+        <div class="card-header card-header-start">
+          <div class="card-title-row">
+            <h2>Video Source</h2>
+            <span class="start-here-badge" id="badgeStartHere">Start Here 📍</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="form-group">
+            <div class="input-label-row">
+              <label for="videoPathInput">Source Video File Path</label>
+              <span class="input-subhint">Direct filesystem access</span>
+            </div>
+            <div class="input-with-button">
+              <input type="text" id="videoPathInput" class="text-input" 
+                value="" 
+                placeholder="/path/to/your/video.mp4">
+              <button type="button" id="btnBrowseFiles" class="btn btn-secondary" title="Browse local filesystem to select video">
+                <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                </svg>
+                <span>Browse...</span>
+              </button>
+              <button type="button" id="btnLoadVideo" class="btn btn-primary-gradient">Load</button>
+            </div>
+          </div>
+
+          <!-- Quick Directory Jumps -->
+          <div class="quick-paths-wrap" id="quickPathsWrap">
+            <span class="quick-paths-label">Quick Jump:</span>
+            <div class="quick-paths-chips">
+              <button type="button" class="quick-chip" id="btnJumpVideos" title="Jump to user Videos directory">
+                📁 Videos
+              </button>
+              <button type="button" class="quick-chip" id="btnJumpProject" title="Jump to project folder">
+                📁 Project Dir
+              </button>
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-top: 14px;">
+            <label for="selectModelName" id="lblSelectModel">WhisperX AI Model (<span id="whisperModelDevice">CPU</span>)</label>
+            <select id="selectModelName" class="select-input">
+              <option value="large-v3" selected>large-v3 (Maximum Accuracy, 3GB)</option>
+              <option value="medium">medium (Fast & Accurate, 1.5GB)</option>
+              <option value="small">small (Very Fast, 480MB)</option>
+              <option value="base">base (Ultra Fast Preview, 140MB)</option>
+            </select>
+          </div>
+
+          <div class="video-meta-badges" id="videoMetaBadges">
+            <span class="meta-pill" id="metaRes">Resolution: --</span>
+            <span class="meta-pill" id="metaDuration">Duration: --</span>
+            <span class="meta-pill" id="metaAudio">Audio: --</span>
+          </div>
+
+          <div class="asset-detection-badges" id="assetDetectionBadges">
+            <span class="asset-pill pill-wav hidden" id="badgeExistingWav">
+              <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+              <span id="badgeExistingWavText">Existing audio (.wav) detected</span>
+            </span>
+            <span class="asset-pill pill-ass hidden" id="badgeExistingAss">
+              <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+              <span id="badgeExistingAssText">Existing subtitles (.ass) detected</span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Style Presets Section -->
+      <div class="card glass-card preset-card" id="cardPresets">
+        <div class="card-header">
+          <span class="preset-icon-badge">★</span>
+          <h2>Style Presets & Templates</h2>
+          <span class="card-hint">Saved in browser & exportable JSON</span>
+        </div>
+        <div class="card-body">
+          <div class="preset-controls-layout">
+            <div class="preset-select-wrapper">
+              <label for="selectPreset">Active Preset</label>
+              <div class="preset-dropdown-row">
+                <select id="selectPreset" class="select-input">
+                  <optgroup label="✨ Factory Templates" id="optgroupFactory">
+                    <option value="factory:tiktok_pop">🔥 Viral TikTok (Yellow Pop)</option>
+                    <option value="factory:hormozi_box">🏷️ Hormozi Pill Box</option>
+                    <option value="factory:classic_sub">🎬 Classic Subtitle (2 Lines)</option>
+                    <option value="factory:clean_minimal">✨ Clean Minimalist</option>
+                  </optgroup>
+                  <optgroup label="💾 My Saved Presets" id="optgroupCustom">
+                    <!-- Populated dynamically from localStorage -->
+                  </optgroup>
+                </select>
+                <button type="button" id="btnApplyPreset" class="btn btn-secondary" title="Re-apply selected preset">Apply</button>
+              </div>
+            </div>
+
+            <!-- Preset Action Buttons -->
+            <div class="preset-actions-toolbar">
+              <button type="button" id="btnSavePreset" class="preset-btn-tool" title="Save current styling as a new preset">
+                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                Save New...
+              </button>
+              <button type="button" id="btnRenamePreset" class="preset-btn-tool" title="Rename the selected custom preset" disabled>
+                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                Rename
+              </button>
+              <button type="button" id="btnDeletePreset" class="preset-btn-tool danger" title="Delete the selected custom preset" disabled>
+                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.2" fill="none"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                Delete
+              </button>
+              <button type="button" id="btnExportPreset" class="preset-btn-tool" title="Export preset as .json file">
+                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                Export JSON
+              </button>
+              <button type="button" id="btnImportPresetTrigger" class="preset-btn-tool" title="Import preset from .json file">
+                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                Import JSON
+              </button>
+              <input type="file" id="presetFileInput" accept=".json,application/json" style="display: none;">
+            </div>
+
+            <!-- Inline Name / Rename Drawer -->
+            <div class="preset-name-drawer" id="presetNameDrawer" style="display: none;">
+              <div class="name-drawer-content">
+                <div class="drawer-header">
+                  <span id="drawerTitle">Save New Preset</span>
+                  <span class="drawer-close" id="btnCancelPresetName">&times;</span>
+                </div>
+                <div class="drawer-input-row">
+                  <input type="text" id="presetNameInput" class="text-input" placeholder="Enter preset name (e.g. My TikTok Style)">
+                  <button type="button" id="btnConfirmPresetName" class="btn btn-primary-gradient">Confirm</button>
+                  <button type="button" id="btnDismissPresetName" class="btn btn-secondary">Cancel</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="preset-status-msg" id="presetStatusMsg" style="display: none;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Subtitle Positioning Section (Hybrid) -->
+      <div class="card glass-card" id="cardPositioning">
+        <div class="card-header">
+          <h2>Subtitle Positioning</h2>
+          <span class="card-hint">Drag preview box or use presets</span>
+        </div>
+        <div class="card-body">
+          <div class="preset-buttons-group">
+            <button type="button" class="preset-btn active" data-y="78" data-x="50">Lower Third (78%)</button>
+            <button type="button" class="preset-btn" data-y="62" data-x="50">Chest / Mid (62%)</button>
+            <button type="button" class="preset-btn" data-y="50" data-x="50">Center (50%)</button>
+            <button type="button" class="preset-btn" data-y="72" data-x="50">Social Safe Zone</button>
+          </div>
+
+          <div class="sliders-row">
+            <div class="slider-field">
+              <div class="slider-label-row">
+                <label for="sliderPosY">Vertical Position (Y)</label>
+                <span id="labelPosY" class="slider-val">78%</span>
+              </div>
+              <input type="range" id="sliderPosY" min="15" max="92" value="78" step="1">
+            </div>
+
+            <div class="slider-field">
+              <div class="slider-label-row">
+                <label for="sliderPosX">Horizontal Position (X)</label>
+                <span id="labelPosX" class="slider-val">50%</span>
+              </div>
+              <input type="range" id="sliderPosX" min="10" max="90" value="50" step="1">
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Middle Column: Live Subtitle Preview & Output Blocks -->
+    <section class="layout-column column-middle">
+      <!-- Live Preview Card -->
+      <div class="card glass-card preview-card">
+        <div class="preview-card-header">
+          <div class="preview-title-group">
+            <h2>Live Subtitle Preview</h2>
+            <span class="live-pill"><span class="live-dot"></span> Interactive Canvas</span>
+          </div>
+
+          <!-- Preview Text Switcher -->
+          <div class="preview-text-controls">
+            <button type="button" class="mini-btn active" id="btnTextLorem">Lorem Ipsum</button>
+            <button type="button" class="mini-btn" id="btnTextDefault">Transcript Dialogue</button>
+          </div>
+        </div>
+
+        <!-- Custom preview text input -->
+        <div class="preview-text-input-wrap">
+          <input type="text" id="previewTextInput" class="text-input mini-input" 
+            value="Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt." 
+            placeholder="Type custom text to preview...">
+        </div>
+
+        <!-- Social Media Overlay Toolbar -->
+        <div class="social-overlay-toolbar">
+          <div class="social-tool-row">
+            <span class="social-tool-label">Platform UI:</span>
+            <div class="mini-pill-selector" id="socialPlatformSelector">
+              <button type="button" class="mini-pill-btn active" data-platform="none">None (Clean)</button>
+              <button type="button" class="mini-pill-btn" data-platform="youtube">YouTube</button>
+              <button type="button" class="mini-pill-btn" data-platform="instagram">Instagram</button>
+              <button type="button" class="mini-pill-btn" data-platform="facebook">Facebook</button>
+            </div>
+          </div>
+
+          <div class="social-tool-row" id="deviceRow">
+            <span class="social-tool-label">Device View:</span>
+            <div class="mini-pill-selector" id="socialDeviceSelector">
+              <button type="button" class="mini-pill-btn active" data-device="mobile">📱 Mobile App</button>
+              <button type="button" class="mini-pill-btn" data-device="web">💻 Web Browser</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Video Canvas Stage -->
+        <div class="video-stage-container">
+          <div class="video-stage" id="videoStage">
+            <!-- Empty Stage Placeholder (Visible until source video is loaded) -->
+            <div class="stage-placeholder" id="stagePlaceholder">
+              <div class="placeholder-graphic">
+                <svg viewBox="0 0 24 24" width="48" height="48" stroke="currentColor" stroke-width="1.6" fill="none">
+                  <polygon points="23 7 16 12 23 17 23 7"></polygon>
+                  <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+                </svg>
+              </div>
+              <h3 class="placeholder-title">No Source Video Loaded</h3>
+              <p class="placeholder-desc">Choose a video file above or enter a local path to capture a poster frame and preview title placement.</p>
+            </div>
+
+            <!-- Background Image / Frame -->
+            <img id="stagePoster" class="stage-poster hidden" alt="Video frame preview" src="" />
+            
+            <!-- Safe Zone Guide Overlay -->
+            <div class="safe-zone-overlay hidden" id="safeZoneOverlay"></div>
+
+            <!-- Dynamic Social Media Platform Overlay (YouTube / Instagram / Facebook) -->
+            <div class="social-ui-layer hidden" id="socialUiLayer"></div>
+            
+            <!-- Draggable Subtitle Box -->
+            <div class="subtitle-drag-box hidden" id="subtitleDragBox" tabindex="0" title="Click and drag to position">
+              <div class="drag-handle-hint">⋮⋮ Drag to Position</div>
+              <div class="subtitle-rendered-text" id="subtitleRenderedText">
+                <!-- Word spans populated dynamically by app.js -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="preview-footer-hints">
+          <span>💡 <strong>Tip:</strong> Drag the subtitle block directly inside the video to adjust its placement.</span>
+          <button type="button" id="btnResetPos" class="text-link-btn">Reset to Center</button>
+        </div>
+      </div>
+
+      <!-- Subtitle Production Studio: Unified Pipeline Grouping -->
+      <div class="card glass-card studio-card" id="cardStudio">
+        <div class="studio-header">
+          <div class="studio-title-row">
+            <div class="studio-title-group">
+              <span class="studio-sparkle">🎬</span>
+              <h2>Subtitle Production Studio</h2>
+            </div>
+            <span class="pipeline-chip" id="chipPipelineStatus">Ready for Subtitles</span>
+          </div>
+
+          <!-- Output Directory Notice Banner -->
+          <div class="studio-directory-notice">
+            <div class="notice-icon-circle">📂</div>
+            <div class="notice-text-content">
+              <span class="notice-headline">Output Files Saved to Source Video Directory</span>
+              <span class="notice-description">All files generated by this program (<code>.ass</code> subtitles, <code>.wav</code> audio, and burned <code>.mp4</code> video) appear in the exact same directory as your original source video file.</span>
+            </div>
+          </div>
+
+          <!-- 3-Step Interactive Workflow Pipeline Stepper -->
+          <div class="workflow-stepper" id="workflowStepper">
+            <div class="wf-step active" id="wfStep1">
+              <div class="wf-circle">1</div>
+              <div class="wf-text">
+                <span class="wf-title">AI Transcribe</span>
+                <span class="wf-sub" id="wfSub1">WhisperX (CUDA)</span>
+              </div>
+            </div>
+            <div class="wf-arrow">→</div>
+            <div class="wf-step" id="wfStep2">
+              <div class="wf-circle">2</div>
+              <div class="wf-text">
+                <span class="wf-title">Verify & Edit</span>
+                <span class="wf-sub" id="wfSub2">Inspect Words</span>
+              </div>
+            </div>
+            <div class="wf-arrow">→</div>
+            <div class="wf-step" id="wfStep3">
+              <div class="wf-circle">3</div>
+              <div class="wf-text">
+                <span class="wf-title">Burn Video</span>
+                <span class="wf-sub" id="wfSub3">NVENC (~3s)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Deliverable Filename Bar -->
+        <div class="studio-filename-bar">
+          <div class="studio-filename-group">
+            <label for="outputFilenameInput">Output Deliverable Name:</label>
+            <div class="filename-input-group">
+              <input type="text" id="outputFilenameInput" class="text-input" placeholder="filename_without_extension">
+              <span class="filename-ext-badge" id="filenameExtBadge">.ass / .mp4</span>
+            </div>
+          </div>
+          <div class="active-assets-mini">
+            <span class="mini-asset-chip" id="chipActiveAss">📝 Subtitles: <strong id="valActiveAss">None yet</strong></span>
+            <span class="mini-asset-chip" id="chipActiveVideo">🎬 Burned: <strong id="valActiveVideo">None yet</strong></span>
+          </div>
+        </div>
+
+        <!-- Section 1: Standard 3-Step Production Workflow (Steps 1, 2, 3 in Sequential Order) -->
+        <div class="studio-pipeline-section">
+          <div class="pipeline-section-header">
+            <div class="pipeline-section-title-wrap">
+              <span class="pipeline-section-pill">Standard 3-Step Production</span>
+              <span class="pipeline-section-hint">Step 1 Transcribe &nbsp;→&nbsp; Step 2 Inspect & Edit &nbsp;→&nbsp; Step 3 Burn</span>
+            </div>
+          </div>
+
+          <!-- Steps 1, 2, and 3 Sequential Grid -->
+          <div class="studio-steps-grid">
+            <!-- Step 1: Subtitles Only -->
+            <button type="button" id="btnGenerateAssOnly" class="studio-action-card card-action-ass" title="Run WhisperX AI to create subtitles (.ass format) for inspection">
+              <div class="action-card-header">
+                <span class="action-card-icon">📝</span>
+                <span class="action-card-badge badge-step1">Step 1</span>
+              </div>
+              <div class="action-card-body">
+                <span class="action-card-title" id="titleGenerateAss">Generate Subtitles (.ass format)</span>
+                <span class="action-card-desc" id="descGenerateAss">Generate text from speech. You can edit the transcription in Step 2.</span>
+              </div>
+            </button>
+
+            <!-- Step 2: Verify & Edit Jump/Focus Card -->
+            <button type="button" id="btnFocusStep2" class="studio-action-card card-action-step2" title="Inspect & correct dialogue words below before burning">
+              <div class="action-card-header">
+                <span class="action-card-icon">✏️</span>
+                <span class="action-card-badge badge-step2">Step 2</span>
+                <span class="action-card-mini-chip" id="chipStep2Count">0 lines</span>
+              </div>
+              <div class="action-card-body">
+                <span class="action-card-title" id="titleStep2Overview">Verify & Edit Text</span>
+                <span class="action-card-desc" id="descStep2Overview">Inspect words below. Fix misheard words & spelling before burning.</span>
+              </div>
+            </button>
+
+            <!-- Step 3: Fast Burn -->
+            <button type="button" id="btnBurnOnly" class="studio-action-card card-action-burn disabled" title="Generate or load subtitles first">
+              <div class="action-card-header">
+                <span class="action-card-icon">🔥</span>
+                <span class="action-card-badge badge-burn">Step 3</span>
+              </div>
+              <div class="action-card-body">
+                <span class="action-card-title" id="titleBurnOnly">Burn Video (.mp4)</span>
+                <span class="action-card-desc" id="descBurnVideo">Burns text into video.</span>
+              </div>
+            </button>
+          </div>
+
+          <!-- Step 2: Inline Subtitle Review & Fast-Edit Drawer (Integrated Below Steps 1-3) -->
+          <div class="drawer-card integrated-drawer" id="cardSubtitleDrawer">
+            <div class="drawer-header" id="drawerHeaderToggle">
+              <div class="drawer-header-left">
+                <span class="drawer-chevron" id="drawerChevron">▼</span>
+                <div class="drawer-title-group">
+                  <div class="drawer-title-row">
+                    <span class="drawer-step-badge">Step 2</span>
+                    <h2>Subtitle Text Verification & Fast-Edit</h2>
+                    <span class="drawer-count-badge" id="drawerLineCountBadge">0 lines</span>
+                  </div>
+                  <span class="drawer-subhint" id="drawerSubhint">Correct misheard words, proper nouns, or punctuation directly below.</span>
+                </div>
+              </div>
+              <div class="drawer-header-actions" onclick="event.stopPropagation()">
+                <div class="drawer-search-wrap">
+                  <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                  <input type="text" id="drawerSearchInput" placeholder="Filter dialogue lines..." class="drawer-search-input">
+                </div>
+                <button type="button" id="btnDrawerOpenModal" class="btn-tool-mini" title="Open large full-screen modal editor">
+                  <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2.2" fill="none"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>
+                  <span>Full Editor</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="drawer-body" id="drawerBody">
+              <!-- Empty State (Shown when no .ass subtitles loaded yet) -->
+              <div class="drawer-empty-state" id="drawerEmptyState">
+                <div class="empty-state-icon">📄</div>
+                <h3>No Subtitle Transcript Loaded Yet</h3>
+                <p>Click <strong>"Generate Subtitles (.ass format)"</strong> above to run WhisperX, or load a video with an existing .ass file.</p>
+              </div>
+
+              <!-- Populated Dialogue Lines Container -->
+              <div class="drawer-dialogue-list hidden" id="drawerDialogueList">
+                <!-- Dynamically populated dialogue lines -->
+              </div>
+            </div>
+
+            <!-- Drawer Footer Action Bar -->
+            <div class="drawer-footer hidden" id="drawerFooter">
+              <div class="drawer-footer-status">
+                <span class="drawer-status-dot" id="drawerStatusDot"></span>
+                <span id="drawerStatusText">Subtitles ready • Click any row to edit</span>
+              </div>
+              <div class="drawer-footer-actions">
+                <button type="button" id="btnDrawerRevert" class="btn btn-secondary btn-sm" disabled title="Revert edits to disk content">
+                  Revert
+                </button>
+                <button type="button" id="btnDrawerBurn" class="btn btn-primary-gradient btn-sm btn-drawer-burn" title="Burn current subtitles into video">
+                  <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.2" fill="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                  <span>Burn Video (.mp4)</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 2: Separated 1-Click Draft Express Option -->
+        <div class="studio-express-section">
+          <div class="express-section-header">
+            <div class="express-title-wrap">
+              <span class="express-lightning">⚡</span>
+              <div>
+                <h4>1-Click Draft</h4>
+                <span class="express-subtitle">Bypass manual verification when you need an immediate draft video</span>
+              </div>
+            </div>
+          </div>
+
+          <button type="button" id="btnTranscribeAndBurn" class="studio-action-card card-action-express express-action-card" title="Run end-to-end for a quick draft review">
+            <div class="action-card-header">
+              <span class="action-card-icon">⚡</span>
+              <span class="action-card-badge badge-express">1-Click Draft</span>
+            </div>
+            <div class="action-card-body">
+              <span class="action-card-title">Transcribe & Burn</span>
+              <span class="action-card-desc">Transcribes audio and burns subtitles directly to video in a single pass.</span>
+            </div>
+          </button>
+        </div>
+
+        <!-- Horizontal Thermometer Progress Meter (Appears Directly Below Action Buttons) -->
+        <div class="studio-thermometer-wrap hidden" id="studioProgressThermometer">
+          <div class="thermometer-header">
+            <div class="thermometer-title-group">
+              <div class="thermometer-pulse-dot"></div>
+              <h3 id="thermometerTitle">Transcribing & Burning Video...</h3>
+            </div>
+            <span class="thermometer-pct-badge" id="thermometerPercentBadge">0%</span>
+          </div>
+
+          <div class="thermometer-track">
+            <div class="thermometer-fill" id="thermometerFill" style="width: 0%;">
+              <div class="thermometer-shimmer"></div>
+              <div class="thermometer-glow-head"></div>
+            </div>
+          </div>
+
+          <div class="thermometer-status-row">
+            <span id="thermometerStageMessage" class="thermometer-stage-msg">Initializing WhisperX AI speech recognition...</span>
+            <div class="thermometer-milestones" id="thermometerMilestones">
+              <span class="milestone-pill" id="msAudio">1. Audio</span>
+              <span class="milestone-pill" id="msWhisper">2. WhisperX</span>
+              <span class="milestone-pill" id="msAlign">3. Align</span>
+              <span class="milestone-pill" id="msAss">4. ASS</span>
+              <span class="milestone-pill" id="msBurn">5. NVENC Burn</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- In-Place Delivery & Completion Banner (Appears Directly Below Action Buttons) -->
+        <div class="burned-delivery-banner hidden" id="burnedDeliveryBanner">
+          <div class="delivery-status-row">
+            <div class="delivery-badge">
+              <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.5" fill="none"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span id="burnedDeliveryTitle">Titles Successfully Burned!</span>
+            </div>
+            <span class="delivery-engine-tag" id="deliveryEngineTag">NVIDIA NVENC (GPU)</span>
+          </div>
+          <div class="delivery-path-box">
+            <span class="delivery-path-label">Saved to source video directory:</span>
+            <div class="delivery-path-row">
+              <code id="burnedVideoPathText">/path/to/video_voice_titles.mp4</code>
+              <button type="button" id="btnCopyBurnedPath" class="btn-copy-path" title="Copy absolute file path">
+                <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                <span id="copyBurnedBtnText">Copy Path</span>
+              </button>
+            </div>
+          </div>
+          <div class="delivery-actions">
+            <button type="button" id="btnOpenVideo" class="btn btn-primary-gradient btn-open-player">
+              <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2.2" fill="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+              <span>Open in Default Player</span>
+            </button>
+            <a id="btnDownloadAss" href="#" class="btn btn-secondary btn-sm btn-sub-action" download>
+              <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              <span>Download .ass</span>
+            </a>
+            <button type="button" id="btnInspectAssStudio" class="btn btn-secondary btn-sm btn-sub-action">
+              <span>Inspect / Edit Words</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hidden Legacy Compat Anchors (for safe DOM binding) -->
+      <div id="cardStatus" class="hidden" style="display:none !important;">
+        <div id="progressBarFill"></div>
+        <span id="statusStageMessage"></span>
+        <span id="statusPercent"></span>
+        <div id="stepNodeExtract"></div>
+        <div id="stepNodeWhisper"></div>
+        <div id="stepNodeAlign"></div>
+        <div id="stepNodeAss"></div>
+        <div id="stepNodeBurn"></div>
+        <div id="stepLine1"></div>
+        <div id="stepLine2"></div>
+        <div id="stepLine3"></div>
+        <div id="stepLine4"></div>
+      </div>
+      <div id="cardResults" class="hidden" style="display:none !important;">
+        <h2 id="resultsTitle"></h2>
+        <p id="resultsHint"></p>
+        <button type="button" id="btnCopyAss"></button>
+        <span id="copyBtnText"></span>
+        <button type="button" id="btnEditAssResults"></button>
+        <pre id="codeBodyPreview"></pre>
+      </div>
+
+    </section>
+
+    <!-- Right Column: Font Style, Highlight Style & Formatting (Text Controls) -->
+    <section class="layout-column column-right">
+      <!-- Text & Font Style Section -->
+      <div class="card glass-card" id="cardFont">
+        <div class="card-header">
+          <h2>Font Style & Colors</h2>
+        </div>
+        <div class="card-body">
+          <div class="form-row-2">
+            <div class="form-group">
+              <label for="selectFontFamily">Font Family</label>
+              <select id="selectFontFamily" class="select-input">
+                <option value="Montserrat" selected>Montserrat (Bold Modern)</option>
+                <option value="Impact">Impact (Punchy / TikTok)</option>
+                <option value="Arial">Arial (Clean Sans)</option>
+                <option value="Inter">Inter (Sleek UI)</option>
+                <option value="Trebuchet MS">Trebuchet MS</option>
+                <option value="Roboto">Roboto</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <div class="slider-label-row">
+                <label for="sliderFontSize">Font Size</label>
+                <span id="labelFontSize" class="slider-val">68 pt</span>
+              </div>
+              <input type="range" id="sliderFontSize" min="30" max="110" value="68" step="2">
+            </div>
+          </div>
+
+          <div class="color-pickers-row">
+            <div class="color-item">
+              <label for="colorTextBase">Base Text Color</label>
+              <div class="color-picker-wrapper">
+                <input type="color" id="colorTextBase" value="#FFFFFF">
+                <span id="codeTextBase" class="color-hex">#FFFFFF</span>
+              </div>
+            </div>
+
+            <div class="color-item">
+              <label for="colorOutline">Outline Color</label>
+              <div class="color-picker-wrapper">
+                <input type="color" id="colorOutline" value="#000000">
+                <span id="codeOutline" class="color-hex">#000000</span>
+              </div>
+            </div>
+
+            <div class="color-item">
+              <div class="slider-label-row">
+                <label for="sliderOutlineWidth">Outline Width</label>
+                <span id="labelOutlineWidth" class="slider-val">3.5 px</span>
+              </div>
+              <input type="range" id="sliderOutlineWidth" min="0" max="8" value="3.5" step="0.5">
+            </div>
+          </div>
+
+          <div class="toggles-row">
+            <label class="toggle-checkbox">
+              <input type="checkbox" id="checkBold" checked>
+              <span class="toggle-box"></span>
+              <span>Bold Font</span>
+            </label>
+            <label class="toggle-checkbox">
+              <input type="checkbox" id="checkItalic">
+              <span class="toggle-box"></span>
+              <span>Italic</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Word Highlight Style Section -->
+      <div class="card glass-card" id="cardHighlight">
+        <div class="card-header">
+          <h2>Highlight Style</h2>
+        </div>
+        <div class="card-body">
+          <div class="segmented-control">
+            <button type="button" class="segment-btn active" id="btnStyleColor" data-style="color">
+              <span class="segment-icon">✨</span>
+              <span>Font Color Highlight</span>
+            </button>
+            <button type="button" class="segment-btn" id="btnStyleBox" data-style="box">
+              <span class="segment-icon">🔲</span>
+              <span>Bounding Box Highlight</span>
+            </button>
+          </div>
+
+          <!-- Color Highlight Options -->
+          <div class="highlight-options-pane" id="paneHighlightColor">
+            <div class="color-item">
+              <label for="colorHighlightText">Active Word Color</label>
+              <div class="color-picker-wrapper">
+                <input type="color" id="colorHighlightText" value="#FFDF00">
+                <span id="codeHighlightText" class="color-hex">#FFDF00</span>
+              </div>
+            </div>
+            <div class="quick-swatches">
+              <span class="swatch-label">Quick Accents:</span>
+              <button type="button" class="swatch-btn" style="background:#FFDF00;" data-color="#FFDF00" title="Vibrant Yellow"></button>
+              <button type="button" class="swatch-btn" style="background:#00E5FF;" data-color="#00E5FF" title="Cyan Neon"></button>
+              <button type="button" class="swatch-btn" style="background:#FF0055;" data-color="#FF0055" title="Hot Pink"></button>
+              <button type="button" class="swatch-btn" style="background:#00FF66;" data-color="#00FF66" title="Bright Lime"></button>
+            </div>
+          </div>
+
+          <!-- Bounding Box Options -->
+          <div class="highlight-options-pane hidden" id="paneHighlightBox">
+            <div class="form-row-2">
+              <div class="form-group">
+                <label for="selectBoxType">Bounding Box Scope</label>
+                <select id="selectBoxType" class="select-input">
+                  <option value="word" selected>Word-Level Pill / Badge</option>
+                  <option value="block">Full Subtitle Line Box</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <div class="slider-label-row">
+                  <label for="sliderBoxOpacity">Box Opacity</label>
+                  <span id="labelBoxOpacity" class="slider-val">85%</span>
+                </div>
+                <input type="range" id="sliderBoxOpacity" min="20" max="100" value="85" step="5">
+              </div>
+            </div>
+
+            <div class="color-pickers-row">
+              <div class="color-item">
+                <label for="colorBoxBg">Box Background Color</label>
+                <div class="color-picker-wrapper">
+                  <input type="color" id="colorBoxBg" value="#000000">
+                  <span id="codeBoxBg" class="color-hex">#000000</span>
+                </div>
+              </div>
+
+              <div class="color-item">
+                <label for="colorBoxFont">Active Word Font Color</label>
+                <div class="color-picker-wrapper">
+                  <input type="color" id="colorBoxFont" value="#FFFFFF">
+                  <span id="codeBoxFont" class="color-hex">#FFFFFF</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Highlight Font Size Boost Slider -->
+          <div class="form-group" style="margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+            <div class="slider-label-row">
+              <label for="sliderHighlightScale">Highlighted Word Font Size Boost</label>
+              <span id="labelHighlightScale" class="slider-val">100%</span>
+            </div>
+            <input type="range" id="sliderHighlightScale" min="100" max="180" value="100" step="5">
+            <span class="field-hint">Enlarge active spoken word by a percentage (100% = standard size, up to 180% dynamic pop)</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Line Limits & Layout (Option A) -->
+      <div class="card glass-card" id="cardLines">
+        <div class="card-header">
+          <h2>Line Count & Formatting</h2>
+        </div>
+        <div class="card-body">
+          <div class="form-group">
+            <label>Lines on Screen at a Time (Fixed Block)</label>
+            <div class="pill-selector" id="lineCountSelector">
+              <button type="button" class="pill-btn active" data-lines="1">1 Line (Reels / Punchy)</button>
+              <button type="button" class="pill-btn" data-lines="2">2 Lines (Standard)</button>
+              <button type="button" class="pill-btn" data-lines="3">3 Lines (Presentation)</button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <div class="slider-label-row">
+              <label for="sliderMaxChars">Max Characters Per Line</label>
+              <span id="labelMaxChars" class="slider-val">28 chars</span>
+            </div>
+            <input type="range" id="sliderMaxChars" min="16" max="42" value="28" step="1">
+          </div>
+
+          <div class="form-group" style="margin-top: 14px;">
+            <div class="slider-label-row">
+              <label for="sliderLineWidth">Line Width / Subtitle Box Width</label>
+              <span id="labelLineWidth" class="slider-val">82%</span>
+            </div>
+            <input type="range" id="sliderLineWidth" min="40" max="100" value="82" step="2">
+          </div>
+        </div>
+      </div>
+
+    </section>
+  </main>
+
+  <!-- Subtitle Text Editor Modal -->
+  <div class="modal-overlay hidden" id="modalAssEditor" role="dialog" aria-modal="true" aria-labelledby="modalEditorTitle">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <span class="modal-icon">✏️</span>
+          <div>
+            <h2 id="modalEditorTitle">Subtitle Text Editor</h2>
+            <p class="modal-subtitle">Review & correct WhisperX transcribed words before publishing or downloading</p>
+          </div>
+        </div>
+        <div class="modal-header-actions">
+          <span class="modal-filename-badge" id="editorFilenameBadge">subtitles.ass</span>
+          <button type="button" class="modal-close-btn" id="btnCloseAssModal" aria-label="Close Editor">&times;</button>
+        </div>
+      </div>
+
+      <!-- Editor Mode Tabs -->
+      <div class="editor-tabs-bar">
+        <div class="editor-tab-group">
+          <button type="button" class="editor-tab active" id="tabDialogueView" data-tab="dialogue">
+            <span>📝 Spoken Dialogue Lines</span>
+          </button>
+          <button type="button" class="editor-tab" id="tabRawView" data-tab="raw">
+            <span>📄 Full .ASS Script (Raw)</span>
+          </button>
+        </div>
+        <span class="editor-tab-hint" id="editorTabHint">Edit spoken words directly per sentence line</span>
+      </div>
+
+      <!-- Modal Body -->
+      <div class="modal-body">
+        <!-- Mode 1: Friendly Dialogue Lines List -->
+        <div class="editor-view-pane" id="paneDialogueView">
+          <div class="dialogue-list-wrap" id="dialogueListContainer">
+            <!-- Populated dynamically: lines with timecodes and editable text -->
+          </div>
+        </div>
+
+        <!-- Mode 2: Full Monospace ASS Textarea -->
+        <div class="editor-view-pane hidden" id="paneRawView">
+          <textarea id="rawAssTextarea" class="code-textarea" spellcheck="false" placeholder="Loading subtitle script..."></textarea>
+        </div>
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="modal-footer">
+        <div class="modal-footer-status">
+          <span class="status-indicator-dot" id="editorStatusDot"></span>
+          <span id="editorStatusText">Ready to edit</span>
+        </div>
+        <div class="modal-footer-buttons">
+          <button type="button" id="btnCancelAssEditor" class="btn btn-secondary">Cancel</button>
+          <button type="button" id="btnResetAssEditor" class="btn btn-secondary" title="Revert edits to initially generated content">Reset</button>
+          <button type="button" id="btnSaveAssEditor" class="btn btn-secondary btn-save-editor" title="Save dialogue corrections directly to sibling .ass file and close">
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+              <polyline points="17 21 17 13 7 13 7 21"></polyline>
+              <polyline points="7 3 7 8 15 8"></polyline>
+            </svg>
+            <span>Save Edits & Close</span>
+          </button>
+          <button type="button" id="btnModalSaveAndBurn" class="btn btn-primary-gradient btn-save-and-burn" title="Save subtitles and immediately burn into video">
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none">
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+            <span>Save & Burn Video (.mp4)</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=4.3"></script>
+</body>
+</html>
+

@@ -1,0 +1,16 @@
+# Core Web & API Framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.8.0
+python-multipart>=0.0.9
+
+# Image & Media Utilities
+Pillow>=10.0.0
+
+# AI Speech Recognition & Word-Level Alignment
+torch>=2.2.0
+torchaudio>=2.2.0
+whisperx>=3.1.0
+
+# Desktop Application Window Shell (Phase 2)
+pywebview>=5.0.0
