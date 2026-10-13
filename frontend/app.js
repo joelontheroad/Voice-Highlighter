@@ -1559,7 +1559,7 @@ document.addEventListener("DOMContentLoaded", () => {
       burn_video: burnVideo,
       output_filename: customFilename || null,
       reuse_existing_ass: false,
-      reuse_existing_wav: true,
+      reuse_existing_wav: false,
       styling: {
         font_name: state.fontFamily,
         font_size: state.fontSize,

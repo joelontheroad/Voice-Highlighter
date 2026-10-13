@@ -72,8 +72,8 @@ class TranscribeRequest(BaseModel):
     styling: Dict[str, Any]
     burn_video: Optional[bool] = False
     output_filename: Optional[str] = None
-    reuse_existing_ass: Optional[bool] = True
-    reuse_existing_wav: Optional[bool] = True
+    reuse_existing_ass: Optional[bool] = False
+    reuse_existing_wav: Optional[bool] = False
 
 class PreviewAssRequest(BaseModel):
     sample_text: str
@@ -385,8 +385,8 @@ def process_transcription_job(
     styling: Dict[str, Any],
     burn_video: bool = False,
     output_filename: Optional[str] = None,
-    reuse_existing_ass: bool = True,
-    reuse_existing_wav: bool = True
+    reuse_existing_ass: bool = False,
+    reuse_existing_wav: bool = False
 ):
     def update_progress(message: str, pct: int):
         if task_id in tasks:
@@ -428,14 +428,22 @@ def process_transcription_job(
         else:
             # 2. Check for existing WAV audio in same directory or extract
             is_direct_wav = clean_path.lower().endswith(".wav")
+            wav_is_fresh = False
+            if os.path.exists(sibling_wav):
+                try:
+                    # Audio cache is only fresh if WAV was modified after or at same time as video
+                    wav_is_fresh = os.path.getmtime(sibling_wav) >= os.path.getmtime(clean_path)
+                except Exception:
+                    wav_is_fresh = False
+
             if is_direct_wav:
                 wav_path = clean_path
                 update_progress("Using source WAV audio directly...", 15)
-            elif reuse_existing_wav and os.path.exists(sibling_wav):
+            elif reuse_existing_wav and os.path.exists(sibling_wav) and wav_is_fresh:
                 wav_path = sibling_wav
                 update_progress(f"Reusing existing audio: {os.path.basename(sibling_wav)}...", 15)
             else:
-                update_progress("Extracting audio to source directory (ffmpeg)...", 10)
+                update_progress("Extracting fresh audio from video (ffmpeg)...", 10)
                 wav_path = sibling_wav
                 try:
                     extract_audio(clean_path, wav_path)
@@ -544,8 +552,8 @@ def start_transcribe(req: TranscribeRequest):
             req.styling,
             bool(req.burn_video),
             req.output_filename,
-            bool(req.reuse_existing_ass if req.reuse_existing_ass is not None else True),
-            bool(req.reuse_existing_wav if req.reuse_existing_wav is not None else True)
+            bool(req.reuse_existing_ass if req.reuse_existing_ass is not None else False),
+            bool(req.reuse_existing_wav if req.reuse_existing_wav is not None else False)
         ),
         daemon=True
     )
