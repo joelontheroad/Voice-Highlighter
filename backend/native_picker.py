@@ -3,85 +3,197 @@ import sys
 import os
 import json
 import argparse
+import subprocess
+from typing import Optional
 
-def main():
-    parser = argparse.ArgumentParser(description="Open native OS file chooser dialog")
-    parser.add_argument("--initial-path", default="", help="Initial file or folder path")
-    parser.add_argument("--title", default="Select Video File", help="Dialog window title")
-    parser.add_argument("--timeout-ms", type=int, default=0, help="Optional timeout in ms to cancel dialog")
-    args = parser.parse_args()
+def pick_file_macos(title: str, initial_path: str) -> Optional[str]:
+    """Native macOS Finder file picker via osascript."""
+    safe_title = title.replace('"', '\\"')
+    script = f'''
+    tell application "System Events"
+        activate
+    end tell
+    try
+        set chosenFile to choose file with prompt "{safe_title}" of type {{"public.movie", "public.audio", "mp4", "mov", "mkv", "avi", "webm", "wav", "mp3"}}
+        return POSIX path of chosenFile
+    on error number -128
+        return ""
+    end try
+    '''
+    try:
+        res = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=120)
+        out = res.stdout.strip()
+        return out if out else None
+    except Exception:
+        return None
 
+def pick_file_windows(title: str, initial_path: str) -> Optional[str]:
+    """Native Windows Explorer file picker via PowerShell."""
+    init_dir = initial_path.replace('"', '`"') if initial_path and os.path.exists(initial_path) else ""
+    ps_code = f'''
+    [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
+    $d = New-Object System.Windows.Forms.OpenFileDialog
+    $d.Title = "{title}"
+    $d.Filter = "Video & Audio Files (*.mp4;*.mov;*.mkv;*.webm;*.avi;*.wav;*.mp3)|*.mp4;*.mov;*.mkv;*.webm;*.avi;*.wav;*.mp3|All Files (*.*)|*.*"
+    if ("{init_dir}" -ne "") {{
+        $d.InitialDirectory = "{init_dir}"
+    }}
+    $d.ShowHelp = $false
+    if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{
+        [Console]::WriteLine($d.FileName)
+    }}
+    '''
+    try:
+        res = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_code],
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        out = res.stdout.strip()
+        return out if out else None
+    except Exception:
+        return None
+
+def pick_file_gtk(title: str, initial_path: str, timeout_ms: int = 0) -> Optional[str]:
+    """Linux GTK 3.0 FileChooserDialog."""
     try:
         import gi
         gi.require_version("Gtk", "3.0")
         from gi.repository import Gtk, GLib
-    except Exception as e:
-        print(json.dumps({"error": f"Failed to import GTK: {str(e)}", "cancelled": True}))
-        sys.exit(1)
 
-    init_ok, _ = Gtk.init_check()
-    if not init_ok:
-        print(json.dumps({"error": "Cannot open display for GTK file dialog", "cancelled": True}))
-        sys.exit(1)
+        init_ok, _ = Gtk.init_check()
+        if not init_ok:
+            return None
 
-    dialog = Gtk.FileChooserDialog(
-        title=args.title,
-        action=Gtk.FileChooserAction.OPEN
-    )
-    dialog.add_buttons(
-        Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-        Gtk.STOCK_OPEN, Gtk.ResponseType.OK
-    )
-    dialog.set_default_response(Gtk.ResponseType.OK)
+        dialog = Gtk.FileChooserDialog(
+            title=title,
+            action=Gtk.FileChooserAction.OPEN
+        )
+        dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_OPEN, Gtk.ResponseType.OK
+        )
+        dialog.set_default_response(Gtk.ResponseType.OK)
 
-    # Filter: Video files
-    filter_video = Gtk.FileFilter()
-    filter_video.set_name("Video files (*.mp4, *.mov, *.mkv, *.webm, *.avi)")
-    filter_video.add_mime_type("video/*")
-    for pattern in ["*.mp4", "*.mov", "*.mkv", "*.webm", "*.avi", "*.m4v", "*.MP4", "*.MOV"]:
-        filter_video.add_pattern(pattern)
-    dialog.add_filter(filter_video)
+        # Filters
+        filter_video = Gtk.FileFilter()
+        filter_video.set_name("Video & Audio files (*.mp4, *.mov, *.mkv, *.webm, *.avi, *.wav, *.mp3)")
+        for pattern in ["*.mp4", "*.mov", "*.mkv", "*.webm", "*.avi", "*.wav", "*.mp3", "*.m4v", "*.MP4", "*.MOV"]:
+            filter_video.add_pattern(pattern)
+        dialog.add_filter(filter_video)
 
-    # Filter: All files
-    filter_all = Gtk.FileFilter()
-    filter_all.set_name("All files (*.*)")
-    filter_all.add_pattern("*")
-    dialog.add_filter(filter_all)
+        filter_all = Gtk.FileFilter()
+        filter_all.set_name("All files (*.*)")
+        filter_all.add_pattern("*")
+        dialog.add_filter(filter_all)
 
-    # Set initial directory or file
-    if args.initial_path:
-        norm_path = os.path.abspath(os.path.expanduser(args.initial_path))
-        if os.path.isfile(norm_path):
-            dialog.set_filename(norm_path)
-            parent_dir = os.path.dirname(norm_path)
-            if os.path.isdir(parent_dir):
-                dialog.set_current_folder(parent_dir)
-        elif os.path.isdir(norm_path):
-            dialog.set_current_folder(norm_path)
+        if initial_path:
+            norm_path = os.path.abspath(os.path.expanduser(initial_path))
+            if os.path.isfile(norm_path):
+                dialog.set_filename(norm_path)
+                parent_dir = os.path.dirname(norm_path)
+                if os.path.isdir(parent_dir):
+                    dialog.set_current_folder(parent_dir)
+            elif os.path.isdir(norm_path):
+                dialog.set_current_folder(norm_path)
 
-    # Ensure dialog is brought forward
-    dialog.set_modal(True)
-    dialog.set_keep_above(True)
+        dialog.set_modal(True)
+        dialog.set_keep_above(True)
 
-    if args.timeout_ms > 0:
-        GLib.timeout_add(args.timeout_ms, lambda: (dialog.response(Gtk.ResponseType.CANCEL), False)[1])
+        if timeout_ms > 0:
+            GLib.timeout_add(timeout_ms, lambda: (dialog.response(Gtk.ResponseType.CANCEL), False)[1])
 
-    response = dialog.run()
+        response = dialog.run()
+        selected_path = None
+        if response == Gtk.ResponseType.OK:
+            selected_path = dialog.get_filename()
+
+        dialog.destroy()
+        while Gtk.events_pending():
+            Gtk.main_iteration_do(False)
+
+        return selected_path
+    except Exception:
+        return None
+
+def pick_file_zenity(title: str, initial_path: str) -> Optional[str]:
+    """Linux Zenity file picker."""
+    cmd = ["zenity", "--file-selection", f"--title={title}"]
+    if initial_path:
+        cmd.append(f"--filename={initial_path}")
+    cmd.extend([
+        "--file-filter=Media files | *.mp4 *.mov *.mkv *.webm *.avi *.wav *.mp3 *.MP4 *.MOV",
+        "--file-filter=All files | *"
+    ])
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        return res.stdout.strip() if res.returncode == 0 and res.stdout.strip() else None
+    except Exception:
+        return None
+
+def pick_file_kdialog(title: str, initial_path: str) -> Optional[str]:
+    """Linux KDE kdialog file picker."""
+    init_dir = initial_path or "."
+    filter_spec = "*.mp4 *.mov *.mkv *.webm *.avi *.wav *.mp3|Media files\n*|All Files"
+    cmd = ["kdialog", "--title", title, "--getopenfilename", init_dir, filter_spec]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        return res.stdout.strip() if res.returncode == 0 and res.stdout.strip() else None
+    except Exception:
+        return None
+
+def pick_file_tkinter(title: str, initial_path: str) -> Optional[str]:
+    """Universal Tkinter fallback dialog."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        init_dir = initial_path if os.path.isdir(initial_path) else os.path.dirname(initial_path) if os.path.isfile(initial_path) else None
+        path = filedialog.askopenfilename(
+            title=title,
+            initialdir=init_dir,
+            filetypes=[
+                ("Video & Audio files", "*.mp4 *.mov *.mkv *.webm *.avi *.wav *.mp3 *.MP4 *.MOV"),
+                ("All files", "*.*")
+            ]
+        )
+        root.destroy()
+        return path if path else None
+    except Exception:
+        return None
+
+def main():
+    parser = argparse.ArgumentParser(description="Cross-platform native OS file chooser dialog")
+    parser.add_argument("--initial-path", default="", help="Initial file or folder path")
+    parser.add_argument("--title", default="Select Video File", help="Dialog window title")
+    parser.add_argument("--timeout-ms", type=int, default=0, help="Optional timeout in ms")
+    args = parser.parse_args()
+
+    platform = sys.platform
     selected_path = None
-    cancelled = True
 
-    if response == Gtk.ResponseType.OK:
-        selected_path = dialog.get_filename()
-        cancelled = False
+    if platform == "darwin":
+        selected_path = pick_file_macos(args.title, args.initial_path)
+    elif platform == "win32":
+        selected_path = pick_file_windows(args.title, args.initial_path)
+    else:
+        # Linux / BSD
+        selected_path = pick_file_gtk(args.title, args.initial_path, args.timeout_ms)
+        if selected_path is None and not os.environ.get("PICKER_CANCELLED"):
+            selected_path = pick_file_zenity(args.title, args.initial_path)
+        if selected_path is None:
+            selected_path = pick_file_kdialog(args.title, args.initial_path)
 
-    dialog.destroy()
+    # Universal fallback if platform-specific picker failed
+    if selected_path is None and (platform != "darwin" and platform != "win32"):
+        selected_path = pick_file_tkinter(args.title, args.initial_path)
 
-    # Process pending GTK events to cleanly close window
-    while Gtk.events_pending():
-        Gtk.main_iteration_do(False)
-
+    cancelled = selected_path is None or not os.path.exists(selected_path)
     print(json.dumps({
-        "path": selected_path,
+        "path": selected_path if not cancelled else None,
         "cancelled": cancelled
     }))
 

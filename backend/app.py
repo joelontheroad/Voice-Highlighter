@@ -18,7 +18,14 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from backend.extractor import get_video_metadata, extract_poster_frame, extract_audio, burn_subtitles_to_video
+from backend.extractor import (
+    get_video_metadata,
+    extract_poster_frame,
+    extract_audio,
+    burn_subtitles_to_video,
+    get_best_h264_encoder,
+    test_ffmpeg_encoder,
+)
 from backend.transcriber import run_whisperx_pipeline
 from backend.ass_generator import generate_ass_content
 
@@ -83,7 +90,7 @@ async def open_os_file_dialog(req: OpenFileDialogRequest):
     if not os.path.exists(helper_script):
         raise HTTPException(status_code=500, detail="Native picker helper not found")
 
-    cmd = ["/usr/bin/python3", helper_script]
+    cmd = [sys.executable, helper_script]
     if req.initial_path and req.initial_path.strip():
         cmd.extend(["--initial-path", req.initial_path.strip()])
     if req.title and req.title.strip():
@@ -143,17 +150,8 @@ def detect_cpu_model() -> str:
     return cleaned or "CPU"
 
 def probe_nvenc_rendering() -> bool:
-    """Performs a live 0.01s probe to verify if GPU NVENC video rendering is active."""
-    try:
-        res = subprocess.run(
-            ["ffmpeg", "-f", "lavfi", "-i", "color=c=black:s=64x64:d=0.04", "-c:v", "h264_nvenc", "-f", "null", "-"],
-            capture_output=True,
-            text=True,
-            timeout=2
-        )
-        return res.returncode == 0
-    except Exception:
-        return False
+    """Performs a live probe to verify if GPU NVENC video rendering is active."""
+    return test_ffmpeg_encoder("h264_nvenc")
 
 def get_gpu_diagnostic() -> Optional[str]:
     """Detects if an NVIDIA GPU is physically present but unavailable due to driver/power state."""
@@ -199,32 +197,33 @@ def get_system_info():
         clean_gpu = re.sub(r"\s+", " ", clean_gpu)
 
     cpu_model = detect_cpu_model()
-    nvenc_working = probe_nvenc_rendering()
     gpu_diagnostic = get_gpu_diagnostic()
+    best_encoder, _, best_encoder_label = get_best_h264_encoder()
+    nvenc_working = (best_encoder == "h264_nvenc")
 
     # Determine what is actually being used to render
-    is_gpu = has_cuda or nvenc_working
+    is_gpu = has_cuda or nvenc_working or (best_encoder in ("h264_nvenc", "h264_videotoolbox", "h264_amf", "h264_qsv"))
 
     if is_gpu and clean_gpu:
         device = "cuda"
         engine_type = "GPU"
         active_badge_text = f"{clean_gpu} (GPU)"
         short_engine = clean_gpu
-        burn_engine = "NVIDIA NVENC (GPU)"
+        burn_engine = best_encoder_label
         whisper_engine = f"WhisperX ({clean_gpu})"
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        device = "mps"
-        engine_type = "GPU"
-        active_badge_text = "Apple Silicon (MPS)"
+    elif sys.platform == "darwin" or (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()):
+        device = "mps" if (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()) else "cpu"
+        engine_type = "Apple Silicon" if sys.platform == "darwin" else "GPU"
+        active_badge_text = "Apple Silicon (Hardware)"
         short_engine = "Apple Silicon"
-        burn_engine = "Apple VideoToolbox"
-        whisper_engine = "WhisperX (MPS)"
+        burn_engine = best_encoder_label
+        whisper_engine = "WhisperX (Apple Silicon)"
     else:
         device = "cpu"
         engine_type = "CPU"
         active_badge_text = f"{cpu_model} (CPU)"
         short_engine = cpu_model
-        burn_engine = "FFmpeg libx264 (CPU)"
+        burn_engine = best_encoder_label
         whisper_engine = "WhisperX (CPU)"
 
     return {

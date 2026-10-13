@@ -1,6 +1,22 @@
 import os
+import sys
 import torch
 from typing import Dict, Any, Callable, Optional
+
+def get_transcription_device() -> tuple[str, str, str]:
+    """
+    Determines the best available device, compute_type, and human-friendly label
+    for WhisperX / ctranslate2 inference.
+    """
+    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        gpu_name = torch.cuda.get_device_name(0)
+        return "cuda", "float16", gpu_name
+
+    # Check for Apple Silicon / macOS
+    if sys.platform == "darwin":
+        return "cpu", "int8", "Apple Silicon (CPU/NE)"
+
+    return "cpu", "int8", "CPU"
 
 def run_whisperx_pipeline(
     audio_wav_path: str,
@@ -10,19 +26,16 @@ def run_whisperx_pipeline(
 ) -> Dict[str, Any]:
     """
     Executes WhisperX speech-to-text and Wav2Vec2 forced word-level alignment
-    accelerated on NVIDIA RTX A5000 (CUDA).
+    with adaptive hardware acceleration (CUDA on NVIDIA, optimized CPU on Apple Silicon & PC).
     """
     import whisperx
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device, compute_type, device_label = get_transcription_device()
     device_index = 0
-    compute_type = "float16" if device == "cuda" else "int8"
-    
-    gpu_name = torch.cuda.get_device_name(device_index) if device == "cuda" else "CPU"
-    print(f"[WhisperX] Using device: {device} ({gpu_name}), compute_type: {compute_type}")
+    print(f"[WhisperX] Selected device: {device} ({device_label}), compute_type: {compute_type}")
 
     if progress_callback:
-        progress_callback(f"Loading WhisperX {model_name} on {gpu_name}...", 20)
+        progress_callback(f"Loading WhisperX {model_name} on {device_label}...", 20)
 
     # 1. Load Audio
     print(f"[WhisperX] Loading audio from {audio_wav_path}...")
@@ -47,7 +60,7 @@ def run_whisperx_pipeline(
         )
 
     if progress_callback:
-        progress_callback("Transcribing speech with RTX A5000 Tensor Cores...", 45)
+        progress_callback(f"Transcribing speech with WhisperX ({device_label})...", 45)
 
     # 3. Transcribe audio with Whisper
     print("[WhisperX] Transcribing audio...")
@@ -60,10 +73,11 @@ def run_whisperx_pipeline(
 
     # 4. Load alignment model and align words
     print("[WhisperX] Loading forced alignment model...")
+    align_device = "cuda" if device == "cuda" else "cpu"
     try:
         model_a, metadata = whisperx.load_align_model(
             language_code=detected_lang,
-            device=device
+            device=align_device
         )
         print("[WhisperX] Aligning word-level timestamps...")
         aligned_result = whisperx.align(
@@ -71,7 +85,7 @@ def run_whisperx_pipeline(
             model_a,
             metadata,
             audio,
-            device,
+            align_device,
             return_char_alignments=False
         )
     except Exception as align_err:
