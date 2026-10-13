@@ -20,37 +20,30 @@ Accelerated with **WhisperX AI** (word-level forced alignment) and hardware-acce
 
 ---
 
-## 🚀 Quickstart Installation
+## 🚀 Quickstart: 1-Click Consumer Download (No Git Required)
 
-### 🍎 macOS & 🐧 Linux
+> **Latest Version**: [**Download Voice-Highlighter-v1.0.0.zip**](https://github.com/joelontheroad/Voice-Highlighter/releases/download/v1.0.0/Voice-Highlighter-v1.0.0.zip) 📦
+
+1. **Download & Extract**: Download [`Voice-Highlighter-v1.0.0.zip`](https://github.com/joelontheroad/Voice-Highlighter/releases/download/v1.0.0/Voice-Highlighter-v1.0.0.zip) and unzip the folder.
+2. **Run the Installer**:
+   * **🍎 macOS & 🐧 Linux**: Double-click **`install.sh`** (or run `./install.sh` in Terminal).
+   * **🪟 Windows**: Double-click **`install.bat`**.
+3. **Launch Anytime**: Double-click the **Voice Highlighter** icon created on your Desktop!
+
+---
+
+### Alternative: Git Clone (For Developers)
 
 ```bash
 # Clone the repository
 git clone https://github.com/joelontheroad/Voice-Highlighter.git
 cd Voice-Highlighter
 
-# Run the 1-click automated installer
-./install.sh
+# Run installer or launcher
+./install.sh      # Full automated setup
+./run.sh          # Web browser interface (http://localhost:8000)
+./run.sh --app    # Standalone desktop window
 ```
-
-* The installer creates your virtual environment, fetches dependencies, auto-provisions portable FFmpeg if missing, and adds a **Voice Highlighter** icon to your Desktop.
-* To launch from terminal anytime:
-  ```bash
-  ./run.sh          # Web browser interface (http://localhost:8000)
-  ./run.sh --app    # Standalone desktop window
-  ```
-
----
-
-### 🪟 Windows
-
-1. Download or clone this repository:
-   ```cmd
-   git clone https://github.com/joelontheroad/Voice-Highlighter.git
-   cd Voice-Highlighter
-   ```
-2. Double-click **`install.bat`**
-3. Once installation completes, double-click the **Voice Highlighter** shortcut created on your Desktop!
 
 ---
 
