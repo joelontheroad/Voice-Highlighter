@@ -1,8 +1,8 @@
 # 🎙️ Voice Highlighter
 
-> **A high-performance AI studio for generating, editing, and burning word-highlighted animated subtitles directly into videos.**
+> **A high-performance AI tool for generating, editing, and burning word-highlighted animated subtitles directly into videos.**
 
-Accelerated with **WhisperX AI** (word-level forced alignment) and hardware-accelerated **FFmpeg** rendering (**NVIDIA NVENC** on Windows/Linux, **Apple Silicon VideoToolbox** on macOS, and **CPU** fallback).
+Accelerated with **WhisperX AI** (word-level forced alignment) and hardware-accelerated **FFmpeg** rendering (eg: **NVIDIA NVENC** on Windows/Linux, **Apple Silicon VideoToolbox** on macOS, and **CPU** fallback if there's no GPU).
 
 ---
 
