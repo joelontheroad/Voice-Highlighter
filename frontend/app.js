@@ -1846,17 +1846,6 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const raw = localStorage.getItem(PRESET_STORAGE_KEY);
       const presets = raw ? JSON.parse(raw) : {};
-      // Purge any personal developer presets so only standard presets ship
-      let modified = false;
-      Object.keys(presets).forEach(key => {
-        if (key.includes("katie") || (presets[key].name && presets[key].name.toLowerCase().includes("katie"))) {
-          delete presets[key];
-          modified = true;
-        }
-      });
-      if (modified) {
-        localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify(presets));
-      }
       return presets;
     } catch (e) {
       console.warn("Failed to read presets from localStorage:", e);
@@ -2099,6 +2088,7 @@ document.addEventListener("DOMContentLoaded", () => {
     btnSavePreset.addEventListener("click", () => {
       presetDrawerMode = "save";
       if (drawerTitle) drawerTitle.textContent = "Save New Preset";
+      if (btnConfirmPresetName) btnConfirmPresetName.textContent = "Save";
       if (presetNameInput) {
         presetNameInput.value = "";
         presetNameInput.placeholder = "Enter preset name (e.g. TikTok Yellow Pop)";
@@ -2119,6 +2109,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       presetDrawerMode = "rename";
       if (drawerTitle) drawerTitle.textContent = `Rename Preset: "${p.name}"`;
+      if (btnConfirmPresetName) btnConfirmPresetName.textContent = "Rename";
       if (presetNameInput) {
         presetNameInput.value = p.name;
       }
@@ -2132,7 +2123,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Confirm Name / Rename
+  // Confirm Name / Rename / Export
   if (btnConfirmPresetName) {
     btnConfirmPresetName.addEventListener("click", () => {
       const name = (presetNameInput ? presetNameInput.value.trim() : "");
@@ -2164,6 +2155,27 @@ document.addEventListener("DOMContentLoaded", () => {
           populatePresetDropdown(id);
           showPresetStatus(`Preset renamed to "${name}"!`);
         }
+      } else if (presetDrawerMode === "export") {
+        const cleanName = name.replace(/^[🔥🏷️🎬✨★\s]+/, "").trim() || "Custom Preset";
+        const fileSlug = cleanName.toLowerCase().replace(/[^a-z0-9_-]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "") || "preset";
+        const stylingData = getCurrentStylingSnapshot();
+
+        const payload = {
+          name: cleanName,
+          version: "1.0",
+          exported_at: new Date().toISOString(),
+          styling: stylingData
+        };
+
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(payload, null, 2));
+        const downloadAnchor = document.createElement("a");
+        downloadAnchor.setAttribute("href", dataStr);
+        downloadAnchor.setAttribute("download", `${fileSlug}.json`);
+        document.body.appendChild(downloadAnchor);
+        downloadAnchor.click();
+        downloadAnchor.remove();
+
+        showPresetStatus(`Exported preset "${fileSlug}.json" (${cleanName})!`);
       }
 
       if (presetNameDrawer) presetNameDrawer.style.display = "none";
@@ -2213,42 +2225,38 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // Export Preset (.json)
-  if (btnExportPreset) {
+  if (btnExportPreset && presetNameDrawer) {
     btnExportPreset.addEventListener("click", () => {
-      const val = selectPreset.value;
-      let presetName = "voice_highlighter_preset";
-      let stylingData = getCurrentStylingSnapshot();
+      presetDrawerMode = "export";
+      if (drawerTitle) drawerTitle.textContent = "Export Preset as JSON";
+      if (btnConfirmPresetName) btnConfirmPresetName.textContent = "Export";
 
-      if (val && val.startsWith("factory:")) {
-        const f = FACTORY_PRESETS[val];
-        if (f) {
-          presetName = f.name.replace(/[^a-zA-Z0-9_-]/g, "_");
-          stylingData = f.styling;
-        }
-      } else if (val && val.startsWith("custom_")) {
+      const val = selectPreset ? selectPreset.value : "";
+      let defaultName = "My Custom Preset";
+
+      if (val && val.startsWith("custom_")) {
         const custom = getCustomPresets();
-        if (custom[val]) {
-          presetName = custom[val].name.replace(/[^a-zA-Z0-9_-]/g, "_");
-          stylingData = custom[val].styling;
+        if (custom[val] && custom[val].name) {
+          defaultName = custom[val].name;
+        }
+      } else if (val && val.startsWith("factory:")) {
+        const f = FACTORY_PRESETS[val];
+        if (f && f.name) {
+          defaultName = f.name.replace(/^[🔥🏷️🎬✨★\s]+/, "").trim();
         }
       }
 
-      const payload = {
-        name: presetName,
-        version: "1.0",
-        exported_at: new Date().toISOString(),
-        styling: stylingData
-      };
-
-      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(payload, null, 2));
-      const downloadAnchor = document.createElement("a");
-      downloadAnchor.setAttribute("href", dataStr);
-      downloadAnchor.setAttribute("download", `${presetName}.json`);
-      document.body.appendChild(downloadAnchor);
-      downloadAnchor.click();
-      downloadAnchor.remove();
-
-      showPresetStatus(`Exported preset "${presetName}.json"`);
+      if (presetNameInput) {
+        presetNameInput.value = defaultName;
+        presetNameInput.placeholder = "Enter export preset name";
+      }
+      presetNameDrawer.style.display = "block";
+      setTimeout(() => {
+        if (presetNameInput) {
+          presetNameInput.focus();
+          presetNameInput.select();
+        }
+      }, 50);
     });
   }
 
@@ -2271,8 +2279,22 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
           }
 
-          const rawName = parsed.name || file.name.replace(/\.json$/i, "");
-          const cleanName = rawName.replace(/^[🔥🏷️🎬✨★\s]+/, "").trim() || "Imported Preset";
+          const fileBaseName = file.name.replace(/\.json$/i, "").trim();
+          const isGenericName = (n) => !n || /^(voice_highlighter_preset|imported_preset|preset|custom_preset)$/i.test(n.trim());
+
+          let cleanName = "";
+          // If parsed.name is meaningful and not generic, use it;
+          // If parsed.name is generic, check if the file was renamed on disk;
+          // Otherwise fall back to parsed.name or fileBaseName.
+          if (parsed.name && !isGenericName(parsed.name)) {
+            cleanName = parsed.name;
+          } else if (fileBaseName && !isGenericName(fileBaseName)) {
+            cleanName = fileBaseName;
+          } else {
+            cleanName = parsed.name || fileBaseName || "Imported Preset";
+          }
+
+          cleanName = cleanName.replace(/^[🔥🏷️🎬✨★\s]+/, "").trim() || "Imported Preset";
 
           const custom = getCustomPresets();
           const id = "custom_" + Date.now();
@@ -2920,9 +2942,9 @@ document.addEventListener("DOMContentLoaded", () => {
     loadVideoInfo(state.videoPath);
   }
 
-  // Initialize Presets from localStorage (default strictly to standard factory preset)
+  // Initialize Presets from localStorage
   let savedActivePreset = localStorage.getItem(PRESET_LAST_ACTIVE_KEY) || "factory:tiktok_pop";
-  if (!savedActivePreset || savedActivePreset.includes("katie")) {
+  if (!savedActivePreset) {
     savedActivePreset = "factory:tiktok_pop";
     localStorage.setItem(PRESET_LAST_ACTIVE_KEY, "factory:tiktok_pop");
   }
