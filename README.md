@@ -58,7 +58,7 @@ The `voice-highlighter` command conforms strictly to POSIX CLI stream separation
 | `--verbose` | None | Enable verbose diagnostic logging to `stderr`. |
 | `--json` | None | Output machine-readable structured JSON to `stdout`. |
 | `--reset-config` | None | Purge user presets/config and restore factory defaults. |
-| `serve` | `[--host 127.0.0.1] [--port 8000]` | Start the local web studio on localhost. |
+| `serve` | `[--host 127.0.0.1] [--port 8000] [--no-browser]` | Start the local web studio on localhost. |
 | `desktop` | None | Launch standalone chromeless desktop window. |
 | `preset list` | `[--json]` | List all locally available style presets. |
 | `preset show` | `[name] [--json]` | Display preset configuration in YAML or JSON format. |

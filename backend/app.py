@@ -69,7 +69,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Enforce W3C Content Security Policy and modern browser defense headers."""
 
     async def dispatch(self, request: Request, call_next):
-        """Inject security defense headers into outgoing HTTP responses."""
+        """Inject security defense headers into outgoing HTTP responses.
+
+        Args:
+            request: Incoming HTTP request instance.
+            call_next: Next request handler in middleware pipeline.
+
+        Returns:
+            HTTP response with W3C CSP, nosniff, anti-framing, and referrer defense headers.
+        """
         response = await call_next(request)
         # SECURITY: Enforce strict W3C CSP, nosniff, and anti-framing defense headers (CWE-79, CWE-1021)
         response.headers["Content-Security-Policy"] = (
@@ -88,7 +96,15 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 @app.middleware("http")
 async def add_no_cache_headers(request: Request, call_next):
-    """Add cache-busting headers for local single-page web app static assets."""
+    """Add cache-busting headers for local single-page web app static assets.
+
+    Args:
+        request: Incoming HTTP request instance.
+        call_next: Next request handler in middleware pipeline.
+
+    Returns:
+        HTTP response with cache-busting headers injected for HTML, CSS, and JS assets.
+    """
     response = await call_next(request)
     if request.url.path.endswith((".css", ".js", ".html")) or request.url.path == "/":
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
@@ -234,6 +250,7 @@ async def open_os_file_dialog(req: OpenFileDialogRequest, auth: str = Depends(ve
             else:
                 env["DISPLAY"] = ":0"
         try:
+            # SECURITY: Mitigate command injection (CWE-78) by executing native picker helper with discrete arguments
             res = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -546,10 +563,13 @@ def serve_frame(frame_name: str):
         FileResponse streaming the JPEG image.
 
     Raises:
-        HTTPException: If the requested frame image does not exist.
+        HTTPException: If the requested frame image does not exist or escapes FRAMES_DIR.
     """
-    frame_path = os.path.join(FRAMES_DIR, frame_name)
-    if not os.path.exists(frame_path):
+    # SECURITY: Prevent path traversal (CWE-22) by stripping directory components and verifying canonical directory
+    safe_name = os.path.basename(frame_name)
+    frame_path = os.path.realpath(os.path.join(FRAMES_DIR, safe_name))
+    frames_dir_real = os.path.realpath(FRAMES_DIR)
+    if not frame_path.startswith(frames_dir_real) or not os.path.exists(frame_path):
         raise HTTPException(status_code=404, detail="Frame not found")
     return FileResponse(frame_path, media_type="image/jpeg")
 
@@ -1291,6 +1311,7 @@ def open_video_endpoint(req: OpenVideoRequest, auth: str = Depends(verify_auth))
 
     system = platform.system()
     try:
+        # SECURITY: Mitigate command injection (CWE-78) by executing desktop player via discrete argument vector
         if system == "Linux":
             subprocess.Popen(["xdg-open", target_path], start_new_session=True)
         elif system == "Darwin":
@@ -1450,22 +1471,88 @@ async def serve_index(request: Request, token: str | None = Query(None)):
     return res
 
 
-def run_server(port: int = 8000, host: str = "127.0.0.1", reload: bool = False) -> None:
+def format_clickable_url(url: str, label: str | None = None, stream: Any = sys.stderr) -> str:
+    """Format a URL as an OSC 8 clickable link if stream is an interactive TTY and NO_COLOR is unset.
+
+    Args:
+        url: The target destination URL.
+        label: Optional visual label text, or None to display the URL itself.
+        stream: Output stream to inspect for TTY capability (defaults to sys.stderr).
+
+    Returns:
+        OSC 8 formatted hyperlink string when connected to an interactive TTY and NO_COLOR
+        is absent, falling back to clean plain-text URL when redirected or NO_COLOR is set.
+    """
+    display_text = label or url
+    if "NO_COLOR" in os.environ:
+        return display_text
+    is_tty = hasattr(stream, "isatty") and stream.isatty()
+    if is_tty:
+        # SECURITY: Prevent terminal escape sequence injection by wrapping clean URL and label in OSC 8
+        return f"\033]8;;{url}\033\\{display_text}\033]8;;\033\\"
+    return display_text
+
+
+def is_headless() -> bool:
+    """Detect whether the current execution environment is headless.
+
+    Returns:
+        True if running in continuous integration or on Linux without DISPLAY/WAYLAND_DISPLAY;
+        False if a graphical desktop session is available.
+    """
+    if os.environ.get("CI", "").lower() in ("true", "1"):
+        return True
+    if sys.platform.startswith("linux"):
+        if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+            return True
+    return False
+
+
+def open_browser_window(url: str) -> None:
+    """Safely open the target URL in the user's default browser window without crashing.
+
+    Args:
+        url: Application URL including ephemeral authentication token.
+    """
+    try:
+        import webbrowser
+        webbrowser.open(url)
+    except Exception as exc:
+        # SECURITY: Catch any browser launch failures without crashing the server process
+        sys.stderr.write(f"[Voice Highlighter] Notice: Could not open browser ({exc}).\n")
+
+
+def run_server(
+    port: int = 8000,
+    host: str = "127.0.0.1",
+    reload: bool = False,
+    no_browser: bool = False,
+) -> None:
     """Run the local uvicorn server strictly bound to localhost.
 
     Args:
         port: Network port number to bind.
         host: Interface IP address, default 127.0.0.1 (localhost only).
         reload: Whether to enable auto-reloading for development.
+        no_browser: Whether to suppress automatic default browser launch on startup.
     """
     # SECURITY: Local server MUST bind strictly to 127.0.0.1 (or ::1) by default per Directive 5
     import uvicorn
     token = AUTH_TOKEN
     app.state.auth_token = token
 
-    sys.stderr.write(f"\n[Voice Highlighter] Local server running at: http://{host}:{port}/?token={token}\n")
+    server_url = f"http://{host}:{port}/?token={token}"
+    clickable_url = format_clickable_url(server_url, stream=sys.stderr)
+
+    sys.stderr.write(f"\n[Voice Highlighter] Local server running at: {clickable_url}\n")
     sys.stderr.write("[Voice Highlighter] Bound strictly to localhost for privacy and security. Press Ctrl+C to exit.\n\n")
     sys.stderr.flush()
+
+    if not no_browser and not is_headless():
+        # SECURITY: Launch default browser in a background timer so uvicorn binds socket first
+        timer = threading.Timer(0.3, open_browser_window, args=[server_url])
+        timer.daemon = True
+        timer.start()
 
     if reload:
         uvicorn.run("backend.app:app", host=host, port=port, reload=True, reload_dirs=["backend"])

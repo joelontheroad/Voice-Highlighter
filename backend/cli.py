@@ -13,6 +13,7 @@ import json
 import os
 import signal
 import sys
+from typing import Any
 
 from backend import __license__, __repository__, __version__
 from backend.config import (
@@ -50,6 +51,43 @@ def should_colorize() -> bool:
     if "NO_COLOR" in os.environ:
         return False
     return sys.stdout.isatty()
+
+
+def format_clickable_url(url: str, label: str | None = None, stream: Any = sys.stderr) -> str:
+    """Format a URL as an OSC 8 clickable link if stream is an interactive TTY and NO_COLOR is unset.
+
+    Args:
+        url: The target destination URL.
+        label: Optional visual label text, or None to display the URL itself.
+        stream: Output stream to inspect for TTY capability (defaults to sys.stderr).
+
+    Returns:
+        OSC 8 formatted hyperlink string when connected to an interactive TTY and NO_COLOR
+        is absent, falling back to clean plain-text URL when redirected or NO_COLOR is set.
+    """
+    display_text = label or url
+    if "NO_COLOR" in os.environ:
+        return display_text
+    is_tty = hasattr(stream, "isatty") and stream.isatty()
+    if is_tty:
+        # SECURITY: Prevent terminal escape sequence injection by wrapping clean URL and label in OSC 8
+        return f"\033]8;;{url}\033\\{display_text}\033]8;;\033\\"
+    return display_text
+
+
+def is_headless() -> bool:
+    """Detect whether the current execution environment is headless.
+
+    Returns:
+        True if running in continuous integration or on Linux without DISPLAY/WAYLAND_DISPLAY;
+        False if a graphical desktop session is available.
+    """
+    if os.environ.get("CI", "").lower() in ("true", "1"):
+        return True
+    if sys.platform.startswith("linux"):
+        if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+            return True
+    return False
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -93,10 +131,11 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # Standard global flags
+    repo_url = format_clickable_url(__repository__, stream=sys.stdout)
     parser.add_argument(
         "-v", "--version",
         action="version",
-        version=f"%(prog)s {__version__} ({__license__})\nSource: {__repository__}",
+        version=f"%(prog)s {__version__} ({__license__})\nSource: {repo_url}",
         help="Show program version, license (GNU AGPLv3), and repository information.",
     )
     parser.add_argument(
@@ -132,6 +171,11 @@ def main(argv: list[str] | None = None) -> int:
         "--reload",
         action="store_true",
         help="Enable hot reload for development.",
+    )
+    serve_parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Suppress automatic launch of the default web browser on startup.",
     )
 
     # 'desktop' subcommand
@@ -176,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
     # Handler: serve (Lazy import to maintain sub-200ms startup for CLI commands)
     if args.subcommand == "serve":
         from backend.app import run_server
-        run_server(port=args.port, host=args.host, reload=args.reload)
+        run_server(port=args.port, host=args.host, reload=args.reload, no_browser=args.no_browser)
         return 0
 
     # Handler: desktop

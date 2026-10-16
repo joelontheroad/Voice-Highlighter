@@ -136,3 +136,89 @@ def test_cli_stdin_support(isolated_env):
     data = json.loads(res.stdout)
     assert data["status"] == "success"
     assert data["characters_processed"] == len(sample_text)
+
+
+def test_cli_serve_no_browser_flag(isolated_env):
+    """Verify that the serve subcommand provides the --no-browser flag in its help text."""
+    res = run_cli("serve", "--help", env=isolated_env)
+    assert res.returncode == 0
+    assert "--no-browser" in res.stdout
+    assert "Suppress automatic launch" in res.stdout
+
+
+def test_format_clickable_url():
+    """Verify OSC 8 hyperlink formatting on TTY streams and plain-text fallback."""
+    from backend.cli import format_clickable_url
+
+    class MockTTYStream:
+        def isatty(self) -> bool:
+            return True
+
+    class MockNonTTYStream:
+        def isatty(self) -> bool:
+            return False
+
+    url = "http://127.0.0.1:8000/?token=abc123xyz"
+
+    # Test interactive TTY without NO_COLOR
+    orig_no_color = os.environ.pop("NO_COLOR", None)
+    try:
+        formatted = format_clickable_url(url, stream=MockTTYStream())
+        assert formatted == f"\033]8;;{url}\033\\{url}\033]8;;\033\\"
+
+        formatted_label = format_clickable_url(url, label="Open Studio", stream=MockTTYStream())
+        assert formatted_label == f"\033]8;;{url}\033\\Open Studio\033]8;;\033\\"
+
+        # Fallback when non-TTY stream
+        fallback_nontty = format_clickable_url(url, stream=MockNonTTYStream())
+        assert fallback_nontty == url
+
+        # Fallback when NO_COLOR is active
+        os.environ["NO_COLOR"] = "1"
+        fallback_no_color = format_clickable_url(url, stream=MockTTYStream())
+        assert fallback_no_color == url
+    finally:
+        if orig_no_color is not None:
+            os.environ["NO_COLOR"] = orig_no_color
+        else:
+            os.environ.pop("NO_COLOR", None)
+
+
+def test_is_headless():
+    """Verify detection of headless environments via CI and desktop display variables."""
+    from backend.cli import is_headless
+
+    orig_ci = os.environ.get("CI")
+    orig_display = os.environ.get("DISPLAY")
+    orig_wayland = os.environ.get("WAYLAND_DISPLAY")
+
+    try:
+        # Case 1: CI=true forces headless mode
+        os.environ["CI"] = "true"
+        os.environ["DISPLAY"] = ":0"
+        assert is_headless() is True
+
+        # Case 2: CI absent or false
+        os.environ.pop("CI", None)
+
+        if sys.platform.startswith("linux"):
+            # Missing both DISPLAY and WAYLAND_DISPLAY is headless
+            os.environ.pop("DISPLAY", None)
+            os.environ.pop("WAYLAND_DISPLAY", None)
+            assert is_headless() is True
+
+            # DISPLAY present is not headless
+            os.environ["DISPLAY"] = ":0"
+            assert is_headless() is False
+
+            # WAYLAND_DISPLAY present is not headless
+            os.environ.pop("DISPLAY", None)
+            os.environ["WAYLAND_DISPLAY"] = "wayland-0"
+            assert is_headless() is False
+    finally:
+        for var, val in [("CI", orig_ci), ("DISPLAY", orig_display), ("WAYLAND_DISPLAY", orig_wayland)]:
+            if val is not None:
+                os.environ[var] = val
+            else:
+                os.environ.pop(var, None)
+
