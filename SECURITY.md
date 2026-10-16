@@ -30,9 +30,3 @@ Please provide:
 - Step-by-step instructions or a minimal Proof of Concept (PoC) to reproduce the issue.
 - The operating system, runtime version (Python or Node), and tool version used.
 - Any proposed remediation or patch, if available.
-
-### Our Commitment
-
-- **Acknowledgment**: We commit to acknowledging receipt of your report within **72 hours**.
-- **Investigation & Patch**: We will investigate and provide regular updates regarding our progress toward a fix.
-- **Coordinated Disclosure**: We adhere to coordinated disclosure. Once a fix is verified, we will release a patched version, publish a security advisory, and credit your contribution (unless you prefer to remain anonymous).
