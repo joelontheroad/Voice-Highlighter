@@ -1,7 +1,12 @@
 # SPDX-FileCopyrightText: 2026 Joel Gonzales <joelontheroad>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Subprocess-level CLI compliance and standards test suite."""
+"""Subprocess-level CLI compliance and standards test suite.
+
+Validates process exit codes, separation of stdout vs stderr streams,
+help and version flags, JSON machine output, XDG directory isolation,
+and standard input piping (-).
+"""
 
 import json
 import os
@@ -14,8 +19,15 @@ import pytest
 
 
 @pytest.fixture
-def isolated_env(tmp_path: Path):
-    """Isolate XDG directories so tests never modify user configuration."""
+def isolated_env(tmp_path: Path) -> dict[str, str]:
+    """Isolate XDG directories so tests never modify user configuration.
+
+    Args:
+        tmp_path: Temporary directory fixture provided by pytest.
+
+    Returns:
+        Dictionary of environment variables pointing to isolated test directories.
+    """
     env = os.environ.copy()
     config_dir = tmp_path / "config"
     cache_dir = tmp_path / "cache"
@@ -32,8 +44,17 @@ def isolated_env(tmp_path: Path):
     return env
 
 
-def run_cli(*args: str, env: dict, input_data: str | None = None) -> subprocess.CompletedProcess:
-    """Helper invoking CLI entry point as a distinct subprocess."""
+def run_cli(*args: str, env: dict[str, str], input_data: str | None = None) -> subprocess.CompletedProcess:
+    """Invoke the CLI entry point as a distinct subprocess.
+
+    Args:
+        *args: Command line argument tokens.
+        env: Environment variables dictionary.
+        input_data: Optional standard input string to pipe.
+
+    Returns:
+        CompletedProcess instance with captured stdout and stderr.
+    """
     cmd = [sys.executable, "-m", "backend.cli", *args]
     return subprocess.run(
         cmd,
@@ -47,7 +68,7 @@ def run_cli(*args: str, env: dict, input_data: str | None = None) -> subprocess.
 
 
 def test_cli_help(isolated_env):
-    """Standard 3 & 10: Verify --help returns exit code 0 within 2000ms and prints usage."""
+    """Verify --help returns exit code 0 within 2000ms and prints usage."""
     start = time.perf_counter()
     res = run_cli("--help", env=isolated_env)
     duration = time.perf_counter() - start
@@ -55,12 +76,11 @@ def test_cli_help(isolated_env):
     assert res.returncode == 0
     assert "usage: voice-highlighter" in res.stdout.lower()
     assert res.stderr == ""
-    # Generous margin for subprocess invocation while asserting quick execution
     assert duration < 2.0
 
 
 def test_cli_version(isolated_env):
-    """Standard 2: Single source of version, mentions AGPLv3 and repository URL."""
+    """Verify single source of version, AGPLv3 mention, and repository URL."""
     res = run_cli("--version", env=isolated_env)
     assert res.returncode == 0
     assert "1.0.0" in res.stdout
@@ -69,14 +89,14 @@ def test_cli_version(isolated_env):
 
 
 def test_cli_invalid_argument_exit_code(isolated_env):
-    """Standard 8: Argument/syntax errors MUST exit with code 2 and write to stderr."""
+    """Verify argument/syntax errors exit with code 2 and write to stderr."""
     res = run_cli("--non-existent-flag-xyz", env=isolated_env)
     assert res.returncode == 2
     assert "unrecognized arguments" in res.stderr.lower()
 
 
 def test_cli_reset_config(isolated_env):
-    """Standard 1 & 4: --reset-config resets local state and defaults."""
+    """Verify --reset-config resets local state and defaults."""
     res = run_cli("--reset-config", env=isolated_env)
     assert res.returncode == 0
     assert "reset to factory defaults" in res.stderr.lower()
@@ -87,7 +107,7 @@ def test_cli_reset_config(isolated_env):
 
 
 def test_cli_preset_list_and_show(isolated_env):
-    """Standard 3, 4 & 11: preset subcommands output formatted text or JSON."""
+    """Verify preset subcommands output formatted text or JSON."""
     # List presets formatted
     res_list = run_cli("preset", "list", env=isolated_env)
     assert res_list.returncode == 0
@@ -109,7 +129,7 @@ def test_cli_preset_list_and_show(isolated_env):
 
 
 def test_cli_stdin_support(isolated_env):
-    """Standard 11: Support '-' to read input from stdin with stream separation."""
+    """Verify support for '-' to read input from stdin with stream separation."""
     sample_text = "Hello world this is an automated subtitle alignment test."
     res = run_cli("run", "-", "--json", env=isolated_env, input_data=sample_text)
     assert res.returncode == 0

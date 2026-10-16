@@ -1,7 +1,12 @@
 # SPDX-FileCopyrightText: 2026 Joel Gonzales <joelontheroad>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Command-line interface implementation adhering to POSIX standards and stream discipline."""
+"""Command-line interface implementation.
+
+Adheres to POSIX standards, separation of streams (machine-readable stdout vs.
+diagnostic stderr), standard flags (-h, -v, -q, --verbose, --config, --json),
+XDG configuration reset, and stream piping support (-).
+"""
 
 import argparse
 import json
@@ -18,7 +23,11 @@ from backend.config import (
 
 
 def setup_signal_handlers() -> None:
-    """Gracefully handle SIGINT and SIGTERM without dumping tracebacks."""
+    """Register signal handlers to gracefully handle SIGINT and SIGTERM.
+
+    Catches interruption signals cleanly, flushing file descriptors and exiting
+    with status code 130 without emitting unhandled traceback dumps.
+    """
     def _sig_handler(signum, frame):
         sys.stderr.write("\n[voice-highlighter] Process interrupted by user. Exiting.\n")
         sys.stderr.flush()
@@ -30,14 +39,33 @@ def setup_signal_handlers() -> None:
 
 
 def should_colorize() -> bool:
-    """Determine whether terminal ANSI colors should be emitted."""
+    """Determine whether terminal ANSI colors should be emitted.
+
+    Respects the NO_COLOR standard environment variable and tests whether stdout
+    is an attached terminal TTY.
+
+    Returns:
+        True if ANSI styling is permitted; False otherwise.
+    """
     if "NO_COLOR" in os.environ:
         return False
     return sys.stdout.isatty()
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point function."""
+    """Execute the Voice Highlighter command-line interface.
+
+    Parses arguments, configures stream logging, and dispatches subcommands
+    including server launch, desktop application mode, preset management,
+    and subtitle pipeline processing.
+
+    Args:
+        argv: Optional sequence of command-line argument strings. Defaults
+            to sys.argv[1:].
+
+    Returns:
+        Exit code (0 for success, 1 for operational failure, 2 for CLI syntax errors).
+    """
     setup_signal_handlers()
 
     common_parser = argparse.ArgumentParser(add_help=False)
@@ -93,6 +121,7 @@ def main(argv: list[str] | None = None) -> int:
         default=8000,
         help="Port number to bind (default: 8000).",
     )
+    # SECURITY: Bind strictly to loopback interface 127.0.0.1 by default to prevent unauthorized network exposure
     serve_parser.add_argument(
         "--host",
         type=str,
@@ -112,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
     preset_parser = subparsers.add_parser("preset", parents=[common_parser], help="Inspect and manage local YAML presets.")
     preset_sub = preset_parser.add_subparsers(dest="preset_action")
     preset_sub.add_parser("list", parents=[common_parser], help="List all locally available presets.")
-    
+
     show_preset = preset_sub.add_parser("show", parents=[common_parser], help="Display preset configuration.")
     show_preset.add_argument("name", nargs="?", default="default", help="Preset name (default: 'default').")
 

@@ -2,29 +2,44 @@
 # SPDX-FileCopyrightText: 2026 Joel Gonzales <joelontheroad>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-import sys
-import os
+"""Cross-platform native OS file picker interface.
 
+Launches native file chooser dialogs across macOS (AppleScript / Finder),
+Windows (PowerShell / Windows.Forms), and Linux (GTK FileChooserNative /
+XDG Desktop Portal, Zenity, Kdialog, and Tkinter fallback) without requiring
+heavier desktop framework bindings in the core web service.
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
 
 # Ensure system dist-packages are in sys.path when running inside a Python virtual environment on Linux
 for p in [
     "/usr/lib/python3/dist-packages",
     "/usr/local/lib/python3/dist-packages",
     f"/usr/lib/python{sys.version_info.major}.{sys.version_info.minor}/dist-packages",
-    f"/usr/local/lib/python{sys.version_info.major}.{sys.version_info.minor}/dist-packages"
+    f"/usr/local/lib/python{sys.version_info.major}.{sys.version_info.minor}/dist-packages",
 ]:
     if os.path.isdir(p) and p not in sys.path:
         sys.path.append(p)
 
-import json
-import argparse
-import subprocess
-from typing import Optional, Tuple
 
-def pick_file_macos(title: str, initial_path: str) -> Tuple[bool, Optional[str]]:
-    """Native macOS Finder file picker via osascript."""
+def pick_file_macos(title: str, initial_path: str) -> tuple[bool, str | None]:
+    """Launch native macOS Finder file picker via osascript.
+
+    Args:
+        title: Dialog window prompt title string.
+        initial_path: Initial directory or file path.
+
+    Returns:
+        Tuple of (dialog_launched, selected_file_path_or_none).
+    """
+    # SECURITY: Sanitize dialog title to prevent AppleScript injection
     safe_title = title.replace('"', '\\"')
-    script = f'''
+    script = f"""
     tell application "System Events"
         activate
     end tell
@@ -34,8 +49,9 @@ def pick_file_macos(title: str, initial_path: str) -> Tuple[bool, Optional[str]]
     on error number -128
         return ""
     end try
-    '''
+    """
     try:
+        # SECURITY: Execute osascript with discrete argument list (CWE-78)
         res = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=300)
         if res.returncode == 0:
             out = res.stdout.strip()
@@ -44,13 +60,23 @@ def pick_file_macos(title: str, initial_path: str) -> Tuple[bool, Optional[str]]
     except Exception:
         return (False, None)
 
-def pick_file_windows(title: str, initial_path: str) -> Tuple[bool, Optional[str]]:
-    """Native Windows Explorer file picker via PowerShell."""
+
+def pick_file_windows(title: str, initial_path: str) -> tuple[bool, str | None]:
+    """Launch native Windows Explorer file picker via PowerShell.
+
+    Args:
+        title: Dialog window title string.
+        initial_path: Initial directory path for file explorer.
+
+    Returns:
+        Tuple of (dialog_launched, selected_file_path_or_none).
+    """
     init_dir = initial_path.replace('"', '`"') if initial_path and os.path.exists(initial_path) else ""
-    ps_code = f'''
+    safe_title = title.replace('"', '`"')
+    ps_code = f"""
     [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
     $d = New-Object System.Windows.Forms.OpenFileDialog
-    $d.Title = "{title}"
+    $d.Title = "{safe_title}"
     $d.Filter = "Video & Audio Files (*.mp4;*.mov;*.mkv;*.webm;*.avi;*.wav;*.mp3)|*.mp4;*.mov;*.mkv;*.webm;*.avi;*.wav;*.mp3|All Files (*.*)|*.*"
     if ("{init_dir}" -ne "") {{
         $d.InitialDirectory = "{init_dir}"
@@ -59,13 +85,14 @@ def pick_file_windows(title: str, initial_path: str) -> Tuple[bool, Optional[str
     if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{
         [Console]::WriteLine($d.FileName)
     }}
-    '''
+    """
     try:
+        # SECURITY: Execute powershell with discrete arguments avoiding shell=True (CWE-78)
         res = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_code],
             capture_output=True,
             text=True,
-            timeout=300
+            timeout=300,
         )
         if res.returncode == 0:
             out = res.stdout.strip()
@@ -74,12 +101,22 @@ def pick_file_windows(title: str, initial_path: str) -> Tuple[bool, Optional[str
     except Exception:
         return (False, None)
 
-def pick_file_gtk(title: str, initial_path: str, timeout_ms: int = 0) -> Tuple[bool, Optional[str]]:
-    """Linux GTK 3.0 file picker using FileChooserNative (XDG Desktop Portal) or FileChooserDialog."""
+
+def pick_file_gtk(title: str, initial_path: str, timeout_ms: int = 0) -> tuple[bool, str | None]:
+    """Launch Linux GTK 3.0 file picker using FileChooserNative portal integration.
+
+    Args:
+        title: Dialog window title string.
+        initial_path: Optional starting directory or file path.
+        timeout_ms: Optional millisecond timeout to automatically close the dialog.
+
+    Returns:
+        Tuple of (dialog_launched, selected_file_path_or_none).
+    """
     try:
         import gi
         gi.require_version("Gtk", "3.0")
-        from gi.repository import Gtk, GLib
+        from gi.repository import GLib, Gtk
 
         init_ok, _ = Gtk.init_check()
         if not init_ok:
@@ -92,7 +129,7 @@ def pick_file_gtk(title: str, initial_path: str, timeout_ms: int = 0) -> Tuple[b
                 None,
                 Gtk.FileChooserAction.OPEN,
                 "_Open",
-                "_Cancel"
+                "_Cancel",
             )
             native.set_modal(True)
 
@@ -108,6 +145,7 @@ def pick_file_gtk(title: str, initial_path: str, timeout_ms: int = 0) -> Tuple[b
             native.add_filter(filter_all)
 
             if initial_path:
+                # SECURITY: Canonicalize path before passing to desktop file chooser
                 norm_path = os.path.abspath(os.path.expanduser(initial_path))
                 if os.path.isfile(norm_path):
                     native.set_filename(norm_path)
@@ -141,11 +179,11 @@ def pick_file_gtk(title: str, initial_path: str, timeout_ms: int = 0) -> Tuple[b
         # 2. Fallback to Gtk.FileChooserDialog
         dialog = Gtk.FileChooserDialog(
             title=title,
-            action=Gtk.FileChooserAction.OPEN
+            action=Gtk.FileChooserAction.OPEN,
         )
         dialog.add_buttons(
             Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-            Gtk.STOCK_OPEN, Gtk.ResponseType.OK
+            Gtk.STOCK_OPEN, Gtk.ResponseType.OK,
         )
         dialog.set_default_response(Gtk.ResponseType.OK)
 
@@ -194,14 +232,24 @@ def pick_file_gtk(title: str, initial_path: str, timeout_ms: int = 0) -> Tuple[b
     except Exception:
         return (False, None)
 
-def pick_file_zenity(title: str, initial_path: str) -> Tuple[bool, Optional[str]]:
-    """Linux Zenity file picker."""
+
+def pick_file_zenity(title: str, initial_path: str) -> tuple[bool, str | None]:
+    """Launch Linux Zenity file selection dialog.
+
+    Args:
+        title: Dialog window title string.
+        initial_path: Initial directory or preselected file path.
+
+    Returns:
+        Tuple of (dialog_launched, selected_file_path_or_none).
+    """
+    # SECURITY: Pass command flags as discrete argument vector (CWE-78)
     cmd = ["zenity", "--file-selection", f"--title={title}"]
     if initial_path:
         cmd.append(f"--filename={initial_path}")
     cmd.extend([
         "--file-filter=Media files | *.mp4 *.mov *.mkv *.webm *.avi *.wav *.mp3 *.MP4 *.MOV",
-        "--file-filter=All files | *"
+        "--file-filter=All files | *",
     ])
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
@@ -216,10 +264,20 @@ def pick_file_zenity(title: str, initial_path: str) -> Tuple[bool, Optional[str]
     except Exception:
         return (False, None)
 
-def pick_file_kdialog(title: str, initial_path: str) -> Tuple[bool, Optional[str]]:
-    """Linux KDE kdialog file picker."""
+
+def pick_file_kdialog(title: str, initial_path: str) -> tuple[bool, str | None]:
+    """Launch Linux KDE kdialog file selection dialog.
+
+    Args:
+        title: Dialog window title string.
+        initial_path: Initial directory path for KDE dialog.
+
+    Returns:
+        Tuple of (dialog_launched, selected_file_path_or_none).
+    """
     init_dir = initial_path or "."
     filter_spec = "*.mp4 *.mov *.mkv *.webm *.avi *.wav *.mp3|Media files\n*|All Files"
+    # SECURITY: Execute kdialog via discrete argument list
     cmd = ["kdialog", "--title", title, "--getopenfilename", init_dir, filter_spec]
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
@@ -234,8 +292,17 @@ def pick_file_kdialog(title: str, initial_path: str) -> Tuple[bool, Optional[str
     except Exception:
         return (False, None)
 
-def pick_file_tkinter(title: str, initial_path: str) -> Tuple[bool, Optional[str]]:
-    """Universal Tkinter fallback dialog."""
+
+def pick_file_tkinter(title: str, initial_path: str) -> tuple[bool, str | None]:
+    """Launch universal Tkinter fallback file selection dialog.
+
+    Args:
+        title: Dialog window title string.
+        initial_path: Initial directory path for Tkinter dialog.
+
+    Returns:
+        Tuple of (dialog_launched, selected_file_path_or_none).
+    """
     try:
         import tkinter as tk
         from tkinter import filedialog
@@ -248,15 +315,17 @@ def pick_file_tkinter(title: str, initial_path: str) -> Tuple[bool, Optional[str
             initialdir=init_dir,
             filetypes=[
                 ("Video & Audio files", "*.mp4 *.mov *.mkv *.webm *.avi *.wav *.mp3 *.MP4 *.MOV"),
-                ("All files", "*.*")
-            ]
+                ("All files", "*.*"),
+            ],
         )
         root.destroy()
         return (True, path if path else None)
     except Exception:
         return (False, None)
 
-def main():
+
+def main() -> None:
+    """Execute standalone CLI file picker and print JSON result to stdout."""
     parser = argparse.ArgumentParser(description="Cross-platform native OS file chooser dialog")
     parser.add_argument("--initial-path", default="", help="Initial file or folder path")
     parser.add_argument("--title", default="Select Video File", help="Dialog window title")
@@ -287,7 +356,7 @@ def main():
             "success": True,
             "dialog_available": True,
             "path": selected_path if not cancelled else None,
-            "cancelled": cancelled
+            "cancelled": cancelled,
         }))
     else:
         print(json.dumps({
@@ -295,8 +364,9 @@ def main():
             "dialog_available": False,
             "path": None,
             "cancelled": False,
-            "error": "No graphical desktop file chooser could be opened on this system."
+            "error": "No graphical desktop file chooser could be opened on this system.",
         }))
+
 
 if __name__ == "__main__":
     main()

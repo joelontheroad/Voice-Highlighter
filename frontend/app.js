@@ -3,7 +3,17 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-// Voice Highlighter Client Application Logic
+/**
+ * @fileoverview Voice Highlighter single-page web application frontend.
+ *
+ * Implements real-time interactive subtitle layout canvas preview, typography and
+ * style controls, preset management (load, save, delete, dirty tracking), video
+ * metadata inspection, job queuing, progress polling, in-browser dialogue editing,
+ * and direct video burning and playback triggers.
+ *
+ * Adheres strictly to AGENTS.md directives: zero external CDNs, local bundled assets,
+ * WCAG 2.1 AA keyboard accessibility, and XDG configuration synchronization.
+ */
 
 document.addEventListener("DOMContentLoaded", () => {
   // State

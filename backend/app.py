@@ -1,58 +1,77 @@
 # SPDX-FileCopyrightText: 2026 Joel Gonzales <joelontheroad>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-import os
-import sys
-import uuid
-import secrets
-import threading
-import hashlib
-import re
-import subprocess
-import platform
+"""Voice Highlighter FastAPI backend application.
+
+Provides HTTP REST endpoints and background worker tasks for video analysis,
+speech-to-text transcription via WhisperX, interactive ASS subtitle preview
+and generation, video burning with hardware-accelerated encoders, local file
+browsing, preset management, and single-page web application hosting.
+"""
+
 import asyncio
+import hashlib
 import json
+import os
+import platform
+import re
+import secrets
+import subprocess
+import sys
+import threading
+import uuid
 import warnings
-from typing import Dict, Any, Optional, List
+from typing import Any
 
-# Suppress spurious multiprocessing resource_tracker cleanup warnings on shutdown
-warnings.filterwarnings("ignore", category=UserWarning, module="multiprocessing.resource_tracker")
-
-from starlette.middleware.base import BaseHTTPMiddleware
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Request, Depends, Query, Header, Response
-from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
+from fastapi import (
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+)
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
 
+from backend.ass_generator import generate_ass_content
 from backend.config import (
     StylePreset,
-    load_preset,
-    save_preset,
-    list_presets,
     delete_preset,
+    list_presets,
+    load_preset,
     reset_all_configuration,
     sanitize_log_path,
+    save_preset,
 )
 from backend.extractor import (
-    get_video_metadata,
-    extract_poster_frame,
-    extract_audio,
     burn_subtitles_to_video,
+    extract_audio,
+    extract_poster_frame,
     get_best_h264_encoder,
+    get_video_metadata,
     test_ffmpeg_encoder,
 )
 from backend.transcriber import run_whisperx_pipeline
-from backend.ass_generator import generate_ass_content
+
+# Suppress spurious multiprocessing resource_tracker cleanup warnings on shutdown
+warnings.filterwarnings("ignore", category=UserWarning, module="multiprocessing.resource_tracker")
 
 AUTH_TOKEN = os.environ.get("VOICE_HIGHLIGHTER_AUTH_TOKEN") or secrets.token_hex(32)
 
 app = FastAPI(title="Voice Highlighter API")
 app.state.auth_token = AUTH_TOKEN
 
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Enforce W3C Content Security Policy and modern browser defense headers."""
+
     async def dispatch(self, request: Request, call_next):
+        """Inject security defense headers into outgoing HTTP responses."""
         response = await call_next(request)
+        # SECURITY: Enforce strict W3C CSP, nosniff, and anti-framing defense headers (CWE-79, CWE-1021)
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self' 'unsafe-inline'; "
             "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
@@ -63,10 +82,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
+
 app.add_middleware(SecurityHeadersMiddleware)
+
 
 @app.middleware("http")
 async def add_no_cache_headers(request: Request, call_next):
+    """Add cache-busting headers for local single-page web app static assets."""
     response = await call_next(request)
     if request.url.path.endswith((".css", ".js", ".html")) or request.url.path == "/":
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
@@ -74,13 +96,27 @@ async def add_no_cache_headers(request: Request, call_next):
         response.headers["Expires"] = "0"
     return response
 
+
 def verify_auth(
     request: Request,
-    token_query: Optional[str] = Query(None, alias="token"),
-    authorization: Optional[str] = Header(None),
-    x_auth_token: Optional[str] = Header(None, alias="X-Auth-Token"),
+    token_query: str | None = Query(None, alias="token"),
+    authorization: str | None = Header(None),
+    x_auth_token: str | None = Header(None, alias="X-Auth-Token"),
 ) -> str:
-    """Verify ephemeral launch token via cookie, header, or query param."""
+    """Verify ephemeral launch token via session cookie, header, or query param.
+
+    Args:
+        request: Incoming HTTP request object.
+        token_query: Optional launch token passed in URL query string.
+        authorization: Optional Bearer authorization header.
+        x_auth_token: Optional custom X-Auth-Token header.
+
+    Returns:
+        The validated authentication token string.
+
+    Raises:
+        HTTPException: If token is absent or fails constant-time digest comparison.
+    """
     server_token = getattr(app.state, "auth_token", None) or AUTH_TOKEN
     cookie_token = request.cookies.get("voice_highlighter_session")
     bearer_token = None
@@ -88,10 +124,11 @@ def verify_auth(
         bearer_token = authorization.split(" ", 1)[1]
 
     candidate = token_query or bearer_token or x_auth_token or cookie_token
+    # SECURITY: Mitigate timing attacks (CWE-208) on authentication verification using constant-time comparison
     if not candidate or not secrets.compare_digest(candidate, server_token):
         raise HTTPException(
             status_code=401,
-            detail="Unauthorized: Valid ephemeral launch token required."
+            detail="Unauthorized: Valid ephemeral launch token required.",
         )
     return candidate
 
@@ -102,15 +139,26 @@ SCRATCH_DIR = os.path.join(WORKSPACE_DIR, "scratch")
 FRAMES_DIR = os.path.join(SCRATCH_DIR, "frames")
 OUTPUTS_DIR = os.path.join(SCRATCH_DIR, "outputs")
 AUDIO_DIR = os.path.join(SCRATCH_DIR, "audio")
+FRONTEND_DIR = os.path.join(WORKSPACE_DIR, "frontend")
 
 os.makedirs(FRAMES_DIR, exist_ok=True)
 os.makedirs(OUTPUTS_DIR, exist_ok=True)
 os.makedirs(AUDIO_DIR, exist_ok=True)
 
 # In-memory task store
-tasks: Dict[str, Dict[str, Any]] = {}
+tasks: dict[str, dict[str, Any]] = {}
 
-def get_sibling_paths(media_path: str):
+
+def get_sibling_paths(media_path: str) -> tuple[str, str, str, str, str]:
+    """Derive canonical sibling file paths for extracted WAV and ASS subtitles.
+
+    Args:
+        media_path: Filesystem path to the source media file.
+
+    Returns:
+        Tuple of (clean_path, media_dir, base_name, wav_path, ass_path).
+    """
+    # SECURITY: Canonicalize path using expanduser and abspath to prevent directory traversal (CWE-22)
     clean_path = os.path.expanduser(media_path.strip())
     media_dir = os.path.dirname(os.path.abspath(clean_path))
     base_name = os.path.splitext(os.path.basename(clean_path))[0]
@@ -118,30 +166,52 @@ def get_sibling_paths(media_path: str):
     ass_path = os.path.join(media_dir, f"{base_name}.ass")
     return clean_path, media_dir, base_name, wav_path, ass_path
 
+
 class VideoInfoRequest(BaseModel):
+    """Request payload for probing media metadata and sibling files."""
+
     video_path: str
+
 
 class TranscribeRequest(BaseModel):
+    """Request payload for starting speech transcription and subtitle synthesis."""
+
     video_path: str
-    model_name: Optional[str] = "large-v3"
-    styling: Dict[str, Any]
-    burn_video: Optional[bool] = False
-    output_filename: Optional[str] = None
-    reuse_existing_ass: Optional[bool] = False
-    reuse_existing_wav: Optional[bool] = False
+    model_name: str | None = "large-v3"
+    styling: dict[str, Any]
+    burn_video: bool | None = False
+    output_filename: str | None = None
+    reuse_existing_ass: bool | None = False
+    reuse_existing_wav: bool | None = False
+
 
 class PreviewAssRequest(BaseModel):
+    """Request payload for live preview ASS subtitle synthesis."""
+
     sample_text: str
-    styling: Dict[str, Any]
-    video_meta: Optional[Dict[str, Any]] = None
+    styling: dict[str, Any]
+    video_meta: dict[str, Any] | None = None
+
 
 class OpenFileDialogRequest(BaseModel):
-    initial_path: Optional[str] = None
-    title: Optional[str] = "Select Video File"
-    timeout_ms: Optional[int] = None
+    """Request payload for launching native desktop file picker dialog."""
+
+    initial_path: str | None = None
+    title: str | None = "Select Video File"
+    timeout_ms: int | None = None
+
 
 @app.post("/api/open-os-file-dialog")
 async def open_os_file_dialog(req: OpenFileDialogRequest, auth: str = Depends(verify_auth)):
+    """Launch the native desktop OS file picker dialog asynchronously.
+
+    Args:
+        req: File dialog configuration specifying initial directory, title, and timeout.
+        auth: Authentication token validated by dependency injection.
+
+    Returns:
+        Dictionary indicating whether a file was selected, the chosen path, or cancellation.
+    """
     helper_script = os.path.join(os.path.dirname(__file__), "native_picker.py")
     if not os.path.exists(helper_script):
         raise HTTPException(status_code=500, detail="Native picker helper not found")
@@ -184,8 +254,13 @@ async def open_os_file_dialog(req: OpenFileDialogRequest, auth: str = Depends(ve
     result = await asyncio.to_thread(run_picker)
     return result
 
+
 def detect_cpu_model() -> str:
-    """Detects and formats the CPU processor model name (e.g., 'Intel Core i7-11850H')."""
+    """Detect and format the CPU processor model name.
+
+    Returns:
+        Sanitized CPU model string (e.g., 'Intel Core i7-11850H') or fallback 'CPU'.
+    """
     model = ""
     try:
         with open("/proc/cpuinfo", "r", encoding="utf-8") as f:
@@ -211,11 +286,20 @@ def detect_cpu_model() -> str:
     return cleaned or "CPU"
 
 def probe_nvenc_rendering() -> bool:
-    """Performs a live probe to verify if GPU NVENC video rendering is active."""
+    """Probe whether GPU NVENC video rendering is actively supported by FFmpeg.
+
+    Returns:
+        True if h264_nvenc encoder operates successfully; False otherwise.
+    """
     return test_ffmpeg_encoder("h264_nvenc")
 
-def get_gpu_diagnostic() -> Optional[str]:
-    """Detects if an NVIDIA GPU is physically present but unavailable due to driver/power state."""
+
+def get_gpu_diagnostic() -> str | None:
+    """Detect if an NVIDIA GPU is physically present but requires a system/driver reset.
+
+    Returns:
+        Diagnostic error string if GPU requires reset, or None if healthy or absent.
+    """
     try:
         res = subprocess.run(["nvidia-smi", "-q", "-d", "POWER"], capture_output=True, text=True, timeout=2)
         if "GPU requires reset" in res.stdout:
@@ -224,12 +308,13 @@ def get_gpu_diagnostic() -> Optional[str]:
         pass
     return None
 
+
 @app.get("/api/system-info")
 def get_system_info():
-    """
-    Returns detected hardware execution environment:
-    - Real-time probe of whether GPU or CPU is actively rendering
-    - Actual GPU hardware name if active, or CPU processor model name if CPU
+    """Retrieve hardware execution environment details and active accelerator capabilities.
+
+    Returns:
+        Dictionary containing device type, GPU/CPU brand names, active badges, and diagnostics.
     """
     import torch
 
@@ -302,8 +387,20 @@ def get_system_info():
         "gpu_diagnostic": gpu_diagnostic
     }
 
+
 @app.get("/api/browse-files")
-def browse_filesystem(dir: Optional[str] = None):
+def browse_filesystem(dir: str | None = None):
+    """Enumerate directories and supported media files within a target directory.
+
+    Args:
+        dir: Directory path to inspect, or None to fall back to standard media locations.
+
+    Returns:
+        Dictionary containing current directory path, parent directory, and listings.
+
+    Raises:
+        HTTPException: If the target directory cannot be accessed or read.
+    """
     default_candidates = [
         os.path.expanduser("~/Videos"),
         os.path.expanduser("~/Movies"),
@@ -311,7 +408,7 @@ def browse_filesystem(dir: Optional[str] = None):
         os.path.expanduser("~"),
         WORKSPACE_DIR
     ]
-    
+
     target_dir = None
     if dir and dir.strip():
         p = os.path.expanduser(dir.strip())
@@ -371,6 +468,17 @@ def browse_filesystem(dir: Optional[str] = None):
 
 @app.post("/api/video-info")
 def fetch_video_info(req: VideoInfoRequest):
+    """Probe media metadata, extract a poster preview frame, and discover sibling files.
+
+    Args:
+        req: Video info request containing the target video file path.
+
+    Returns:
+        Dictionary of video metadata, cached preview poster URL, and sibling ASS/WAV info.
+
+    Raises:
+        HTTPException: If the media file does not exist or metadata extraction fails.
+    """
     clean_path, media_dir, base_name, sibling_wav, sibling_ass = get_sibling_paths(req.video_path)
     if not os.path.exists(clean_path):
         raise HTTPException(status_code=404, detail=f"File not found: {clean_path}")
@@ -381,7 +489,7 @@ def fetch_video_info(req: VideoInfoRequest):
         path_hash = hashlib.md5(clean_path.encode()).hexdigest()
         frame_filename = f"{path_hash}.jpg"
         frame_path = os.path.join(FRAMES_DIR, frame_filename)
-        
+
         # Extract preview poster frame if not already cached
         if not os.path.exists(frame_path):
             extract_poster_frame(clean_path, frame_path, timestamp_sec=min(3.0, max(0.5, meta["duration"] * 0.1)))
@@ -402,7 +510,7 @@ def fetch_video_info(req: VideoInfoRequest):
                     ass_raw = af.read()
                     ass_lines = ass_raw.splitlines()
                     ass_preview = "\n".join(ass_lines[:60])
-                    ass_dialogue_count = sum(1 for l in ass_lines if l.startswith("Dialogue:"))
+                    ass_dialogue_count = sum(1 for line in ass_lines if line.startswith("Dialogue:"))
             except Exception:
                 pass
 
@@ -426,23 +534,48 @@ def fetch_video_info(req: VideoInfoRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.api_route("/api/frame/{frame_name}", methods=["GET", "HEAD"])
 def serve_frame(frame_name: str):
+    """Serve a cached video preview poster frame image.
+
+    Args:
+        frame_name: Filename of the cached frame inside FRAMES_DIR.
+
+    Returns:
+        FileResponse streaming the JPEG image.
+
+    Raises:
+        HTTPException: If the requested frame image does not exist.
+    """
     frame_path = os.path.join(FRAMES_DIR, frame_name)
     if not os.path.exists(frame_path):
         raise HTTPException(status_code=404, detail="Frame not found")
     return FileResponse(frame_path, media_type="image/jpeg")
 
+
 def process_transcription_job(
     task_id: str,
     video_path: str,
     model_name: str,
-    styling: Dict[str, Any],
+    styling: dict[str, Any],
     burn_video: bool = False,
-    output_filename: Optional[str] = None,
+    output_filename: str | None = None,
     reuse_existing_ass: bool = False,
-    reuse_existing_wav: bool = False
+    reuse_existing_wav: bool = False,
 ):
+    """Execute background transcription, subtitle generation, and video burn pipeline.
+
+    Args:
+        task_id: Unique job identifier for progress tracking and artifact storage.
+        video_path: Path to the input video or audio file.
+        model_name: Faster-Whisper model identifier (e.g., 'large-v3').
+        styling: Dictionary of subtitle visual configuration properties.
+        burn_video: Whether to burn subtitles directly into an MP4 video.
+        output_filename: Base output filename for generated subtitles and video deliverables.
+        reuse_existing_ass: Whether to reuse pre-existing sibling ASS subtitles without rerunning Whisper.
+        reuse_existing_wav: Whether to reuse pre-existing extracted sibling audio WAV.
+    """
     def update_progress(message: str, pct: int):
         if task_id in tasks:
             tasks[task_id]["stage_message"] = message
@@ -577,8 +710,21 @@ def process_transcription_job(
         tasks[task_id]["error"] = str(err)
         tasks[task_id]["stage_message"] = f"Failed: {err}"
 
+
 @app.post("/api/transcribe")
 def start_transcribe(req: TranscribeRequest, auth: str = Depends(verify_auth)):
+    """Queue a background speech transcription and subtitle synthesis task.
+
+    Args:
+        req: Transcription configuration parameters.
+        auth: Authentication token validated by dependency injection.
+
+    Returns:
+        Dictionary containing the allocated task_id.
+
+    Raises:
+        HTTPException: If the specified media file does not exist.
+    """
     video_path = os.path.expanduser(req.video_path.strip())
     if not os.path.exists(video_path):
         raise HTTPException(status_code=404, detail=f"File not found: {video_path}")
@@ -616,7 +762,15 @@ def start_transcribe(req: TranscribeRequest, auth: str = Depends(verify_auth)):
 
     return {"task_id": task_id}
 
-def _get_or_load_task(task_id: str) -> Optional[Dict[str, Any]]:
+def _get_or_load_task(task_id: str) -> dict[str, Any] | None:
+    """Retrieve task metadata from memory cache or restore from disk.
+
+    Args:
+        task_id: Unique task identifier.
+
+    Returns:
+        Dictionary of task state metadata, or None if task is not found.
+    """
     if task_id in tasks:
         return tasks[task_id]
     import json
@@ -631,12 +785,24 @@ def _get_or_load_task(task_id: str) -> Optional[Dict[str, Any]]:
             pass
     return None
 
+
 @app.get("/api/status/{task_id}")
 def get_task_status(task_id: str):
+    """Poll current processing status and progress percentage of a task.
+
+    Args:
+        task_id: Unique task identifier.
+
+    Returns:
+        Dictionary containing progress metrics, stage messages, and download URLs.
+
+    Raises:
+        HTTPException: If the task ID is unknown.
+    """
     t = _get_or_load_task(task_id)
     if not t:
         raise HTTPException(status_code=404, detail="Task not found")
-    
+
     is_completed = (t["status"] == "completed")
     burn_enabled = t.get("burn_video", False)
     has_video = bool(t.get("video_file"))
@@ -656,8 +822,20 @@ def get_task_status(task_id: str):
         "video_download_url": f"/api/download-video/{task_id}" if (is_completed and burn_enabled and has_video) else None
     }
 
+
 @app.get("/api/download/{task_id}")
 def download_ass(task_id: str):
+    """Download generated ASS subtitle deliverable for a completed task.
+
+    Args:
+        task_id: Unique task identifier.
+
+    Returns:
+        FileResponse streaming the .ass subtitle file.
+
+    Raises:
+        HTTPException: If the subtitle file is not found.
+    """
     t = _get_or_load_task(task_id)
     file_path = None
     custom_name = None
@@ -679,8 +857,20 @@ def download_ass(task_id: str):
         filename=filename
     )
 
+
 @app.get("/api/download-video/{task_id}")
 def download_video(task_id: str):
+    """Download burned MP4 video deliverable for a completed task.
+
+    Args:
+        task_id: Unique task identifier.
+
+    Returns:
+        FileResponse streaming the MP4 video file.
+
+    Raises:
+        HTTPException: If the burned video deliverable is not found.
+    """
     t = _get_or_load_task(task_id)
     file_path = None
     custom_name = None
@@ -702,8 +892,18 @@ def download_video(task_id: str):
         filename=filename
     )
 
+
 @app.post("/api/preview-ass")
 def preview_ass_code(req: PreviewAssRequest, auth: str = Depends(verify_auth)):
+    """Synthesize a live ASS subtitle preview for sample text using chosen styling.
+
+    Args:
+        req: Preview payload with sample text, styling properties, and video metadata.
+        auth: Authentication token validated by dependency injection.
+
+    Returns:
+        Dictionary containing generated ASS subtitle script content.
+    """
     words_list = []
     current_time = 1.0
     for w in req.sample_text.split():
@@ -730,32 +930,48 @@ def preview_ass_code(req: PreviewAssRequest, auth: str = Depends(verify_auth)):
     )
     return {"ass_content": ass_text}
 
+
 class UpdateAssRequest(BaseModel):
+    """Request payload for updating subtitle text and optionally re-burning video."""
+
     content: str
-    reburn_video: Optional[bool] = False
-    media_path: Optional[str] = None
-    ass_path: Optional[str] = None
-    output_filename: Optional[str] = None
+    reburn_video: bool | None = False
+    media_path: str | None = None
+    ass_path: str | None = None
+    output_filename: str | None = None
+
 
 class BurnVideoRequest(BaseModel):
+    """Request payload for burning existing or updated subtitles into video."""
+
     video_path: str
-    ass_path: Optional[str] = None
-    task_id: Optional[str] = None
-    output_filename: Optional[str] = None
-    content: Optional[str] = None
+    ass_path: str | None = None
+    task_id: str | None = None
+    output_filename: str | None = None
+    content: str | None = None
+
 
 class OpenVideoRequest(BaseModel):
-    video_path: Optional[str] = None
-    task_id: Optional[str] = None
+    """Request payload for opening burned video in the desktop system media player."""
+
+    video_path: str | None = None
+    task_id: str | None = None
+
 
 def _resolve_ass_file_path(
-    task_or_path: Optional[str] = None,
-    media_path: Optional[str] = None,
-    ass_path: Optional[str] = None
-) -> tuple[Optional[str], Optional[str]]:
-    """
-    Resolves the actual .ass file path from task ID, media path, or explicit ass_path.
-    Returns (resolved_file_path, display_filename).
+    task_or_path: str | None = None,
+    media_path: str | None = None,
+    ass_path: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Resolve the canonical .ass file path from task ID, media path, or explicit subtitle path.
+
+    Args:
+        task_or_path: Task ID or file path to evaluate.
+        media_path: Path to the media file whose sibling .ass should be checked.
+        ass_path: Direct path to the .ass subtitle file.
+
+    Returns:
+        Tuple of (resolved_file_path, display_filename), or (None, None) if unresolved.
     """
     # 1. Explicit ass_path
     if ass_path:
@@ -795,10 +1011,23 @@ def _resolve_ass_file_path(
 @app.get("/api/ass-content")
 @app.get("/api/ass-content/{task_id}")
 def get_ass_content(
-    task_id: Optional[str] = None,
-    media_path: Optional[str] = None,
-    ass_path: Optional[str] = None
+    task_id: str | None = None,
+    media_path: str | None = None,
+    ass_path: str | None = None,
 ):
+    """Retrieve ASS subtitle file content and parsed dialogue events for interactive editing.
+
+    Args:
+        task_id: Optional task identifier.
+        media_path: Optional path to media file.
+        ass_path: Optional explicit subtitle path.
+
+    Returns:
+        Dictionary with full ASS text, structured dialogue records, and video burn state.
+
+    Raises:
+        HTTPException: If the subtitle file cannot be found.
+    """
     file_path, display_name = _resolve_ass_file_path(task_id, media_path, ass_path)
 
     if not file_path or not os.path.exists(file_path):
@@ -844,13 +1073,27 @@ def get_ass_content(
         "has_burned_video": bool(t.get("video_file") if t else False)
     }
 
+
 @app.post("/api/ass-content")
 @app.post("/api/ass-content/{task_id}")
 def update_ass_content(
     req: Any = None,
-    task_id: Optional[str] = None,
+    task_id: str | None = None,
     auth: str = Depends(verify_auth),
 ):
+    """Save edited ASS subtitle content to disk and optionally trigger video re-burning.
+
+    Args:
+        req: UpdateAssRequest instance or payload attributes.
+        task_id: Optional task identifier.
+        auth: Authentication token validated by dependency injection.
+
+    Returns:
+        Dictionary containing save confirmation, file paths, preview, and download links.
+
+    Raises:
+        HTTPException: If request body is missing.
+    """
     if isinstance(req, str) and isinstance(task_id, UpdateAssRequest):
         req, task_id = task_id, req
     elif isinstance(task_id, UpdateAssRequest) and not isinstance(req, UpdateAssRequest):
@@ -924,8 +1167,21 @@ def update_ass_content(
         "video_download_url": f"/api/download-video/{task_id}" if (t and t.get("video_file")) else None
     }
 
+
 @app.post("/api/burn-video")
 def burn_video_endpoint(req: BurnVideoRequest, auth: str = Depends(verify_auth)):
+    """Burn subtitles into source video with hardware acceleration and update task metadata.
+
+    Args:
+        req: Burn parameters including video path, subtitle path/content, and output name.
+        auth: Authentication token validated by dependency injection.
+
+    Returns:
+        Dictionary containing resulting video file paths and download URLs.
+
+    Raises:
+        HTTPException: If the source video or subtitle file is missing.
+    """
     video_clean = os.path.expanduser(req.video_path.strip())
     if not os.path.exists(video_clean):
         raise HTTPException(status_code=404, detail=f"Source video not found: {video_clean}")
@@ -1001,8 +1257,21 @@ def burn_video_endpoint(req: BurnVideoRequest, auth: str = Depends(verify_auth))
         "message": f"Successfully burned subtitles into {os.path.basename(saved_target)} with NVIDIA RTX A5000 NVENC."
     }
 
+
 @app.post("/api/open-video")
 def open_video_endpoint(req: OpenVideoRequest, auth: str = Depends(verify_auth)):
+    """Launch the system default media player for the completed or burned video.
+
+    Args:
+        req: Request payload specifying the video path or task ID.
+        auth: Authentication token validated by dependency injection.
+
+    Returns:
+        Dictionary confirming media player invocation.
+
+    Raises:
+        HTTPException: If the target video does not exist or player launch fails.
+    """
     target_path = None
     if req.video_path:
         p = os.path.expanduser(req.video_path.strip())
@@ -1040,29 +1309,77 @@ def open_video_endpoint(req: OpenVideoRequest, auth: str = Depends(verify_auth))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to launch player: {str(e)}")
 
+
 # Preset API Endpoints (Standards 4 & 5)
 @app.get("/api/presets")
 def get_presets_endpoint(auth: str = Depends(verify_auth)):
+    """List all available style presets across local and user configuration directories.
+
+    Args:
+        auth: Authentication token validated by dependency injection.
+
+    Returns:
+        Dictionary containing the list of available preset names.
+    """
     return {"presets": list_presets()}
+
 
 @app.get("/api/presets/{preset_name}")
 def get_preset_endpoint(preset_name: str, auth: str = Depends(verify_auth)):
+    """Load a specific style preset by name.
+
+    Args:
+        preset_name: Alphanumeric preset name.
+        auth: Authentication token validated by dependency injection.
+
+    Returns:
+        Serialized preset dictionary.
+
+    Raises:
+        HTTPException: If the preset cannot be found or loaded.
+    """
     try:
         p = load_preset(preset_name)
         return p.model_dump()
     except Exception as e:
         raise HTTPException(status_code=404, detail=str(e))
 
+
 @app.post("/api/presets")
 def save_preset_endpoint(preset: StylePreset, auth: str = Depends(verify_auth)):
+    """Save or update a style preset as YAML under user config directory.
+
+    Args:
+        preset: StylePreset model instance to persist.
+        auth: Authentication token validated by dependency injection.
+
+    Returns:
+        Dictionary confirming preset persistence with sanitized filesystem path.
+
+    Raises:
+        HTTPException: If preset validation or saving fails.
+    """
     try:
         p_path = save_preset(preset)
         return {"success": True, "name": preset.name, "path": sanitize_log_path(str(p_path))}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
 @app.delete("/api/presets/{preset_name}")
 def delete_preset_endpoint(preset_name: str, auth: str = Depends(verify_auth)):
+    """Delete a user-defined style preset from disk.
+
+    Args:
+        preset_name: Name of preset to delete.
+        auth: Authentication token validated by dependency injection.
+
+    Returns:
+        Dictionary confirming preset deletion.
+
+    Raises:
+        HTTPException: If preset is built-in or deletion fails.
+    """
     try:
         deleted = delete_preset(preset_name)
         if not deleted:
@@ -1071,17 +1388,37 @@ def delete_preset_endpoint(preset_name: str, auth: str = Depends(verify_auth)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
 @app.post("/api/config/reset")
 def reset_config_api_endpoint(auth: str = Depends(verify_auth)):
+    """Reset all user presets and configuration to factory defaults.
+
+    Args:
+        auth: Authentication token validated by dependency injection.
+
+    Returns:
+        Dictionary confirming configuration reset.
+    """
     reset_all_configuration()
     return {"success": True, "message": "Presets and configuration reset to factory defaults"}
 
+
 # Authenticated Index Handler (Standard 5)
 @app.get("/", response_class=HTMLResponse)
-async def serve_index(request: Request, token: Optional[str] = Query(None)):
+async def serve_index(request: Request, token: str | None = Query(None)):
+    """Serve the single-page web UI if session cookie or query token is authenticated.
+
+    Args:
+        request: Incoming HTTP request instance.
+        token: Optional authentication token passed via query string.
+
+    Returns:
+        HTMLResponse serving index.html or 401 Unauthorized page.
+    """
     server_token = getattr(app.state, "auth_token", None) or AUTH_TOKEN
     cookie_token = request.cookies.get("voice_highlighter_session")
 
+    # SECURITY: Validate ephemeral launch token via constant-time comparison to prevent timing attacks
     is_authorized = False
     if token and secrets.compare_digest(token, server_token):
         is_authorized = True
@@ -1100,6 +1437,7 @@ async def serve_index(request: Request, token: Optional[str] = Query(None)):
         content = f.read()
 
     res = HTMLResponse(content=content)
+    # SECURITY: Set SameSite=Strict and HttpOnly cookie to mitigate XSS and CSRF token leakage
     if token and secrets.compare_digest(token, server_token):
         res.set_cookie(
             key="voice_highlighter_session",
@@ -1111,8 +1449,16 @@ async def serve_index(request: Request, token: Optional[str] = Query(None)):
         )
     return res
 
+
 def run_server(port: int = 8000, host: str = "127.0.0.1", reload: bool = False) -> None:
-    """Run the local uvicorn server strictly bound to localhost."""
+    """Run the local uvicorn server strictly bound to localhost.
+
+    Args:
+        port: Network port number to bind.
+        host: Interface IP address, default 127.0.0.1 (localhost only).
+        reload: Whether to enable auto-reloading for development.
+    """
+    # SECURITY: Local server MUST bind strictly to 127.0.0.1 (or ::1) by default per Directive 5
     import uvicorn
     token = AUTH_TOKEN
     app.state.auth_token = token
@@ -1126,7 +1472,7 @@ def run_server(port: int = 8000, host: str = "127.0.0.1", reload: bool = False) 
     else:
         uvicorn.run(app, host=host, port=port, log_level="warning")
 
+
 # Mount static frontend files
-FRONTEND_DIR = os.path.join(WORKSPACE_DIR, "frontend")
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
 

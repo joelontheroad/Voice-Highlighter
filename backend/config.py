@@ -1,7 +1,12 @@
 # SPDX-FileCopyrightText: 2026 Joel Gonzales <joelontheroad>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Configuration and preset management adhering to XDG specs and security guidelines."""
+"""Configuration and preset management subsystem.
+
+Adheres strictly to the XDG Base Directory specification and provides
+Pydantic schema-validated style presets with secure YAML deserialization,
+POSIX permission hardening (modes 0700/0600), and path traversal mitigations.
+"""
 
 import os
 import sys
@@ -14,7 +19,12 @@ APP_NAME = "voice-highlighter"
 
 
 class StylePreset(BaseModel):
-    """Schema-validated style preset definition."""
+    """Schema-validated style preset definition.
+
+    Defines styling parameters for typography, positioning, colors,
+    and subtitle animations burned or rendered to ASS subtitles.
+    """
+
     name: str = Field(default="default", description="Preset name")
     description: str | None = Field(default="", description="Preset description")
     font_name: str = Field(default="Montserrat", description="Subtitle font family name")
@@ -39,14 +49,26 @@ class StylePreset(BaseModel):
 
 
 class AppConfig(BaseModel):
-    """Global application configuration model."""
+    """Global application configuration model.
+
+    Encapsulates schema versioning, the active preset designation,
+    and fallback preset definitions.
+    """
+
     version: int = Field(default=1, description="Configuration schema version")
     default_preset: str = Field(default="default", description="Active preset name")
     preset: StylePreset = Field(default_factory=StylePreset)
 
 
 def sanitize_log_path(path: str) -> str:
-    """Scrub local username and home directory from log strings to protect privacy."""
+    """Scrub local username and home directory from log strings to protect privacy.
+
+    Args:
+        path: Raw filesystem path string.
+
+    Returns:
+        Sanitized path with user home directory replaced with '~<USER>'.
+    """
     try:
         home_dir = str(Path.home())
         if home_dir and path.startswith(home_dir):
@@ -57,7 +79,11 @@ def sanitize_log_path(path: str) -> str:
 
 
 def get_config_dir() -> Path:
-    """Return the platform-appropriate configuration directory (XDG compliant)."""
+    """Return the platform-appropriate configuration directory (XDG compliant).
+
+    Returns:
+        Path to the application configuration directory.
+    """
     if sys.platform == "win32":
         base = os.environ.get("APPDATA")
         config_root = Path(base) if base else Path.home() / "AppData" / "Roaming"
@@ -66,7 +92,7 @@ def get_config_dir() -> Path:
         config_root = Path(base) if base else Path.home() / ".config"
 
     target_dir = config_root / APP_NAME
-    # Enforce POSIX mode 0700 (rwx------)
+    # SECURITY: Restrict directory permissions to POSIX mode 0700 (rwx------) to protect configuration (CWE-732)
     if not target_dir.exists():
         target_dir.mkdir(parents=True, exist_ok=True)
         if sys.platform != "win32":
@@ -78,8 +104,13 @@ def get_config_dir() -> Path:
 
 
 def get_presets_dir() -> Path:
-    """Return the presets subfolder within the config directory."""
+    """Return the presets subfolder within the config directory.
+
+    Returns:
+        Path to the presets directory.
+    """
     presets_dir = get_config_dir() / "presets"
+    # SECURITY: Restrict directory permissions to POSIX mode 0700 (rwx------) for preset storage (CWE-732)
     if not presets_dir.exists():
         presets_dir.mkdir(parents=True, exist_ok=True)
         if sys.platform != "win32":
@@ -91,7 +122,11 @@ def get_presets_dir() -> Path:
 
 
 def get_cache_dir() -> Path:
-    """Return the platform-appropriate cache directory (XDG compliant)."""
+    """Return the platform-appropriate cache directory (XDG compliant).
+
+    Returns:
+        Path to the application cache directory.
+    """
     if sys.platform == "win32":
         base = os.environ.get("LOCALAPPDATA")
         cache_root = Path(base) if base else Path.home() / "AppData" / "Local"
@@ -100,6 +135,7 @@ def get_cache_dir() -> Path:
         cache_root = Path(base) if base else Path.home() / ".cache"
 
     target_dir = cache_root / APP_NAME
+    # SECURITY: Restrict directory permissions to POSIX mode 0700 (rwx------) for cache artifacts (CWE-732)
     if not target_dir.exists():
         target_dir.mkdir(parents=True, exist_ok=True)
         if sys.platform != "win32":
@@ -111,7 +147,11 @@ def get_cache_dir() -> Path:
 
 
 def get_data_dir() -> Path:
-    """Return the platform-appropriate data directory (XDG compliant)."""
+    """Return the platform-appropriate data directory (XDG compliant).
+
+    Returns:
+        Path to the application data directory.
+    """
     if sys.platform == "win32":
         base = os.environ.get("APPDATA")
         data_root = Path(base) if base else Path.home() / "AppData" / "Roaming"
@@ -120,6 +160,7 @@ def get_data_dir() -> Path:
         data_root = Path(base) if base else Path.home() / ".local" / "share"
 
     target_dir = data_root / APP_NAME
+    # SECURITY: Restrict directory permissions to POSIX mode 0700 (rwx------) for application data (CWE-732)
     if not target_dir.exists():
         target_dir.mkdir(parents=True, exist_ok=True)
         if sys.platform != "win32":
@@ -131,10 +172,20 @@ def get_data_dir() -> Path:
 
 
 def safe_resolve_preset_path(preset_name: str) -> Path:
-    """
-    Safely resolve a preset file path, preventing directory traversal attacks (CWE-22).
+    """Safely resolve a preset file path, preventing directory traversal attacks.
+
+    Args:
+        preset_name: Identifier name of the preset without path separators.
+
+    Returns:
+        Resolved absolute Path within the presets directory.
+
+    Raises:
+        PermissionError: If the name contains traversal sequences or escapes
+            the allowed base directory (CWE-22).
     """
     clean_name = preset_name.strip()
+    # SECURITY: Prevent path traversal (CWE-22) by rejecting path separators and traversal tokens
     if "/" in clean_name or "\\" in clean_name or ".." in clean_name:
         raise PermissionError(f"Access denied: Invalid preset name '{preset_name}'")
 
@@ -144,7 +195,7 @@ def safe_resolve_preset_path(preset_name: str) -> Path:
     base_dir = get_presets_dir().resolve()
     target_path = (base_dir / clean_name).resolve()
 
-    # Prevent escaping allowed base directory
+    # SECURITY: Verify canonical target path remains strictly within presets base directory (CWE-22)
     try:
         target_path.relative_to(base_dir)
     except ValueError as exc:
@@ -154,7 +205,17 @@ def safe_resolve_preset_path(preset_name: str) -> Path:
 
 
 def load_preset(preset_name: str = "default") -> StylePreset:
-    """Load and validate a YAML preset file using safe deserialization (CWE-502)."""
+    """Load and validate a YAML preset file using safe deserialization.
+
+    Args:
+        preset_name: Name of the preset to load.
+
+    Returns:
+        Validated StylePreset instance.
+
+    Raises:
+        ValueError: If YAML is malformed or schema validation fails.
+    """
     preset_path = safe_resolve_preset_path(preset_name)
 
     if not preset_path.exists():
@@ -165,7 +226,7 @@ def load_preset(preset_name: str = "default") -> StylePreset:
 
     try:
         with open(preset_path, "r", encoding="utf-8") as f:
-            # Strictly use yaml.safe_load
+            # SECURITY: Use yaml.safe_load exclusively to prevent arbitrary object instantiation (CWE-502)
             raw_data = yaml.safe_load(f) or {}
     except yaml.YAMLError as exc:
         raise ValueError(f"Malformed YAML in preset '{preset_name}': {exc}") from exc
@@ -177,7 +238,14 @@ def load_preset(preset_name: str = "default") -> StylePreset:
 
 
 def save_preset(preset: StylePreset) -> Path:
-    """Save a preset to disk with secure POSIX permissions (mode 0600)."""
+    """Save a preset to disk with secure POSIX permissions (mode 0600).
+
+    Args:
+        preset: StylePreset instance to serialize and persist.
+
+    Returns:
+        Path to the persisted YAML preset file.
+    """
     preset_path = safe_resolve_preset_path(preset.name)
     data = preset.model_dump()
 
@@ -189,7 +257,7 @@ def save_preset(preset: StylePreset) -> Path:
     )
 
     if sys.platform != "win32":
-        # Secure write with mode 0600 (rw-------)
+        # SECURITY: Atomic file creation with POSIX mode 0600 (rw-------) restricting file access to owner (CWE-732)
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
         mode = 0o600
         fd = os.open(str(preset_path), flags, mode)
@@ -203,7 +271,11 @@ def save_preset(preset: StylePreset) -> Path:
 
 
 def list_presets() -> list[str]:
-    """Return list of all locally available preset names."""
+    """Return list of all locally available preset names.
+
+    Returns:
+        Sorted list of preset names found in local storage.
+    """
     presets_dir = get_presets_dir()
     files = sorted(presets_dir.glob("*.yaml"))
     presets = [p.stem for p in files]
@@ -214,7 +286,14 @@ def list_presets() -> list[str]:
 
 
 def delete_preset(preset_name: str) -> bool:
-    """Safely delete a custom preset file."""
+    """Safely delete a custom preset file.
+
+    Args:
+        preset_name: Name of the custom preset to remove.
+
+    Returns:
+        True if the preset existed and was removed; False if default or missing.
+    """
     if preset_name == "default":
         return False
     preset_path = safe_resolve_preset_path(preset_name)

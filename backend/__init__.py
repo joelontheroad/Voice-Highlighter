@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Joel Gonzales <joelontheroad>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""
-Voice Highlighter package initialization.
-Single source of version truth.
+"""Voice Highlighter package root.
+
+Provides package-level metadata, versioning, and single source of truth for
+licensing and repository identity in compliance with open-source engineering standards.
 """
 
 __version__ = "1.0.0"

@@ -1,16 +1,30 @@
 # SPDX-FileCopyrightText: 2026 Joel Gonzales <joelontheroad>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-import os
+"""Speech recognition and word alignment subsystem.
+
+Integrates WhisperX and Wav2Vec2 forced alignment models with adaptive hardware
+acceleration across NVIDIA CUDA GPUs, Apple Silicon Neural Engine / CPU, and
+x86_64 host processors.
+"""
+
 import sys
+from collections.abc import Callable
+from typing import Any
+
 import torch
-from typing import Dict, Any, Callable, Optional
 
 
 def get_transcription_device() -> tuple[str, str, str]:
-    """
-    Determines the best available device, compute_type, and human-friendly label
-    for WhisperX / ctranslate2 inference.
+    """Determine the optimal compute device and precision for transcription.
+
+    Inspects CUDA availability and operating system architecture to select the
+    fastest supported inference engine.
+
+    Returns:
+        A tuple of (device, compute_type, device_label) where device is 'cuda'
+        or 'cpu', compute_type is 'float16' or 'int8', and device_label is a
+        descriptive hardware string.
     """
     if torch.cuda.is_available() and torch.cuda.device_count() > 0:
         gpu_name = torch.cuda.get_device_name(0)
@@ -22,15 +36,28 @@ def get_transcription_device() -> tuple[str, str, str]:
 
     return "cpu", "int8", "CPU"
 
+
 def run_whisperx_pipeline(
     audio_wav_path: str,
     model_name: str = "large-v3",
     batch_size: int = 16,
-    progress_callback: Optional[Callable[[str, int], None]] = None
-) -> Dict[str, Any]:
-    """
-    Executes WhisperX speech-to-text and Wav2Vec2 forced word-level alignment
-    with adaptive hardware acceleration (CUDA on NVIDIA, optimized CPU on Apple Silicon & PC).
+    progress_callback: Callable[[str, int], None] | None = None,
+) -> dict[str, Any]:
+    """Execute WhisperX speech recognition and forced word-level alignment.
+
+    Loads the audio track, runs batched Whisper inference for initial transcription,
+    and executes Wav2Vec2 alignment to generate accurate word start and end timestamps.
+
+    Args:
+        audio_wav_path: Absolute or relative path to 16kHz mono WAV audio file.
+        model_name: Whisper model architecture size (e.g. 'large-v3', 'medium', 'base').
+        batch_size: Parallel batch size for acoustic model inference.
+        progress_callback: Optional callable accepting a status message string and
+            percentage integer (0-100).
+
+    Returns:
+        Dictionary containing aligned subtitle segments, detected language, and
+        word-level timestamp dictionaries.
     """
     import whisperx
 
@@ -52,15 +79,16 @@ def run_whisperx_pipeline(
             model_name,
             device=device,
             device_index=device_index,
-            compute_type=compute_type
+            compute_type=compute_type,
         )
     except Exception as e:
+        # Fall back to medium model if VRAM/RAM or download limits prevent loading large-v3
         print(f"[WhisperX] Error loading {model_name}, falling back to 'medium': {e}")
         model = whisperx.load_model(
             "medium",
             device=device,
             device_index=device_index,
-            compute_type=compute_type
+            compute_type=compute_type,
         )
 
     if progress_callback:
@@ -81,7 +109,7 @@ def run_whisperx_pipeline(
     try:
         model_a, metadata = whisperx.load_align_model(
             language_code=detected_lang,
-            device=align_device
+            device=align_device,
         )
         print("[WhisperX] Aligning word-level timestamps...")
         aligned_result = whisperx.align(
@@ -90,9 +118,10 @@ def run_whisperx_pipeline(
             metadata,
             audio,
             align_device,
-            return_char_alignments=False
+            return_char_alignments=False,
         )
     except Exception as align_err:
+        # Fallback: if phoneme alignment fails for an unindexed language dialect, retain raw segments
         print(f"[WhisperX] Alignment error: {align_err}. Using segment words fallback.")
         aligned_result = raw_result
 
