@@ -1,6 +1,10 @@
+# SPDX-FileCopyrightText: 2026 Joel Gonzales <joelontheroad>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 import os
 import sys
 import uuid
+import secrets
 import threading
 import hashlib
 import re
@@ -9,16 +13,26 @@ import platform
 import asyncio
 import json
 import warnings
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 # Suppress spurious multiprocessing resource_tracker cleanup warnings on shutdown
 warnings.filterwarnings("ignore", category=UserWarning, module="multiprocessing.resource_tracker")
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Request
-from fastapi.responses import FileResponse, JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Request, Depends, Query, Header, Response
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from backend.config import (
+    StylePreset,
+    load_preset,
+    save_preset,
+    list_presets,
+    delete_preset,
+    reset_all_configuration,
+    sanitize_log_path,
+)
 from backend.extractor import (
     get_video_metadata,
     extract_poster_frame,
@@ -30,7 +44,26 @@ from backend.extractor import (
 from backend.transcriber import run_whisperx_pipeline
 from backend.ass_generator import generate_ass_content
 
+AUTH_TOKEN = os.environ.get("VOICE_HIGHLIGHTER_AUTH_TOKEN") or secrets.token_hex(32)
+
 app = FastAPI(title="Voice Highlighter API")
+app.state.auth_token = AUTH_TOKEN
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Enforce W3C Content Security Policy and modern browser defense headers."""
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+            "object-src 'none'; frame-ancestors 'none';"
+        )
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 @app.middleware("http")
 async def add_no_cache_headers(request: Request, call_next):
@@ -40,6 +73,28 @@ async def add_no_cache_headers(request: Request, call_next):
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
     return response
+
+def verify_auth(
+    request: Request,
+    token_query: Optional[str] = Query(None, alias="token"),
+    authorization: Optional[str] = Header(None),
+    x_auth_token: Optional[str] = Header(None, alias="X-Auth-Token"),
+) -> str:
+    """Verify ephemeral launch token via cookie, header, or query param."""
+    server_token = getattr(app.state, "auth_token", None) or AUTH_TOKEN
+    cookie_token = request.cookies.get("voice_highlighter_session")
+    bearer_token = None
+    if authorization and authorization.startswith("Bearer "):
+        bearer_token = authorization.split(" ", 1)[1]
+
+    candidate = token_query or bearer_token or x_auth_token or cookie_token
+    if not candidate or not secrets.compare_digest(candidate, server_token):
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized: Valid ephemeral launch token required."
+        )
+    return candidate
+
 
 # Workspace and scratch paths
 WORKSPACE_DIR = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
@@ -86,7 +141,7 @@ class OpenFileDialogRequest(BaseModel):
     timeout_ms: Optional[int] = None
 
 @app.post("/api/open-os-file-dialog")
-async def open_os_file_dialog(req: OpenFileDialogRequest):
+async def open_os_file_dialog(req: OpenFileDialogRequest, auth: str = Depends(verify_auth)):
     helper_script = os.path.join(os.path.dirname(__file__), "native_picker.py")
     if not os.path.exists(helper_script):
         raise HTTPException(status_code=500, detail="Native picker helper not found")
@@ -133,7 +188,7 @@ def detect_cpu_model() -> str:
     """Detects and formats the CPU processor model name (e.g., 'Intel Core i7-11850H')."""
     model = ""
     try:
-        with open("/proc/cpuinfo") as f:
+        with open("/proc/cpuinfo", "r", encoding="utf-8") as f:
             for line in f:
                 if "model name" in line:
                     model = line.split(":", 1)[1].strip()
@@ -510,7 +565,7 @@ def process_transcription_job(
         try:
             import json
             meta_file = os.path.join(OUTPUTS_DIR, f"{task_id}.json")
-            with open(meta_file, "w") as mf:
+            with open(meta_file, "w", encoding="utf-8") as mf:
                 json.dump(tasks[task_id], mf)
         except Exception:
             pass
@@ -523,7 +578,7 @@ def process_transcription_job(
         tasks[task_id]["stage_message"] = f"Failed: {err}"
 
 @app.post("/api/transcribe")
-def start_transcribe(req: TranscribeRequest):
+def start_transcribe(req: TranscribeRequest, auth: str = Depends(verify_auth)):
     video_path = os.path.expanduser(req.video_path.strip())
     if not os.path.exists(video_path):
         raise HTTPException(status_code=404, detail=f"File not found: {video_path}")
@@ -568,7 +623,7 @@ def _get_or_load_task(task_id: str) -> Optional[Dict[str, Any]]:
     meta_path = os.path.join(OUTPUTS_DIR, f"{task_id}.json")
     if os.path.exists(meta_path):
         try:
-            with open(meta_path, "r") as mf:
+            with open(meta_path, "r", encoding="utf-8") as mf:
                 data = json.load(mf)
                 tasks[task_id] = data
                 return data
@@ -648,7 +703,7 @@ def download_video(task_id: str):
     )
 
 @app.post("/api/preview-ass")
-def preview_ass_code(req: PreviewAssRequest):
+def preview_ass_code(req: PreviewAssRequest, auth: str = Depends(verify_auth)):
     words_list = []
     current_time = 1.0
     for w in req.sample_text.split():
@@ -793,7 +848,8 @@ def get_ass_content(
 @app.post("/api/ass-content/{task_id}")
 def update_ass_content(
     req: Any = None,
-    task_id: Optional[str] = None
+    task_id: Optional[str] = None,
+    auth: str = Depends(verify_auth),
 ):
     if isinstance(req, str) and isinstance(task_id, UpdateAssRequest):
         req, task_id = task_id, req
@@ -869,7 +925,7 @@ def update_ass_content(
     }
 
 @app.post("/api/burn-video")
-def burn_video_endpoint(req: BurnVideoRequest):
+def burn_video_endpoint(req: BurnVideoRequest, auth: str = Depends(verify_auth)):
     video_clean = os.path.expanduser(req.video_path.strip())
     if not os.path.exists(video_clean):
         raise HTTPException(status_code=404, detail=f"Source video not found: {video_clean}")
@@ -946,7 +1002,7 @@ def burn_video_endpoint(req: BurnVideoRequest):
     }
 
 @app.post("/api/open-video")
-def open_video_endpoint(req: OpenVideoRequest):
+def open_video_endpoint(req: OpenVideoRequest, auth: str = Depends(verify_auth)):
     target_path = None
     if req.video_path:
         p = os.path.expanduser(req.video_path.strip())
@@ -984,6 +1040,93 @@ def open_video_endpoint(req: OpenVideoRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to launch player: {str(e)}")
 
+# Preset API Endpoints (Standards 4 & 5)
+@app.get("/api/presets")
+def get_presets_endpoint(auth: str = Depends(verify_auth)):
+    return {"presets": list_presets()}
+
+@app.get("/api/presets/{preset_name}")
+def get_preset_endpoint(preset_name: str, auth: str = Depends(verify_auth)):
+    try:
+        p = load_preset(preset_name)
+        return p.model_dump()
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@app.post("/api/presets")
+def save_preset_endpoint(preset: StylePreset, auth: str = Depends(verify_auth)):
+    try:
+        p_path = save_preset(preset)
+        return {"success": True, "name": preset.name, "path": sanitize_log_path(str(p_path))}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/api/presets/{preset_name}")
+def delete_preset_endpoint(preset_name: str, auth: str = Depends(verify_auth)):
+    try:
+        deleted = delete_preset(preset_name)
+        if not deleted:
+            raise HTTPException(status_code=400, detail="Cannot delete default preset")
+        return {"success": True, "deleted": preset_name}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/config/reset")
+def reset_config_api_endpoint(auth: str = Depends(verify_auth)):
+    reset_all_configuration()
+    return {"success": True, "message": "Presets and configuration reset to factory defaults"}
+
+# Authenticated Index Handler (Standard 5)
+@app.get("/", response_class=HTMLResponse)
+async def serve_index(request: Request, token: Optional[str] = Query(None)):
+    server_token = getattr(app.state, "auth_token", None) or AUTH_TOKEN
+    cookie_token = request.cookies.get("voice_highlighter_session")
+
+    is_authorized = False
+    if token and secrets.compare_digest(token, server_token):
+        is_authorized = True
+    elif cookie_token and secrets.compare_digest(cookie_token, server_token):
+        is_authorized = True
+
+    if not is_authorized:
+        return HTMLResponse(
+            "<h3>401 Unauthorized</h3><p>Voice Highlighter requires an authenticated session.</p>"
+            "<p>Please open the authenticated link printed in your terminal (e.g. <code>http://127.0.0.1:8000/?token=...</code>).</p>",
+            status_code=401
+        )
+
+    html_path = os.path.join(FRONTEND_DIR, "index.html")
+    with open(html_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    res = HTMLResponse(content=content)
+    if token and secrets.compare_digest(token, server_token):
+        res.set_cookie(
+            key="voice_highlighter_session",
+            value=token,
+            httponly=True,
+            samesite="strict",
+            secure=False,
+            path="/"
+        )
+    return res
+
+def run_server(port: int = 8000, host: str = "127.0.0.1", reload: bool = False) -> None:
+    """Run the local uvicorn server strictly bound to localhost."""
+    import uvicorn
+    token = AUTH_TOKEN
+    app.state.auth_token = token
+
+    sys.stderr.write(f"\n[Voice Highlighter] Local server running at: http://{host}:{port}/?token={token}\n")
+    sys.stderr.write("[Voice Highlighter] Bound strictly to localhost for privacy and security. Press Ctrl+C to exit.\n\n")
+    sys.stderr.flush()
+
+    if reload:
+        uvicorn.run("backend.app:app", host=host, port=port, reload=True, reload_dirs=["backend"])
+    else:
+        uvicorn.run(app, host=host, port=port, log_level="warning")
+
 # Mount static frontend files
 FRONTEND_DIR = os.path.join(WORKSPACE_DIR, "frontend")
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+

@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Joel Gonzales <joelontheroad>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 // Voice Highlighter Client Application Logic
 
 document.addEventListener("DOMContentLoaded", () => {

@@ -1,0 +1,54 @@
+# SPDX-FileCopyrightText: 2026 Joel Gonzales <joelontheroad>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "voice-highlighter"
+version = "1.0.0"
+description = "AI Word-Level Subtitle Generator with WhisperX"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "AGPL-3.0-or-later" }
+authors = [
+    { name = "Joel Gonzales" },
+]
+classifiers = [
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.8.0",
+    "python-multipart>=0.0.9",
+    "pyyaml>=6.0.1",
+    "Pillow>=10.0.0",
+    "torch>=2.2.0",
+    "torchaudio>=2.2.0",
+    "whisperx>=3.1.0",
+    "pywebview>=5.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.3.0",
+    "pip-audit>=2.7.0",
+]
+
+[project.scripts]
+voice-highlighter = "backend.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["backend"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

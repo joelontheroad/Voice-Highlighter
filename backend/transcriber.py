@@ -1,7 +1,11 @@
+# SPDX-FileCopyrightText: 2026 Joel Gonzales <joelontheroad>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 import os
 import sys
 import torch
 from typing import Dict, Any, Callable, Optional
+
 
 def get_transcription_device() -> tuple[str, str, str]:
     """

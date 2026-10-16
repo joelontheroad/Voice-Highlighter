@@ -1,5 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Joel Gonzales <joelontheroad>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 import re
 from typing import List, Dict, Any, Optional
+
 
 def hex_to_ass_color(hex_color: str, opacity: float = 1.0) -> str:
     """

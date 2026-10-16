@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Joel Gonzales <joelontheroad>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 :root {
   --bg-main: #080c16;
   --bg-card: rgba(17, 24, 39, 0.72);
@@ -3641,6 +3646,39 @@ input[type="range"] {
   gap: 10px;
 }
 
+/* AGPL-3.0 Section 13 Source Notice & App Footer */
+.source-code-link {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.82rem;
+  color: var(--primary);
+  text-decoration: none;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 229, 255, 0.08);
+  border: 1px solid rgba(0, 229, 255, 0.2);
+  transition: all 0.2s ease;
+}
 
+.source-code-link:hover {
+  background: rgba(0, 229, 255, 0.18);
+  border-color: var(--primary);
+  color: #ffffff;
+}
 
+.app-footer {
+  text-align: center;
+  padding: 24px 20px 40px;
+  color: var(--text-sub);
+  font-size: 0.85rem;
+  position: relative;
+  z-index: 5;
+}
 
+.app-footer-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}

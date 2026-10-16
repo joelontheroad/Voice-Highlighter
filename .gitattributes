@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2026 [Author/Organization]
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Auto-detect text files and normalize line endings to LF on commit
+* text=auto eol=lf
+
+# Explicit text files
+*.py text diff=python
+*.js text
+*.ts text
+*.jsx text
+*.tsx text
+*.json text
+*.yaml text
+*.yml text
+*.toml text
+*.md text
+*.txt text
+*.html text
+*.css text
+*.sh text eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.tar.gz binary
+*.whl binary
+*.zip binary

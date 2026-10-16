@@ -54,3 +54,6 @@ Thumbs.db
 JG Notes/*.png
 JG Notes/*.svg
 JG Notes/*.odg
+
+.agents/
+AGENTS.md

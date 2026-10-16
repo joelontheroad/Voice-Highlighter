@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Joel Gonzales <joelontheroad>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """
 Voice Highlighter Desktop App Launcher
 Spawns the local FastAPI backend server and launches a dedicated, chromeless
@@ -8,6 +11,7 @@ import os
 import sys
 import time
 import socket
+import secrets
 import urllib.request
 import subprocess
 import webbrowser
@@ -15,7 +19,8 @@ from typing import Optional
 
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 8000
-SERVER_URL = f"http://{SERVER_HOST}:{SERVER_PORT}"
+AUTH_TOKEN = os.environ.get("VOICE_HIGHLIGHTER_AUTH_TOKEN") or secrets.token_hex(32)
+SERVER_URL = f"http://{SERVER_HOST}:{SERVER_PORT}/?token={AUTH_TOKEN}"
 
 def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
     """Checks if a socket port is actively listening."""
@@ -23,12 +28,13 @@ def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
         s.settimeout(0.5)
         return s.connect_ex((host, port)) == 0
 
-def wait_for_server(url: str, timeout: float = 12.0) -> bool:
+def wait_for_server(target: str = SERVER_HOST, port: int = SERVER_PORT, timeout: float = 12.0) -> bool:
     """Polls backend health check until it responds or timeout expires."""
+    check_url = f"http://{SERVER_HOST}:{SERVER_PORT}/api/system-info"
     start = time.time()
     while time.time() - start < timeout:
         try:
-            with urllib.request.urlopen(f"{url}/api/system-info", timeout=1.0) as resp:
+            with urllib.request.urlopen(check_url, timeout=1.0) as resp:
                 if resp.status == 200:
                     return True
         except Exception:
@@ -38,7 +44,7 @@ def wait_for_server(url: str, timeout: float = 12.0) -> bool:
 def start_backend_server() -> Optional[subprocess.Popen]:
     """Starts the Uvicorn server in a background process if not already running."""
     if is_port_in_use(SERVER_PORT, SERVER_HOST):
-        print(f"[Desktop Launcher] Server already running at {SERVER_URL}")
+        print(f"[Desktop Launcher] Server already running on port {SERVER_PORT}")
         return None
 
     project_root = os.path.dirname(os.path.abspath(__file__))
@@ -50,6 +56,7 @@ def start_backend_server() -> Optional[subprocess.Popen]:
     ]
     env = os.environ.copy()
     env["PYTHONWARNINGS"] = "ignore:resource_tracker"
+    env["VOICE_HIGHLIGHTER_AUTH_TOKEN"] = AUTH_TOKEN
     print(f"[Desktop Launcher] Starting backend server: {' '.join(cmd)}")
     proc = subprocess.Popen(cmd, cwd=project_root, env=env)
     return proc

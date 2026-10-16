@@ -32,7 +32,7 @@ echo "=========================================================="
 # Check if development reload flag was requested (--reload or --dev)
 RELOAD_FLAG=""
 if [[ "$*" == *"--reload"* ]] || [[ "$*" == *"--dev"* ]]; then
-    RELOAD_FLAG="--reload --reload-dir backend"
+    RELOAD_FLAG="--reload"
 fi
 
-exec python3 -m uvicorn backend.app:app --host 0.0.0.0 --port 8000 $RELOAD_FLAG
+exec python3 -m backend.cli serve --host 127.0.0.1 --port 8000 $RELOAD_FLAG "$@"

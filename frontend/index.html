@@ -1,35 +1,14 @@
+<!--
+  SPDX-FileCopyrightText: 2026 Joel Gonzales <joelontheroad>
+  SPDX-License-Identifier: AGPL-3.0-or-later
+-->
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Voice Highlighter — AI Word-Level Subtitle Generator</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Montserrat:wght@600;700;800;900&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=4.3">
-  <style>
-    /* Critical 3-column layout enforcement (guaranteed zero-cache override) */
-    .main-layout {
-      display: grid !important;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr) minmax(0, 1fr) !important;
-      gap: 18px !important;
-      max-width: 1540px !important;
-      margin: 20px auto !important;
-      padding: 0 20px 50px !important;
-      align-items: start !important;
-    }
-    .layout-column {
-      display: flex !important;
-      flex-direction: column !important;
-      min-width: 0 !important;
-    }
-    @media (max-width: 880px) {
-      .main-layout {
-        grid-template-columns: 1fr !important;
-      }
-    }
-  </style>
+  <link rel="stylesheet" href="style.css?v=4.4">
 </head>
 <body>
   <div class="app-background"></div>
@@ -51,9 +30,12 @@
           <p class="app-subtitle">Word-level animated subtitle generator powered by WhisperX</p>
         </div>
       </div>
-      <div class="hardware-badge" id="hardwareBadge" title="Detecting rendering engine...">
-        <span class="gpu-indicator" id="hardwareIndicator"></span>
-        <span id="hardwareBadgeText">Detecting engine...</span>
+      <div class="header-right" style="display: flex; align-items: center; gap: 14px;">
+        <a href="https://github.com/joelontheroad/Voice-Highlighter" target="_blank" rel="noopener noreferrer" class="source-code-link" title="Source Code under GNU AGPLv3">Source Code (GNU AGPLv3)</a>
+        <div class="hardware-badge" id="hardwareBadge" title="Detecting rendering engine...">
+          <span class="gpu-indicator" id="hardwareIndicator"></span>
+          <span id="hardwareBadgeText">Detecting engine...</span>
+        </div>
       </div>
     </div>
   </header>
@@ -941,6 +923,15 @@
       </div>
     </div>
   </div>
+
+  <!-- Application Footer with AGPL-3.0 Section 13 Source Notice -->
+  <footer class="app-footer">
+    <div class="app-footer-container">
+      <span>Voice Highlighter Studio &bull; Word-Level AI Subtitling</span>
+      <span>&bull;</span>
+      <a href="https://github.com/joelontheroad/Voice-Highlighter" target="_blank" rel="noopener noreferrer" class="source-code-link">Source Code (GNU AGPLv3)</a>
+    </div>
+  </footer>
 
   <script src="app.js?v=4.4"></script>
 </body>

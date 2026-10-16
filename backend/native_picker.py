@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Joel Gonzales <joelontheroad>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 import sys
 import os
+
 
 # Ensure system dist-packages are in sys.path when running inside a Python virtual environment on Linux
 for p in [

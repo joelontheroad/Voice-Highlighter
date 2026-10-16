@@ -1,9 +1,13 @@
+# SPDX-FileCopyrightText: 2026 Joel Gonzales <joelontheroad>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 import os
 import sys
 import json
 import shutil
 import subprocess
 from typing import Dict, Any, Tuple, List, Optional
+
 
 # Cache for tested encoders
 _ENCODER_CACHE: Dict[str, bool] = {}
