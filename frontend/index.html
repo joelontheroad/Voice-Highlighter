@@ -135,6 +135,8 @@
                     <option value="factory:hormozi_box">🏷️ Hormozi Pill Box</option>
                     <option value="factory:classic_sub">🎬 Classic Subtitle (2 Lines)</option>
                     <option value="factory:clean_minimal">✨ Clean Minimalist</option>
+                    <option value="factory:podcast_duo">🎙️ Podcast Duo (Multi-Speaker)</option>
+                    <option value="factory:laser_karaoke">🎤 LaserKaraoke Wipe (Smooth Sweep)</option>
                   </optgroup>
                   <optgroup label="💾 My Saved Presets" id="optgroupCustom">
                     <!-- Populated dynamically from localStorage -->
@@ -625,6 +627,53 @@
             </div>
           </div>
 
+          <!-- Multi-Speaker Color Channels (Hidden when speakerCount <= 1) -->
+          <div class="speaker-channels-section hidden" id="speakerChannelsSection" aria-live="polite">
+            <div class="speaker-section-header">
+              <div class="speaker-header-left">
+                <span class="speaker-header-title">👥 Speaker Color Channels</span>
+                <span class="speaker-count-badge" id="speakerCountBadge">2 Speakers</span>
+              </div>
+              <div class="speaker-header-right">
+                <button type="button" class="btn-speaker-tool" id="btnToggleSpeakerChannels" title="Toggle speaker color channels">Enabled</button>
+              </div>
+            </div>
+
+            <div class="speaker-tabs-bar" id="speakerTabsBar" role="tablist" aria-label="Speaker Channels">
+              <button type="button" class="speaker-tab-btn active" data-speaker-id="SPEAKER_00" role="tab" aria-selected="true">
+                <span class="speaker-tab-dot" style="background:#FFDF00; color:#FFDF00;"></span>
+                <span class="speaker-tab-name">Speaker 1</span>
+              </button>
+              <button type="button" class="speaker-tab-btn" data-speaker-id="SPEAKER_01" role="tab" aria-selected="false">
+                <span class="speaker-tab-dot" style="background:#00E5FF; color:#00E5FF;"></span>
+                <span class="speaker-tab-name">Speaker 2</span>
+              </button>
+            </div>
+
+            <div class="speaker-channel-meta" id="speakerChannelMeta">
+              <div class="channel-hint-row">
+                <span class="channel-editing-hint">
+                  Styling colors below apply to: <strong id="currentEditingSpeakerName">Speaker 1</strong>
+                </span>
+                <span class="channel-dot-indicator" id="currentEditingSpeakerDot" style="background:#FFDF00; color:#FFDF00;"></span>
+              </div>
+              <div class="form-row-2" style="margin-top: 8px;">
+                <div class="form-group" style="margin-bottom: 0;">
+                  <label for="inputSpeakerDisplayName" style="font-size: 0.72rem;">Channel Display Name</label>
+                  <input type="text" id="inputSpeakerDisplayName" class="text-input" style="padding: 4px 8px; font-size: 0.8rem;" value="Speaker 1" placeholder="e.g. Host, Guest">
+                </div>
+                <div class="form-group" style="margin-bottom: 0; display: flex; align-items: flex-end;">
+                  <div class="quick-speaker-themes">
+                    <span style="font-size: 0.72rem; color: var(--text-muted);">Harmonious Duos:</span>
+                    <button type="button" class="theme-chip" data-theme="yellow-cyan" title="Speaker 1: Yellow, Speaker 2: Cyan">🟡 Yellow / 🔵 Cyan</button>
+                    <button type="button" class="theme-chip" data-theme="lime-pink" title="Speaker 1: Bright Lime, Speaker 2: Hot Pink">🟢 Lime / 🌸 Pink</button>
+                    <button type="button" class="theme-chip" data-theme="amber-lavender" title="Speaker 1: Warm Amber, Speaker 2: Lavender">🟠 Amber / 🟣 Lavender</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="color-pickers-row">
             <div class="color-item">
               <label for="colorTextBase">Base Text Color</label>
@@ -748,6 +797,17 @@
             </div>
             <input type="range" id="sliderHighlightScale" min="100" max="180" value="100" step="5">
             <span class="field-hint">Enlarge active spoken word by a percentage (100% = standard size, up to 180% dynamic pop)</span>
+          </div>
+
+          <!-- Highlight Animation & Transition Effect (Pioneer & Sony Expired Prior Art) -->
+          <div class="form-group" style="margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+            <label for="selectHighlightAnimation">Animation & Transition Effect</label>
+            <select id="selectHighlightAnimation" class="select-input" style="width: 100%;">
+              <option value="discrete">Discrete Word Pop (Default)</option>
+              <option value="karaoke_wipe">🎤 Progressive Karaoke Wipe (\kf Continuous Sweep)</option>
+              <option value="anticipation_glow">✨ Pre-Vocal Cadence Glow (Next-Word Outline Priming)</option>
+            </select>
+            <span class="field-hint">Choose active highlight transition mode: instant pop, smooth progressive character wipe, or pre-vocal cadence glow.</span>
           </div>
         </div>
       </div>

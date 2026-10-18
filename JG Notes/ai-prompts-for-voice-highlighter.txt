@@ -44,5 +44,12 @@ Create a plan for:
 3) Likewise Windows.
 4) Creating an install program for Linux, MacOS, and Windows. Perhaps separate programs for each operating system...or not. If all can run bash scripts, perhaps one install program is the solution.  Make a recommendation.
 
+------------------------
+/plan We need to determine if we'll infringe on any patents.  Got to the US patent office and review all patents.  For any that we may infringe, provide mitigation strategies.
 
+For any expired patents that are relevent, see if there are any ideas that we can use.
+
+Provide an opinion on whether there's anything unique in our program that we can patent. If so, provide reasons why you think it's defensible.
+
+Provide a research document.
 

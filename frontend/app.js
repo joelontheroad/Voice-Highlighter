@@ -34,6 +34,7 @@ document.addEventListener("DOMContentLoaded", () => {
     highlightStyle: "color", // 'color' or 'box'
     highlightColor: "#FFDF00",
     highlightScalePct: 100, // 100% to 180% active word font boost
+    highlightAnimation: "discrete", // 'discrete', 'karaoke_wipe', or 'anticipation_glow'
     boxType: "word", // 'word' or 'block'
     boxBgColor: "#000000",
     boxOpacity: 0.85,
@@ -52,7 +53,34 @@ document.addEventListener("DOMContentLoaded", () => {
     hasExistingAss: false,
     existingAssPath: null,
     hasExistingWav: false,
-    existingWavPath: null
+    existingWavPath: null,
+    // Multi-Speaker Color Channels
+    speakerCount: 1,
+    detectedSpeakers: ["Speaker 1"],
+    isMultiSpeaker: false,
+    activeSpeakerId: "SPEAKER_00",
+    speakerChannels: {
+      "SPEAKER_00": {
+        id: "SPEAKER_00",
+        name: "Speaker 1",
+        primary_color: "#FFFFFF",
+        highlight_color: "#FFDF00",
+        outline_color: "#000000",
+        box_bg_color: "#000000",
+        box_font_color: "#FFFFFF",
+        show_speaker_name: false
+      },
+      "SPEAKER_01": {
+        id: "SPEAKER_01",
+        name: "Speaker 2",
+        primary_color: "#FFFFFF",
+        highlight_color: "#00E5FF",
+        outline_color: "#000000",
+        box_bg_color: "#000000",
+        box_font_color: "#FFFFFF",
+        show_speaker_name: false
+      }
+    }
   };
 
   // DOM Elements
@@ -144,6 +172,17 @@ document.addEventListener("DOMContentLoaded", () => {
   const swatchBtns = document.querySelectorAll(".swatch-btn");
   const sliderHighlightScale = document.getElementById("sliderHighlightScale");
   const labelHighlightScale = document.getElementById("labelHighlightScale");
+  const selectHighlightAnimation = document.getElementById("selectHighlightAnimation");
+
+  // Multi-Speaker Color Channels DOM Elements
+  const speakerChannelsSection = document.getElementById("speakerChannelsSection");
+  const speakerCountBadge = document.getElementById("speakerCountBadge");
+  const btnToggleSpeakerChannels = document.getElementById("btnToggleSpeakerChannels");
+  const speakerTabsBar = document.getElementById("speakerTabsBar");
+  const speakerChannelMeta = document.getElementById("speakerChannelMeta");
+  const currentEditingSpeakerName = document.getElementById("currentEditingSpeakerName");
+  const currentEditingSpeakerDot = document.getElementById("currentEditingSpeakerDot");
+  const inputSpeakerDisplayName = document.getElementById("inputSpeakerDisplayName");
 
   // Lines & Line Width
   const linePillBtns = document.querySelectorAll("#lineCountSelector .pill-btn");
@@ -881,9 +920,25 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Rebuild HTML for ONLY the active block (immediately erasing any previous block/line)
     let blockWordIdx = 0;
-    const htmlLines = activeBlock.map(line => {
+    const htmlLines = activeBlock.map((line, lineIdx) => {
+      // Per-speaker styling when multi-speaker mode is active
+      let spkChannel = null;
+      if (state.isMultiSpeaker && state.speakerChannels) {
+        const spkKeys = Object.keys(state.speakerChannels);
+        if (spkKeys.length >= 2) {
+          const spkKey = spkKeys[lineIdx % spkKeys.length];
+          spkChannel = state.speakerChannels[spkKey];
+        }
+      }
+
+      const activeHighlight = (spkChannel && spkChannel.highlight_color) ? spkChannel.highlight_color : state.highlightColor;
+      const activePrimary = (spkChannel && spkChannel.primary_color) ? spkChannel.primary_color : baseC;
+      const activeBoxBg = (spkChannel && spkChannel.box_bg_color) ? spkChannel.box_bg_color : state.boxBgColor;
+      const activeBoxFont = (spkChannel && spkChannel.box_font_color) ? spkChannel.box_font_color : state.boxFontColor;
+
       const lineHtml = line.map(w => {
         const isActive = (blockWordIdx === activeWordIndexInBlock);
+        const isNext = (state.highlightAnimation === "anticipation_glow" && blockWordIdx === activeWordIndexInBlock + 1);
         blockWordIdx++;
 
         let extraClass = "";
@@ -896,24 +951,37 @@ document.addEventListener("DOMContentLoaded", () => {
             ? `margin: 0 ${Math.max(2.5, (state.highlightScalePct - 100) * 0.12)}px;`
             : "";
 
-          if (state.highlightStyle === "color") {
+          if (state.highlightAnimation === "karaoke_wipe") {
+            extraClass = "active-color active-wipe";
+            inlineStyle = `color: ${activeHighlight} !important; border-bottom: 2px solid ${activeHighlight}; ${scaleTransform} ${marginSpacing}`;
+          } else if (state.highlightStyle === "color") {
             extraClass = "active-color";
-            inlineStyle = `color: ${state.highlightColor} !important; ${scaleTransform} ${marginSpacing}`;
+            inlineStyle = `color: ${activeHighlight} !important; ${scaleTransform} ${marginSpacing}`;
           } else if (state.highlightStyle === "box") {
             if (state.boxType === "word") {
               extraClass = "active-pill";
               const alphaHex = Math.round(state.boxOpacity * 255).toString(16).padStart(2, '0');
-              inlineStyle = `background: ${state.boxBgColor}${alphaHex} !important; color: ${state.boxFontColor} !important; border-color: ${state.boxBgColor} !important; ${scaleTransform} ${marginSpacing}`;
+              inlineStyle = `background: ${activeBoxBg}${alphaHex} !important; color: ${activeBoxFont} !important; border-color: ${activeBoxBg} !important; ${scaleTransform} ${marginSpacing}`;
             } else {
               // Block line box: active word font changes color
-              inlineStyle = `color: ${state.highlightColor} !important; ${scaleTransform} ${marginSpacing}`;
+              inlineStyle = `color: ${activeHighlight} !important; ${scaleTransform} ${marginSpacing}`;
             }
           }
+        } else if (isNext) {
+          inlineStyle = `color: ${activePrimary}; text-shadow: 0 0 8px ${activeHighlight}, 0 0 12px ${activeHighlight};`;
+        } else if (spkChannel) {
+          inlineStyle = `color: ${activePrimary};`;
         }
 
         return `<span class="subtitle-word ${extraClass}" style="${inlineStyle}">${w}</span>`;
       }).join(" ");
-      return `<div>${lineHtml}</div>`;
+
+      let speakerPrefix = "";
+      if (state.isMultiSpeaker && spkChannel && (state.maxLines > 1 || lineIdx === 0)) {
+        speakerPrefix = `<span style="font-size:0.75em; opacity:0.85; margin-right:6px; color:${spkChannel.highlight_color}; font-weight:700;">[${spkChannel.name || 'Speaker'}]:</span>`;
+      }
+
+      return `<div>${speakerPrefix}${lineHtml}</div>`;
     });
 
     subtitleRenderedText.innerHTML = htmlLines.join("");
@@ -942,12 +1010,18 @@ document.addEventListener("DOMContentLoaded", () => {
   colorTextBase.addEventListener("input", (e) => {
     state.textBaseColor = e.target.value.toUpperCase();
     codeTextBase.textContent = state.textBaseColor;
+    if (state.isMultiSpeaker && state.speakerChannels && state.speakerChannels[state.activeSpeakerId]) {
+      state.speakerChannels[state.activeSpeakerId].primary_color = state.textBaseColor;
+    }
     renderSubtitlePreview();
   });
 
   colorOutline.addEventListener("input", (e) => {
     state.outlineColor = e.target.value.toUpperCase();
     codeOutline.textContent = state.outlineColor;
+    if (state.isMultiSpeaker && state.speakerChannels && state.speakerChannels[state.activeSpeakerId]) {
+      state.speakerChannels[state.activeSpeakerId].outline_color = state.outlineColor;
+    }
     renderSubtitlePreview();
   });
 
@@ -989,6 +1063,18 @@ document.addEventListener("DOMContentLoaded", () => {
   colorHighlightText.addEventListener("input", (e) => {
     state.highlightColor = e.target.value.toUpperCase();
     codeHighlightText.textContent = state.highlightColor;
+    if (state.isMultiSpeaker && state.speakerChannels && state.speakerChannels[state.activeSpeakerId]) {
+      state.speakerChannels[state.activeSpeakerId].highlight_color = state.highlightColor;
+      if (currentEditingSpeakerDot) {
+        currentEditingSpeakerDot.style.background = state.highlightColor;
+        currentEditingSpeakerDot.style.color = state.highlightColor;
+      }
+      const activeDot = speakerTabsBar ? speakerTabsBar.querySelector('.speaker-tab-btn.active .speaker-tab-dot') : null;
+      if (activeDot) {
+        activeDot.style.background = state.highlightColor;
+        activeDot.style.color = state.highlightColor;
+      }
+    }
     renderSubtitlePreview();
   });
 
@@ -998,6 +1084,18 @@ document.addEventListener("DOMContentLoaded", () => {
       state.highlightColor = c;
       colorHighlightText.value = c;
       codeHighlightText.textContent = c;
+      if (state.isMultiSpeaker && state.speakerChannels && state.speakerChannels[state.activeSpeakerId]) {
+        state.speakerChannels[state.activeSpeakerId].highlight_color = c;
+        if (currentEditingSpeakerDot) {
+          currentEditingSpeakerDot.style.background = c;
+          currentEditingSpeakerDot.style.color = c;
+        }
+        const activeDot = speakerTabsBar ? speakerTabsBar.querySelector('.speaker-tab-btn.active .speaker-tab-dot') : null;
+        if (activeDot) {
+          activeDot.style.background = c;
+          activeDot.style.color = c;
+        }
+      }
       renderSubtitlePreview();
     });
   });
@@ -1016,12 +1114,18 @@ document.addEventListener("DOMContentLoaded", () => {
   colorBoxBg.addEventListener("input", (e) => {
     state.boxBgColor = e.target.value.toUpperCase();
     codeBoxBg.textContent = state.boxBgColor;
+    if (state.isMultiSpeaker && state.speakerChannels && state.speakerChannels[state.activeSpeakerId]) {
+      state.speakerChannels[state.activeSpeakerId].box_bg_color = state.boxBgColor;
+    }
     renderSubtitlePreview();
   });
 
   colorBoxFont.addEventListener("input", (e) => {
     state.boxFontColor = e.target.value.toUpperCase();
     codeBoxFont.textContent = state.boxFontColor;
+    if (state.isMultiSpeaker && state.speakerChannels && state.speakerChannels[state.activeSpeakerId]) {
+      state.speakerChannels[state.activeSpeakerId].box_font_color = state.boxFontColor;
+    }
     renderSubtitlePreview();
   });
 
@@ -1030,6 +1134,14 @@ document.addEventListener("DOMContentLoaded", () => {
     sliderHighlightScale.addEventListener("input", (e) => {
       state.highlightScalePct = parseInt(e.target.value);
       if (labelHighlightScale) labelHighlightScale.textContent = `${state.highlightScalePct}%`;
+      renderSubtitlePreview();
+    });
+  }
+
+  // Highlight Animation & Transition Effect
+  if (selectHighlightAnimation) {
+    selectHighlightAnimation.addEventListener("change", (e) => {
+      state.highlightAnimation = e.target.value;
       renderSubtitlePreview();
     });
   }
@@ -1055,6 +1167,198 @@ document.addEventListener("DOMContentLoaded", () => {
     state.lineWidthPct = parseInt(e.target.value);
     labelLineWidth.textContent = `${state.lineWidthPct}%`;
     renderSubtitlePreview();
+  });
+
+  // ----------------------------------------------------
+  // 4b. Multi-Speaker Color Channels System
+  // ----------------------------------------------------
+  function updateSpeakerControlsVisibility(speakerCount, detectedSpeakers) {
+    const count = Math.max(1, speakerCount || 1);
+    state.speakerCount = count;
+
+    if (count <= 1 && !state.isMultiSpeaker) {
+      state.isMultiSpeaker = false;
+      if (speakerChannelsSection) speakerChannelsSection.classList.add("hidden");
+      if (speakerCountBadge) speakerCountBadge.textContent = "1 Speaker";
+      if (btnToggleSpeakerChannels) {
+        btnToggleSpeakerChannels.textContent = "Disabled";
+        btnToggleSpeakerChannels.classList.remove("active");
+      }
+    } else {
+      state.isMultiSpeaker = true;
+      if (speakerChannelsSection) speakerChannelsSection.classList.remove("hidden");
+      if (speakerCountBadge) speakerCountBadge.textContent = `${count} Speakers`;
+      if (btnToggleSpeakerChannels) {
+        btnToggleSpeakerChannels.textContent = "Enabled";
+        btnToggleSpeakerChannels.classList.add("active");
+      }
+
+      // Ensure channels exist for detected speakers
+      const palette = ["#FFDF00", "#00E5FF", "#FF0055", "#00FF66", "#FF9900", "#D8B4FE", "#38BDF8", "#F43F5E"];
+      const speakers = (detectedSpeakers && detectedSpeakers.length > 0)
+        ? detectedSpeakers
+        : (count >= 2 ? ["SPEAKER_00", "SPEAKER_01"] : ["SPEAKER_00"]);
+
+      speakers.forEach((spkId, idx) => {
+        if (!state.speakerChannels[spkId]) {
+          state.speakerChannels[spkId] = {
+            id: spkId,
+            name: spkId.startsWith("SPEAKER_") ? `Speaker ${idx + 1}` : spkId,
+            primary_color: "#FFFFFF",
+            highlight_color: palette[idx % palette.length],
+            outline_color: "#000000",
+            box_bg_color: "#000000",
+            box_font_color: "#FFFFFF",
+            show_speaker_name: false
+          };
+        }
+      });
+
+      if (!state.speakerChannels[state.activeSpeakerId]) {
+        state.activeSpeakerId = speakers[0];
+      }
+
+      renderSpeakerTabs();
+      syncActiveSpeakerUI();
+    }
+  }
+
+  function renderSpeakerTabs() {
+    if (!speakerTabsBar) return;
+    speakerTabsBar.innerHTML = "";
+    const keys = Object.keys(state.speakerChannels);
+
+    keys.forEach(key => {
+      const ch = state.speakerChannels[key];
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `speaker-tab-btn ${key === state.activeSpeakerId ? "active" : ""}`;
+      btn.dataset.speakerId = key;
+      btn.setAttribute("role", "tab");
+      btn.setAttribute("aria-selected", key === state.activeSpeakerId ? "true" : "false");
+      btn.innerHTML = `
+        <span class="speaker-tab-dot" style="background:${ch.highlight_color || '#FFDF00'}; color:${ch.highlight_color || '#FFDF00'};"></span>
+        <span class="speaker-tab-name">${ch.name || key}</span>
+      `;
+
+      btn.addEventListener("click", () => {
+        state.activeSpeakerId = key;
+        speakerTabsBar.querySelectorAll(".speaker-tab-btn").forEach(b => {
+          const isActive = (b.dataset.speakerId === key);
+          b.classList.toggle("active", isActive);
+          b.setAttribute("aria-selected", isActive ? "true" : "false");
+        });
+        syncActiveSpeakerUI();
+        renderSubtitlePreview();
+      });
+
+      speakerTabsBar.appendChild(btn);
+    });
+  }
+
+  function syncActiveSpeakerUI() {
+    if (!state.isMultiSpeaker || !state.speakerChannels) return;
+    const ch = state.speakerChannels[state.activeSpeakerId] || Object.values(state.speakerChannels)[0];
+    if (!ch) return;
+
+    if (currentEditingSpeakerName) currentEditingSpeakerName.textContent = ch.name || ch.id;
+    if (currentEditingSpeakerDot) {
+      currentEditingSpeakerDot.style.background = ch.highlight_color || "#FFDF00";
+      currentEditingSpeakerDot.style.color = ch.highlight_color || "#FFDF00";
+    }
+    if (inputSpeakerDisplayName) inputSpeakerDisplayName.value = ch.name || ch.id;
+
+    if (ch.primary_color && colorTextBase) {
+      colorTextBase.value = ch.primary_color;
+      if (codeTextBase) codeTextBase.textContent = ch.primary_color;
+      state.textBaseColor = ch.primary_color;
+    }
+    if (ch.highlight_color && colorHighlightText) {
+      colorHighlightText.value = ch.highlight_color;
+      if (codeHighlightText) codeHighlightText.textContent = ch.highlight_color;
+      state.highlightColor = ch.highlight_color;
+    }
+    if (ch.outline_color && colorOutline) {
+      colorOutline.value = ch.outline_color;
+      if (codeOutline) codeOutline.textContent = ch.outline_color;
+      state.outlineColor = ch.outline_color;
+    }
+    if (ch.box_bg_color && colorBoxBg) {
+      colorBoxBg.value = ch.box_bg_color;
+      if (codeBoxBg) codeBoxBg.textContent = ch.box_bg_color;
+      state.boxBgColor = ch.box_bg_color;
+    }
+  }
+
+  if (btnToggleSpeakerChannels) {
+    btnToggleSpeakerChannels.addEventListener("click", () => {
+      if (state.isMultiSpeaker) {
+        state.isMultiSpeaker = false;
+        if (speakerChannelsSection) speakerChannelsSection.classList.add("hidden");
+        btnToggleSpeakerChannels.textContent = "Disabled";
+        btnToggleSpeakerChannels.classList.remove("active");
+      } else {
+        state.isMultiSpeaker = true;
+        if (speakerChannelsSection) speakerChannelsSection.classList.remove("hidden");
+        btnToggleSpeakerChannels.textContent = "Enabled";
+        btnToggleSpeakerChannels.classList.add("active");
+        renderSpeakerTabs();
+        syncActiveSpeakerUI();
+      }
+      renderSubtitlePreview();
+      if (editorState.dialogues && editorState.dialogues.length > 0) {
+        renderDrawerDialogueItems(editorState.dialogues);
+      }
+    });
+  }
+
+  if (inputSpeakerDisplayName) {
+    inputSpeakerDisplayName.addEventListener("input", (e) => {
+      if (state.isMultiSpeaker && state.speakerChannels && state.speakerChannels[state.activeSpeakerId]) {
+        const val = e.target.value.trim() || state.activeSpeakerId;
+        state.speakerChannels[state.activeSpeakerId].name = val;
+        if (currentEditingSpeakerName) currentEditingSpeakerName.textContent = val;
+        renderSpeakerTabs();
+        if (editorState.dialogues && editorState.dialogues.length > 0) {
+          renderDrawerDialogueItems(editorState.dialogues);
+        }
+      }
+    });
+  }
+
+  const themeChips = document.querySelectorAll(".theme-chip");
+  themeChips.forEach(chip => {
+    chip.addEventListener("click", () => {
+      const theme = chip.dataset.theme;
+      const keys = Object.keys(state.speakerChannels);
+      if (keys.length < 2) return;
+      const spk0 = keys[0];
+      const spk1 = keys[1];
+
+      if (theme === "yellow-cyan") {
+        state.speakerChannels[spk0].highlight_color = "#FFDF00";
+        state.speakerChannels[spk0].primary_color = "#FFFFFF";
+        state.speakerChannels[spk1].highlight_color = "#00E5FF";
+        state.speakerChannels[spk1].primary_color = "#FFFFFF";
+      } else if (theme === "lime-pink") {
+        state.speakerChannels[spk0].highlight_color = "#00FF66";
+        state.speakerChannels[spk0].primary_color = "#FFFFFF";
+        state.speakerChannels[spk1].highlight_color = "#FF0055";
+        state.speakerChannels[spk1].primary_color = "#FFFFFF";
+      } else if (theme === "amber-lavender") {
+        state.speakerChannels[spk0].highlight_color = "#FF9900";
+        state.speakerChannels[spk0].primary_color = "#FFFFFF";
+        state.speakerChannels[spk1].highlight_color = "#D8B4FE";
+        state.speakerChannels[spk1].primary_color = "#FFFFFF";
+      }
+
+      syncActiveSpeakerUI();
+      renderSpeakerTabs();
+      renderSubtitlePreview();
+      if (editorState.dialogues && editorState.dialogues.length > 0) {
+        renderDrawerDialogueItems(editorState.dialogues);
+      }
+    });
   });
 
   // Output Mode Selector (if present)
@@ -1586,6 +1890,7 @@ document.addEventListener("DOMContentLoaded", () => {
         highlight_style: state.highlightStyle,
         highlight_color: state.highlightColor,
         highlight_scale_pct: state.highlightScalePct,
+        highlight_animation: state.highlightAnimation || "discrete",
         box_type: state.boxType,
         box_bg_color: state.boxBgColor,
         box_opacity: state.boxOpacity,
@@ -1597,6 +1902,10 @@ document.addEventListener("DOMContentLoaded", () => {
         line_width_pct: state.lineWidthPct
       }
     };
+
+    if (state.isMultiSpeaker && state.speakerCount >= 2 && state.speakerChannels) {
+      payload.styling.speaker_channels = JSON.parse(JSON.stringify(state.speakerChannels));
+    }
 
     updateWorkflowStepper(burnVideo ? 'burning' : 'transcribing');
     if (btnGenerateAssOnly) btnGenerateAssOnly.classList.add('disabled');
@@ -1852,6 +2161,69 @@ document.addEventListener("DOMContentLoaded", () => {
         lineWidthPct: 80,
         maxChars: 26
       }
+    },
+    "factory:podcast_duo": {
+      name: "🎙️ Podcast Duo (Multi-Speaker)",
+      styling: {
+        posX: 50,
+        posY: 78,
+        fontFamily: "Inter",
+        fontSize: 22,
+        primaryColor: "#ffffff",
+        outlineColor: "#000000",
+        outlineWidth: 3.5,
+        bold: true,
+        italic: false,
+        highlightStyle: "color",
+        highlightColor: "#ffd700",
+        highlightScale: 115,
+        maxLines: 1,
+        lineWidthPct: 82,
+        maxChars: 28,
+        speaker_channels: {
+          "SPEAKER_00": {
+            id: "SPEAKER_00",
+            name: "Host",
+            primary_color: "#ffffff",
+            highlight_color: "#ffd700",
+            outline_color: "#000000",
+            box_bg_color: "#000000",
+            box_font_color: "#ffffff",
+            show_speaker_name: false
+          },
+          "SPEAKER_01": {
+            id: "SPEAKER_01",
+            name: "Guest",
+            primary_color: "#ffffff",
+            highlight_color: "#00e5ff",
+            outline_color: "#000000",
+            box_bg_color: "#000000",
+            box_font_color: "#ffffff",
+            show_speaker_name: false
+          }
+        }
+      }
+    },
+    "factory:laser_karaoke": {
+      name: "🎤 LaserKaraoke Wipe (Smooth Sweep)",
+      styling: {
+        posX: 50,
+        posY: 80,
+        fontFamily: "Montserrat",
+        fontSize: 24,
+        primaryColor: "#ffffff",
+        outlineColor: "#000000",
+        outlineWidth: 4,
+        bold: true,
+        italic: false,
+        highlightStyle: "color",
+        highlightColor: "#ffdf00",
+        highlightScale: 110,
+        highlightAnimation: "karaoke_wipe",
+        maxLines: 1,
+        lineWidthPct: 82,
+        maxChars: 28
+      }
     }
   };
 
@@ -1912,19 +2284,20 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function getCurrentStylingSnapshot() {
-    return {
+    const snapshot = {
       posX: state.posX,
       posY: state.posY,
       fontFamily: state.fontFamily,
       fontSize: state.fontSize,
-      primaryColor: state.primaryColor,
+      primaryColor: state.textBaseColor || state.primaryColor || "#FFFFFF",
       outlineColor: state.outlineColor,
       outlineWidth: state.outlineWidth,
       bold: state.bold,
       italic: state.italic,
       highlightStyle: state.highlightStyle,
       highlightColor: state.highlightColor,
-      highlightScale: state.highlightScale,
+      highlightScale: state.highlightScale || state.highlightScalePct,
+      highlightAnimation: state.highlightAnimation || "discrete",
       boxType: state.boxType,
       boxOpacity: state.boxOpacity,
       boxBgColor: state.boxBgColor,
@@ -1933,6 +2306,10 @@ document.addEventListener("DOMContentLoaded", () => {
       lineWidthPct: state.lineWidthPct,
       maxChars: state.maxChars
     };
+    if (state.isMultiSpeaker && state.speakerCount >= 2 && state.speakerChannels) {
+      snapshot.speaker_channels = JSON.parse(JSON.stringify(state.speakerChannels));
+    }
+    return snapshot;
   }
 
   function applyPresetStyling(styling) {
@@ -2014,6 +2391,16 @@ document.addEventListener("DOMContentLoaded", () => {
       state.highlightScale = Number(styling.highlightScale);
     }
 
+    // Highlight Animation Mode (Pioneer/Sony expired prior art)
+    if (styling.highlightAnimation || styling.highlight_animation) {
+      const anim = styling.highlightAnimation || styling.highlight_animation;
+      state.highlightAnimation = anim;
+      if (selectHighlightAnimation) selectHighlightAnimation.value = anim;
+    } else {
+      state.highlightAnimation = "discrete";
+      if (selectHighlightAnimation) selectHighlightAnimation.value = "discrete";
+    }
+
     // Box settings
     if (styling.boxType && selectBoxType) {
       selectBoxType.value = styling.boxType;
@@ -2057,6 +2444,23 @@ document.addEventListener("DOMContentLoaded", () => {
       sliderMaxChars.value = chars;
       if (labelMaxChars) labelMaxChars.textContent = chars;
       state.maxChars = Number(chars);
+    }
+
+    // Multi-Speaker Color Channels
+    if (styling.speaker_channels && Object.keys(styling.speaker_channels).length >= 2) {
+      state.speakerChannels = JSON.parse(JSON.stringify(styling.speaker_channels));
+      state.detectedSpeakers = Object.keys(styling.speaker_channels);
+      state.speakerCount = Object.keys(styling.speaker_channels).length;
+      state.isMultiSpeaker = true;
+      if (!state.speakerChannels[state.activeSpeakerId]) {
+        state.activeSpeakerId = state.detectedSpeakers[0];
+      }
+      updateSpeakerControlsVisibility(state.speakerCount, state.detectedSpeakers);
+    } else if (styling.speaker_channels === undefined && !state.hasExistingAss) {
+      // Single speaker preset: hide multi-speaker controls
+      state.isMultiSpeaker = false;
+      state.speakerCount = 1;
+      updateSpeakerControlsVisibility(1);
     }
 
     // Refresh live preview canvas
@@ -2429,13 +2833,70 @@ document.addEventListener("DOMContentLoaded", () => {
       row.className = "dialogue-item-row";
       row.dataset.lineIndex = item.line_index;
 
+      // Speaker badge for multi-speaker mode
+      let speakerBadgeHtml = "";
+      if (state.isMultiSpeaker && state.speakerCount >= 2 && state.speakerChannels) {
+        const spkKeys = Object.keys(state.speakerChannels);
+        const curSpkId = item.speaker || spkKeys[0];
+        const spkChan = state.speakerChannels[curSpkId] || state.speakerChannels[spkKeys[0]];
+        const spkColor = (spkChan && spkChan.highlight_color) || "#FFDF00";
+        const spkName = (spkChan && spkChan.name) || curSpkId;
+        speakerBadgeHtml = `
+          <button type="button" class="drawer-speaker-badge modal-speaker-badge" title="Click to cycle speaker channel for Line ${index + 1}">
+            <span class="drawer-speaker-dot" style="background:${spkColor};"></span>
+            <span>${spkName}</span>
+          </button>
+        `;
+      }
+
       row.innerHTML = `
         <div class="dialogue-meta-row">
           <span class="dialogue-time-badge">⏱ ${item.start} → ${item.end}</span>
-          <span class="dialogue-line-num">Line ${index + 1} (${item.style})</span>
+          <span class="dialogue-line-num">Line ${index + 1} (${item.style || 'Default'})</span>
+          ${speakerBadgeHtml}
         </div>
         <input type="text" class="dialogue-input" value="${item.clean_text.replace(/"/g, '&quot;')}" placeholder="Enter corrected spoken text...">
       `;
+
+      const modalBadgeBtn = row.querySelector(".modal-speaker-badge");
+      if (modalBadgeBtn) {
+        modalBadgeBtn.addEventListener("click", () => {
+          const spkKeys = Object.keys(state.speakerChannels);
+          if (spkKeys.length < 2) return;
+          const currentSpk = item.speaker || spkKeys[0];
+          const curIdx = spkKeys.indexOf(currentSpk);
+          const nextSpkId = spkKeys[(curIdx + 1) % spkKeys.length];
+          const nextChan = state.speakerChannels[nextSpkId];
+
+          item.speaker = nextSpkId;
+          item.style = `Speaker_${nextSpkId}`;
+
+          const dot = modalBadgeBtn.querySelector(".drawer-speaker-dot");
+          if (dot) dot.style.background = nextChan.highlight_color || "#FFDF00";
+          const label = modalBadgeBtn.querySelector("span:last-child");
+          if (label) label.textContent = nextChan.name || nextSpkId;
+
+          const numSpan = row.querySelector(".dialogue-line-num");
+          if (numSpan) numSpan.textContent = `Line ${index + 1} (${item.style})`;
+
+          editorState.isDirty = true;
+          updateEditorStatus(`Reassigned Line ${index + 1} to ${nextChan.name || nextSpkId}`, "warning");
+
+          const allLines = editorState.currentContent.split("\n");
+          const targetLine = allLines[item.line_index];
+          if (targetLine && targetLine.startsWith("Dialogue:")) {
+            const parts = targetLine.split(",", 9);
+            if (parts.length >= 9) {
+              const rawTextAfter = targetLine.slice(parts.join(",").length + 1);
+              parts[3] = `Speaker_${nextSpkId}`;
+              parts[4] = nextChan.name || nextSpkId;
+              allLines[item.line_index] = parts.join(",") + "," + rawTextAfter;
+              editorState.currentContent = allLines.join("\n");
+              if (rawAssTextarea) rawAssTextarea.value = editorState.currentContent;
+            }
+          }
+        });
+      }
 
       const input = row.querySelector(".dialogue-input");
       input.addEventListener("input", (e) => {
@@ -2506,6 +2967,17 @@ document.addEventListener("DOMContentLoaded", () => {
       editorState.dialogues = data.dialogues || [];
       editorState.isDirty = false;
       editorState.filePath = data.file_path;
+
+      // Update speaker channels based on detected speakers
+      const spkCount = data.speaker_count || (data.detected_speakers ? data.detected_speakers.length : 1);
+      const isMulti = Boolean(data.is_multi_speaker || spkCount > 1);
+      if (isMulti) {
+        state.isMultiSpeaker = true;
+        updateSpeakerControlsVisibility(spkCount, data.detected_speakers);
+      } else {
+        state.isMultiSpeaker = false;
+        updateSpeakerControlsVisibility(1);
+      }
 
       if (editorFilenameBadge) editorFilenameBadge.textContent = data.filename || "subtitles.ass";
       if (rawAssTextarea) rawAssTextarea.value = data.content;
@@ -2649,13 +3121,74 @@ document.addEventListener("DOMContentLoaded", () => {
         row.style.display = "none";
       }
 
+      // Speaker badge for multi-speaker mode
+      let speakerBadgeHtml = "";
+      if (state.isMultiSpeaker && state.speakerCount >= 2 && state.speakerChannels) {
+        const spkKeys = Object.keys(state.speakerChannels);
+        const curSpkId = item.speaker || spkKeys[0];
+        const spkChan = state.speakerChannels[curSpkId] || state.speakerChannels[spkKeys[0]];
+        const spkColor = (spkChan && spkChan.highlight_color) || "#FFDF00";
+        const spkName = (spkChan && spkChan.name) || curSpkId;
+        speakerBadgeHtml = `
+          <button type="button" class="drawer-speaker-badge" title="Click to cycle speaker channel for Line ${index + 1}">
+            <span class="drawer-speaker-dot" style="background:${spkColor};"></span>
+            <span>${spkName}</span>
+          </button>
+        `;
+      }
+
       row.innerHTML = `
         <div class="drawer-line-meta">
           <span class="drawer-time-badge">⏱ ${item.start} → ${item.end}</span>
           <span class="drawer-line-number">Line ${index + 1} (${item.style || 'Default'})</span>
+          ${speakerBadgeHtml}
         </div>
         <input type="text" class="drawer-line-input" value="${item.clean_text.replace(/"/g, '&quot;')}" placeholder="Edit spoken phrase...">
       `;
+
+      // Cycle speaker on badge click
+      const badgeBtn = row.querySelector(".drawer-speaker-badge");
+      if (badgeBtn) {
+        badgeBtn.addEventListener("click", () => {
+          const spkKeys = Object.keys(state.speakerChannels);
+          if (spkKeys.length < 2) return;
+          const currentSpk = item.speaker || spkKeys[0];
+          const curIdx = spkKeys.indexOf(currentSpk);
+          const nextSpkId = spkKeys[(curIdx + 1) % spkKeys.length];
+          const nextChan = state.speakerChannels[nextSpkId];
+
+          item.speaker = nextSpkId;
+          item.style = `Speaker_${nextSpkId}`;
+
+          const dot = badgeBtn.querySelector(".drawer-speaker-dot");
+          if (dot) dot.style.background = nextChan.highlight_color || "#FFDF00";
+          const label = badgeBtn.querySelector("span:last-child");
+          if (label) label.textContent = nextChan.name || nextSpkId;
+
+          const numSpan = row.querySelector(".drawer-line-number");
+          if (numSpan) numSpan.textContent = `Line ${index + 1} (${item.style})`;
+
+          editorState.isDirty = true;
+          updateDrawerStatus(`Reassigned Line ${index + 1} to ${nextChan.name || nextSpkId}`, "warning");
+          if (btnDrawerRevert) btnDrawerRevert.disabled = false;
+
+          // Sync raw ASS script content
+          const allLines = editorState.currentContent.split("\n");
+          const targetLine = allLines[item.line_index];
+          if (targetLine && targetLine.startsWith("Dialogue:")) {
+            const parts = targetLine.split(",", 9);
+            if (parts.length >= 9) {
+              const rawTextAfter = targetLine.slice(parts.join(",").length + 1);
+              parts[3] = `Speaker_${nextSpkId}`;
+              parts[4] = nextChan.name || nextSpkId;
+              allLines[item.line_index] = parts.join(",") + "," + rawTextAfter;
+              editorState.currentContent = allLines.join("\n");
+              if (rawAssTextarea) rawAssTextarea.value = editorState.currentContent;
+              if (codeBodyPreview) codeBodyPreview.textContent = editorState.currentContent.split("\n").slice(0, 60).join("\n");
+            }
+          }
+        });
+      }
 
       const input = row.querySelector(".drawer-line-input");
       input.addEventListener("input", (e) => {
@@ -2727,6 +3260,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
       state.existingAssPath = data.file_path;
       state.hasExistingAss = true;
+
+      // Update speaker channels based on detected speakers
+      const spkCount = data.speaker_count || (data.detected_speakers ? data.detected_speakers.length : 1);
+      const isMulti = Boolean(data.is_multi_speaker || spkCount > 1);
+      if (isMulti) {
+        state.isMultiSpeaker = true;
+        updateSpeakerControlsVisibility(spkCount, data.detected_speakers);
+      } else {
+        state.isMultiSpeaker = false;
+        updateSpeakerControlsVisibility(1);
+      }
 
       if (valActiveAss) valActiveAss.textContent = data.filename || data.file_path;
       if (valActiveVideo && data.has_burned_video) valActiveVideo.textContent = 'Burned video ready';

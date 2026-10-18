@@ -66,10 +66,11 @@ def chunk_words_into_blocks(
     """Partition a continuous sequence of timed words into readable subtitle blocks.
 
     Breaks streams based on natural speech pauses, punctuation boundaries,
-    line character limits, and maximum lines per visual subtitle block.
+    speaker turns, line character limits, and maximum lines per visual subtitle block.
 
     Args:
-        words: List of aligned word dictionaries containing 'word', 'start', and 'end'.
+        words: List of aligned word dictionaries containing 'word', 'start', 'end',
+            and optional 'speaker'.
         max_lines: Maximum simultaneous visible lines allowed per block.
         max_chars_per_line: Upper bound for characters across a single line.
         max_gap_seconds: Inter-word silence threshold triggering a block break.
@@ -85,6 +86,7 @@ def chunk_words_into_blocks(
     current_line_words = []
     current_line_len = 0
     last_end_time = None
+    current_speaker = None
 
     for w in words:
         word_text = w.get("word", "").strip()
@@ -93,25 +95,35 @@ def chunk_words_into_blocks(
 
         start_time = w.get("start", 0.0)
         end_time = w.get("end", start_time + 0.1)
+        word_speaker = w.get("speaker")
 
-        # Check for natural break: long pause or sentence ending punctuation
+        # Check for natural break: long pause or speaker turn
         pause_break = last_end_time is not None and (start_time - last_end_time) > max_gap_seconds
+        speaker_turn = (
+            current_speaker is not None
+            and word_speaker is not None
+            and word_speaker != current_speaker
+        )
 
         # Check if line would exceed char limit
         would_exceed_line = (current_line_len + len(word_text) + (1 if current_line_len > 0 else 0)) > max_chars_per_line
 
-        if pause_break or (would_exceed_line and current_line_words):
-            current_block_lines.append(current_line_words)
-            current_line_words = []
-            current_line_len = 0
+        if pause_break or speaker_turn or (would_exceed_line and current_line_words):
+            if current_line_words:
+                current_block_lines.append(current_line_words)
+                current_line_words = []
+                current_line_len = 0
 
-            if len(current_block_lines) >= max_lines or pause_break:
-                blocks.append(current_block_lines)
-                current_block_lines = []
+            if len(current_block_lines) >= max_lines or pause_break or speaker_turn:
+                if current_block_lines:
+                    blocks.append(current_block_lines)
+                    current_block_lines = []
 
         current_line_words.append(w)
         current_line_len += len(word_text) + (1 if current_line_len > 0 else 0)
         last_end_time = end_time
+        if word_speaker is not None:
+            current_speaker = word_speaker
 
         # If word ends with strong sentence terminator, break block naturally
         if word_text.endswith((".", "!", "?")) and current_line_len >= (max_chars_per_line * 0.6):
@@ -120,6 +132,7 @@ def chunk_words_into_blocks(
             current_block_lines = []
             current_line_words = []
             current_line_len = 0
+            current_speaker = None
 
     if current_line_words:
         current_block_lines.append(current_line_words)
@@ -179,6 +192,9 @@ def generate_ass_content(
     scale_tag = f"\\fscx{highlight_scale_pct}\\fscy{highlight_scale_pct}" if highlight_scale_pct != 100 else ""
     scale_reset = "\\fscx100\\fscy100" if highlight_scale_pct != 100 else ""
 
+    # Highlight animation style: 'discrete' (default), 'karaoke_wipe' (\\kf), or 'anticipation_glow'
+    highlight_animation = str(config.get("highlight_animation", "discrete")).lower()
+
     # Positioning params
     pos_x_pct = float(config.get("pos_x_pct", 50.0))
     pos_y_pct = float(config.get("pos_y_pct", 78.0))
@@ -200,6 +216,18 @@ def generate_ass_content(
     user_max_chars = int(config.get("max_chars_per_line", 28))
     max_chars_per_line = min(user_max_chars, auto_max_chars)
 
+    # Parse and normalize speaker channels map
+    speaker_channels_raw = config.get("speaker_channels") or {}
+    speaker_channels: dict[str, dict[str, Any]] = {}
+    if isinstance(speaker_channels_raw, dict):
+        for k, v in speaker_channels_raw.items():
+            if hasattr(v, "model_dump"):
+                speaker_channels[k] = v.model_dump()
+            elif isinstance(v, dict):
+                speaker_channels[k] = dict(v)
+            else:
+                speaker_channels[k] = {"id": k, "name": str(v)}
+
     # ASS Color strings
     ass_primary = hex_to_ass_color(primary_color_hex, 1.0)
     ass_outline = hex_to_ass_color(outline_color_hex, 1.0)
@@ -210,6 +238,24 @@ def generate_ass_content(
     # Determine border style
     border_style = 3 if (highlight_style == "box" and box_type == "block") else 1
     back_color = ass_box_bg if border_style == 3 else "&H80000000&"
+
+    # Register styles in [V4+ Styles]
+    style_lines = [
+        f"Style: Default,{font_name},{font_size},{ass_primary},&H000000FF&,{ass_outline},{back_color},{bold},{italic},0,0,100,100,0,0,{border_style},{outline_width},0,2,{margin_lr},{margin_lr},{margin_v},1",
+        f"Style: HighlightBox,{font_name},{font_size},{ass_box_font},&H000000FF&,{ass_box_bg},{ass_box_bg},{bold},{italic},0,0,100,100,0,0,3,6,0,2,{margin_lr},{margin_lr},{margin_v},1",
+    ]
+    registered_styles = {"Default", "HighlightBox"}
+
+    for spk_id, spk_cfg in speaker_channels.items():
+        spk_pri = hex_to_ass_color(spk_cfg.get("primary_color", primary_color_hex), 1.0)
+        spk_out = hex_to_ass_color(spk_cfg.get("outline_color", outline_color_hex), 1.0)
+        spk_style_name = f"Speaker_{spk_id}"
+        style_lines.append(
+            f"Style: {spk_style_name},{font_name},{font_size},{spk_pri},&H000000FF&,{spk_out},{back_color},{bold},{italic},0,0,100,100,0,0,{border_style},{outline_width},0,2,{margin_lr},{margin_lr},{margin_v},1"
+        )
+        registered_styles.add(spk_style_name)
+
+    v4_styles_block = "\n".join(style_lines)
 
     header = f"""[Script Info]
 ; Script generated by Voice Highlighter
@@ -223,8 +269,7 @@ PlayResY: {play_res_y}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font_name},{font_size},{ass_primary},&H000000FF&,{ass_outline},{back_color},{bold},{italic},0,0,100,100,0,0,{border_style},{outline_width},0,2,{margin_lr},{margin_lr},{margin_v},1
-Style: HighlightBox,{font_name},{font_size},{ass_box_font},&H000000FF&,{ass_box_bg},{ass_box_bg},{bold},{italic},0,0,100,100,0,0,3,6,0,2,{margin_lr},{margin_lr},{margin_v},1
+{v4_styles_block}
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -233,6 +278,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     all_words = []
     segments = whisper_result.get("segments", [])
     for seg in segments:
+        seg_speaker = seg.get("speaker")
         words = seg.get("words", [])
         if words:
             for w in words:
@@ -245,6 +291,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                             "word": w_text,
                             "start": s,
                             "end": max(e, s + 0.08),
+                            "speaker": w.get("speaker") or seg_speaker or "SPEAKER_00",
                         })
         else:
             w_text = seg.get("text", "").strip()
@@ -255,6 +302,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     "word": w_text,
                     "start": s,
                     "end": max(e, s + 0.1),
+                    "speaker": seg_speaker or "SPEAKER_00",
                 })
 
     if not all_words:
@@ -268,10 +316,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if not block_words:
             continue
         for w_idx, w in enumerate(block_words):
+            next_w = block_words[w_idx + 1] if (w_idx + 1 < len(block_words)) else None
             slices.append({
                 "block": block,
                 "block_words": block_words,
                 "active_word": w,
+                "next_word": next_w,
                 "w_idx": w_idx,
                 "is_last_in_block": (w_idx == len(block_words) - 1),
                 "is_first_in_block": (w_idx == 0),
@@ -287,6 +337,28 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     for k in range(len(slices)):
         curr = slices[k]
         raw_start = float(curr["active_word"]["start"])
+        curr_speaker = curr["active_word"].get("speaker", "SPEAKER_00")
+
+        # Resolve speaker channel configuration
+        channel = speaker_channels.get(curr_speaker)
+        if channel:
+            slice_primary = hex_to_ass_color(channel.get("primary_color", primary_color_hex), 1.0)
+            slice_outline = hex_to_ass_color(channel.get("outline_color", outline_color_hex), 1.0)
+            slice_highlight = hex_to_ass_color(channel.get("highlight_color", highlight_color_hex), 1.0)
+            slice_box_bg = hex_to_ass_color(channel.get("box_bg_color", box_bg_color_hex), box_opacity)
+            slice_box_font = hex_to_ass_color(channel.get("box_font_color", box_font_color_hex), 1.0)
+            spk_display_name = channel.get("name", curr_speaker)
+            show_name_prefix = channel.get("show_speaker_name", False)
+            style_name = f"Speaker_{curr_speaker}" if f"Speaker_{curr_speaker}" in registered_styles else "Default"
+        else:
+            slice_primary = ass_primary
+            slice_outline = ass_outline
+            slice_highlight = ass_highlight
+            slice_box_bg = ass_box_bg
+            slice_box_font = ass_box_font
+            spk_display_name = curr_speaker if curr_speaker != "SPEAKER_00" else ""
+            show_name_prefix = False
+            style_name = "Default"
 
         if k == 0:
             start_time = raw_start
@@ -323,26 +395,39 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             for w in line:
                 raw_word = w.get("word", "").strip()
                 if w is curr["active_word"]:
-                    if highlight_style == "color":
+                    if highlight_animation == "karaoke_wipe":
+                        # Pioneer LaserKaraoke progressive sweep (US 5,742,569)
+                        duration_cs = max(1, int(round((end_time - start_time) * 100)))
                         line_parts.append(
-                            f"{{{scale_tag}\\c{ass_highlight}\\3c{ass_outline}}}{raw_word}{{{scale_reset}\\c{ass_primary}\\3c{ass_outline}}}"
+                            f"{{{scale_tag}\\kf{duration_cs}\\c{slice_highlight}\\3c{slice_outline}}}{raw_word}{{{scale_reset}\\c{slice_primary}\\3c{slice_outline}}}"
+                        )
+                    elif highlight_style == "color":
+                        line_parts.append(
+                            f"{{{scale_tag}\\c{slice_highlight}\\3c{slice_outline}}}{raw_word}{{{scale_reset}\\c{slice_primary}\\3c{slice_outline}}}"
                         )
                     elif highlight_style == "box":
                         if box_type == "word":
                             line_parts.append(
-                                f"{{{scale_tag}\\bord8\\3c{ass_box_bg}\\c{ass_box_font}}}{raw_word}{{{scale_reset}\\rDefault}}"
+                                f"{{{scale_tag}\\bord8\\3c{slice_box_bg}\\c{slice_box_font}}}{raw_word}{{{scale_reset}\\r{style_name}}}"
                             )
                         else:
                             line_parts.append(
-                                f"{{{scale_tag}\\c{ass_highlight}}}{raw_word}{{{scale_reset}\\c{ass_primary}}}"
+                                f"{{{scale_tag}\\c{slice_highlight}}}{raw_word}{{{scale_reset}\\c{slice_primary}}}"
                             )
+                elif highlight_animation == "anticipation_glow" and curr.get("next_word") and w is curr["next_word"]:
+                    # Sony pre-vocal cadence cue (US 5,684,542)
+                    line_parts.append(
+                        f"{{\\3c{slice_highlight}\\bord4}}{raw_word}{{\\3c{slice_outline}\\bord{outline_width}}}"
+                    )
                 else:
                     line_parts.append(raw_word)
             rendered_lines.append(" ".join(line_parts))
 
         dialogue_text = "\\N".join(rendered_lines)
+        if show_name_prefix and spk_display_name:
+            dialogue_text = f"[{spk_display_name}]: {dialogue_text}"
         pos_tag = f"{{\\an2\\pos({pos_x},{pos_y})}}"
 
-        event_lines.append(f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,{pos_tag}{dialogue_text}")
+        event_lines.append(f"Dialogue: 0,{start_ts},{end_ts},{style_name},{spk_display_name},0,0,0,,{pos_tag}{dialogue_text}")
 
     return header + "\n".join(event_lines) + "\n"

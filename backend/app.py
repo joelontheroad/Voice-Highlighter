@@ -924,24 +924,55 @@ def preview_ass_code(req: PreviewAssRequest, auth: str = Depends(verify_auth)):
     Returns:
         Dictionary containing generated ASS subtitle script content.
     """
-    words_list = []
-    current_time = 1.0
-    for w in req.sample_text.split():
-        words_list.append({
-            "word": w,
-            "start": round(current_time, 2),
-            "end": round(current_time + 0.35, 2)
-        })
-        current_time += 0.40
+    speaker_channels = req.styling.get("speaker_channels") or {}
+    # If multiple speaker channels are configured, simulate alternating dialogue
+    if isinstance(speaker_channels, dict) and len(speaker_channels) >= 2:
+        spk_keys = list(speaker_channels.keys())
+        spk0 = spk_keys[0]
+        spk1 = spk_keys[1]
 
-    mock_whisper = {
-        "segments": [{
-            "text": req.sample_text,
-            "start": 1.0,
-            "end": current_time,
-            "words": words_list
-        }]
-    }
+        phrase0 = req.sample_text or "Welcome to our live video subtitle preview"
+        phrase1 = "Testing multiple speaker color channels and high-contrast styling"
+
+        words0 = []
+        t0 = 1.0
+        for w in phrase0.split():
+            words0.append({"word": w, "start": round(t0, 2), "end": round(t0 + 0.35, 2), "speaker": spk0})
+            t0 += 0.40
+
+        words1 = []
+        t1 = round(t0 + 0.3, 2)
+        for w in phrase1.split():
+            words1.append({"word": w, "start": round(t1, 2), "end": round(t1 + 0.35, 2), "speaker": spk1})
+            t1 += 0.40
+
+        mock_whisper = {
+            "segments": [
+                {"text": phrase0, "start": 1.0, "end": t0, "words": words0, "speaker": spk0},
+                {"text": phrase1, "start": t0 + 0.3, "end": t1, "words": words1, "speaker": spk1},
+            ]
+        }
+    else:
+        words_list = []
+        current_time = 1.0
+        for w in req.sample_text.split():
+            words_list.append({
+                "word": w,
+                "start": round(current_time, 2),
+                "end": round(current_time + 0.35, 2),
+                "speaker": "SPEAKER_00",
+            })
+            current_time += 0.40
+
+        mock_whisper = {
+            "segments": [{
+                "text": req.sample_text,
+                "start": 1.0,
+                "end": current_time,
+                "words": words_list,
+                "speaker": "SPEAKER_00",
+            }]
+        }
 
     ass_text = generate_ass_content(
         whisper_result=mock_whisper,
@@ -1062,24 +1093,32 @@ def get_ass_content(
     # Parse dialogue lines for the friendly editor
     dialogues = []
     lines = content.splitlines()
+    unique_speakers_found: list[str] = []
     for idx, line in enumerate(lines):
         if line.startswith("Dialogue:"):
             # Format: Dialogue: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             parts = line.split(",", 9)
             if len(parts) >= 10:
                 raw_text = parts[9]
+                speaker_name = parts[4].strip() if len(parts) > 4 else ""
                 clean_text = re.sub(r'\{[^}]*\}', '', raw_text)
                 clean_text = clean_text.replace('\\N', ' ').replace('\\n', ' ').replace('\\h', ' ')
                 clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+                if speaker_name and speaker_name not in unique_speakers_found:
+                    unique_speakers_found.append(speaker_name)
                 dialogues.append({
                     "line_index": idx,
                     "layer": parts[0].replace("Dialogue:", "").strip(),
                     "start": parts[1].strip(),
                     "end": parts[2].strip(),
                     "style": parts[3].strip(),
+                    "speaker": speaker_name or "Speaker 1",
                     "raw_text": raw_text,
                     "clean_text": clean_text
                 })
+
+    if not unique_speakers_found:
+        unique_speakers_found = ["Speaker 1"]
 
     t = _get_or_load_task(task_id) if task_id else None
 
@@ -1090,6 +1129,9 @@ def get_ass_content(
         "filename": display_name or os.path.basename(file_path),
         "content": content,
         "dialogues": dialogues,
+        "detected_speakers": unique_speakers_found,
+        "speaker_count": len(unique_speakers_found),
+        "is_multi_speaker": len(unique_speakers_found) > 1,
         "has_burned_video": bool(t.get("video_file") if t else False)
     }
 

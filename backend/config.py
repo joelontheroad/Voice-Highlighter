@@ -18,6 +18,23 @@ from pydantic import BaseModel, Field, ValidationError
 APP_NAME = "voice-highlighter"
 
 
+class SpeakerChannel(BaseModel):
+    """Configuration for an individual speaker color channel.
+
+    Enables multi-speaker dialogue subtitle rendering with custom base text,
+    highlight, outline, and bounding box colors per speaker.
+    """
+
+    id: str = Field(..., description="Unique speaker identifier (e.g. 'SPEAKER_00' or 'Speaker 1')")
+    name: str = Field(default="Speaker", description="Human-readable speaker display name")
+    primary_color: str = Field(default="#FFFFFF", description="Base dialogue text color (Hex)")
+    highlight_color: str = Field(default="#FFDF00", description="Active spoken word highlight color (Hex)")
+    outline_color: str = Field(default="#000000", description="Text outline border color (Hex)")
+    box_bg_color: str = Field(default="#000000", description="Background pill/box color (Hex)")
+    box_font_color: str = Field(default="#FFFFFF", description="Text color inside box badge (Hex)")
+    show_speaker_name: bool = Field(default=False, description="Whether to prefix dialogue with speaker name")
+
+
 class StylePreset(BaseModel):
     """Schema-validated style preset definition.
 
@@ -46,6 +63,14 @@ class StylePreset(BaseModel):
     line_width_pct: float = Field(default=82.0, ge=20.0, le=100.0, description="Maximum line bounding width percentage")
     max_lines: int = Field(default=1, ge=1, le=4, description="Maximum simultaneous visible lines per subtitle block")
     max_chars_per_line: int = Field(default=28, ge=8, le=100, description="Maximum characters allowed per line")
+    speaker_channels: dict[str, SpeakerChannel] = Field(
+        default_factory=dict,
+        description="Dictionary of speaker color channels keyed by speaker identifier",
+    )
+    highlight_animation: str = Field(
+        default="discrete",
+        description="Active highlight animation: 'discrete' (instant pop), 'karaoke_wipe' (smooth \\kf fill), or 'anticipation_glow' (pre-vocal cue)",
+    )
 
 
 class AppConfig(BaseModel):
@@ -332,3 +357,40 @@ def reset_all_configuration() -> None:
         max_lines=1,
     )
     save_preset(tiktok_preset)
+
+    podcast_duo_preset = StylePreset(
+        name="podcast-duo",
+        description="Harmonious two-speaker dialogue with Yellow and Electric Cyan highlights",
+        font_name="Montserrat",
+        font_size=68,
+        bold=True,
+        highlight_color="#FFDF00",
+        speaker_channels={
+            "SPEAKER_00": SpeakerChannel(
+                id="SPEAKER_00",
+                name="Speaker 1",
+                primary_color="#FFFFFF",
+                highlight_color="#FFDF00",
+                outline_color="#000000",
+            ),
+            "SPEAKER_01": SpeakerChannel(
+                id="SPEAKER_01",
+                name="Speaker 2",
+                primary_color="#E0F7FA",
+                highlight_color="#00E5FF",
+                outline_color="#002B36",
+            ),
+        },
+    )
+    save_preset(podcast_duo_preset)
+
+    laser_karaoke_preset = StylePreset(
+        name="laser-karaoke",
+        description="Smooth continuous progressive word sweep using \\kf tags (Pioneer US 5,742,569)",
+        font_name="Montserrat",
+        font_size=68,
+        bold=True,
+        highlight_color="#FFDF00",
+        highlight_animation="karaoke_wipe",
+    )
+    save_preset(laser_karaoke_preset)

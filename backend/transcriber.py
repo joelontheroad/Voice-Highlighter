@@ -42,11 +42,14 @@ def run_whisperx_pipeline(
     model_name: str = "large-v3",
     batch_size: int = 16,
     progress_callback: Callable[[str, int], None] | None = None,
+    enable_diarization: bool = False,
+    hf_token: str | None = None,
 ) -> dict[str, Any]:
     """Execute WhisperX speech recognition and forced word-level alignment.
 
     Loads the audio track, runs batched Whisper inference for initial transcription,
     and executes Wav2Vec2 alignment to generate accurate word start and end timestamps.
+    Optionally performs speaker diarization if requested.
 
     Args:
         audio_wav_path: Absolute or relative path to 16kHz mono WAV audio file.
@@ -54,6 +57,8 @@ def run_whisperx_pipeline(
         batch_size: Parallel batch size for acoustic model inference.
         progress_callback: Optional callable accepting a status message string and
             percentage integer (0-100).
+        enable_diarization: Whether to run speaker diarization on audio.
+        hf_token: Optional Hugging Face token for gated pyannote diarization models.
 
     Returns:
         Dictionary containing aligned subtitle segments, detected language, and
@@ -127,5 +132,24 @@ def run_whisperx_pipeline(
 
     if progress_callback:
         progress_callback("Word alignment complete. Compiling subtitles...", 90)
+
+    # 5. Optional Speaker Diarization
+    if enable_diarization:
+        import os
+
+        token = hf_token or os.environ.get("HF_TOKEN")
+        if progress_callback:
+            progress_callback("Running speaker diarization...", 92)
+        try:
+            print("[WhisperX] Attempting speaker diarization...")
+            diarize_pipeline = whisperx.DiarizationPipeline(
+                use_auth_token=token,
+                device=device,
+            )
+            diarize_segments = diarize_pipeline(audio)
+            aligned_result = whisperx.assign_word_speakers(diarize_segments, aligned_result)
+            print("[WhisperX] Speaker diarization completed successfully.")
+        except Exception as diarize_err:
+            print(f"[WhisperX] Diarization skipped or failed ({diarize_err}). Proceeding with aligned text.")
 
     return aligned_result
