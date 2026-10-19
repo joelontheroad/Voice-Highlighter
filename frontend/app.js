@@ -80,8 +80,38 @@ document.addEventListener("DOMContentLoaded", () => {
         box_font_color: "#FFFFFF",
         show_speaker_name: false
       }
-    }
+    },
+    stylingModified: false
   };
+
+  function getCurrentStylingPayload() {
+    const payload = {
+      font_name: state.fontFamily,
+      font_size: state.fontSize,
+      bold: state.bold,
+      italic: state.italic,
+      primary_color: state.textBaseColor,
+      outline_color: state.outlineColor,
+      outline_width: state.outlineWidth,
+      highlight_style: state.highlightStyle,
+      highlight_color: state.highlightColor,
+      highlight_scale_pct: state.highlightScalePct,
+      highlight_animation: state.highlightAnimation || "discrete",
+      box_type: state.boxType,
+      box_bg_color: state.boxBgColor,
+      box_opacity: state.boxOpacity,
+      box_font_color: state.boxFontColor,
+      pos_x_pct: state.posX,
+      pos_y_pct: state.posY,
+      max_lines: state.maxLines,
+      max_chars_per_line: state.maxChars,
+      line_width_pct: state.lineWidthPct
+    };
+    if (state.isMultiSpeaker && state.speakerCount >= 2 && state.speakerChannels) {
+      payload.speaker_channels = JSON.parse(JSON.stringify(state.speakerChannels));
+    }
+    return payload;
+  }
 
   // DOM Elements
   const videoPathInput = document.getElementById("videoPathInput");
@@ -998,12 +1028,14 @@ document.addEventListener("DOMContentLoaded", () => {
   // ----------------------------------------------------
   selectFontFamily.addEventListener("change", (e) => {
     state.fontFamily = e.target.value;
+    state.stylingModified = true;
     renderSubtitlePreview();
   });
 
   sliderFontSize.addEventListener("input", (e) => {
     state.fontSize = parseInt(e.target.value);
     labelFontSize.textContent = `${state.fontSize} pt`;
+    state.stylingModified = true;
     renderSubtitlePreview();
   });
 
@@ -1013,6 +1045,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (state.isMultiSpeaker && state.speakerChannels && state.speakerChannels[state.activeSpeakerId]) {
       state.speakerChannels[state.activeSpeakerId].primary_color = state.textBaseColor;
     }
+    state.stylingModified = true;
     renderSubtitlePreview();
   });
 
@@ -1022,22 +1055,26 @@ document.addEventListener("DOMContentLoaded", () => {
     if (state.isMultiSpeaker && state.speakerChannels && state.speakerChannels[state.activeSpeakerId]) {
       state.speakerChannels[state.activeSpeakerId].outline_color = state.outlineColor;
     }
+    state.stylingModified = true;
     renderSubtitlePreview();
   });
 
   sliderOutlineWidth.addEventListener("input", (e) => {
     state.outlineWidth = parseFloat(e.target.value);
     labelOutlineWidth.textContent = `${state.outlineWidth} px`;
+    state.stylingModified = true;
     renderSubtitlePreview();
   });
 
   checkBold.addEventListener("change", (e) => {
     state.bold = e.target.checked;
+    state.stylingModified = true;
     renderSubtitlePreview();
   });
 
   checkItalic.addEventListener("change", (e) => {
     state.italic = e.target.checked;
+    state.stylingModified = true;
     renderSubtitlePreview();
   });
 
@@ -1048,6 +1085,7 @@ document.addEventListener("DOMContentLoaded", () => {
     btnStyleBox.classList.remove("active");
     paneHighlightColor.classList.remove("hidden");
     paneHighlightBox.classList.add("hidden");
+    state.stylingModified = true;
     renderSubtitlePreview();
   });
 
@@ -1057,6 +1095,7 @@ document.addEventListener("DOMContentLoaded", () => {
     btnStyleColor.classList.remove("active");
     paneHighlightBox.classList.remove("hidden");
     paneHighlightColor.classList.add("hidden");
+    state.stylingModified = true;
     renderSubtitlePreview();
   });
 
@@ -1075,6 +1114,7 @@ document.addEventListener("DOMContentLoaded", () => {
         activeDot.style.color = state.highlightColor;
       }
     }
+    state.stylingModified = true;
     renderSubtitlePreview();
   });
 
@@ -1096,18 +1136,21 @@ document.addEventListener("DOMContentLoaded", () => {
           activeDot.style.color = c;
         }
       }
+      state.stylingModified = true;
       renderSubtitlePreview();
     });
   });
 
   selectBoxType.addEventListener("change", (e) => {
     state.boxType = e.target.value;
+    state.stylingModified = true;
     renderSubtitlePreview();
   });
 
   sliderBoxOpacity.addEventListener("input", (e) => {
     state.boxOpacity = parseInt(e.target.value) / 100;
     labelBoxOpacity.textContent = `${e.target.value}%`;
+    state.stylingModified = true;
     renderSubtitlePreview();
   });
 
@@ -1117,6 +1160,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (state.isMultiSpeaker && state.speakerChannels && state.speakerChannels[state.activeSpeakerId]) {
       state.speakerChannels[state.activeSpeakerId].box_bg_color = state.boxBgColor;
     }
+    state.stylingModified = true;
     renderSubtitlePreview();
   });
 
@@ -1126,6 +1170,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (state.isMultiSpeaker && state.speakerChannels && state.speakerChannels[state.activeSpeakerId]) {
       state.speakerChannels[state.activeSpeakerId].box_font_color = state.boxFontColor;
     }
+    state.stylingModified = true;
     renderSubtitlePreview();
   });
 
@@ -1134,6 +1179,7 @@ document.addEventListener("DOMContentLoaded", () => {
     sliderHighlightScale.addEventListener("input", (e) => {
       state.highlightScalePct = parseInt(e.target.value);
       if (labelHighlightScale) labelHighlightScale.textContent = `${state.highlightScalePct}%`;
+      state.stylingModified = true;
       renderSubtitlePreview();
     });
   }
@@ -1142,6 +1188,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (selectHighlightAnimation) {
     selectHighlightAnimation.addEventListener("change", (e) => {
       state.highlightAnimation = e.target.value;
+      state.stylingModified = true;
       renderSubtitlePreview();
     });
   }
@@ -1152,6 +1199,7 @@ document.addEventListener("DOMContentLoaded", () => {
       linePillBtns.forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
       state.maxLines = parseInt(btn.dataset.lines);
+      state.stylingModified = true;
       renderSubtitlePreview();
     });
   });
@@ -1159,6 +1207,7 @@ document.addEventListener("DOMContentLoaded", () => {
   sliderMaxChars.addEventListener("input", (e) => {
     state.maxChars = parseInt(e.target.value);
     labelMaxChars.textContent = `${state.maxChars} chars`;
+    state.stylingModified = true;
     renderSubtitlePreview();
   });
 
@@ -1166,6 +1215,7 @@ document.addEventListener("DOMContentLoaded", () => {
   sliderLineWidth.addEventListener("input", (e) => {
     state.lineWidthPct = parseInt(e.target.value);
     labelLineWidth.textContent = `${state.lineWidthPct}%`;
+    state.stylingModified = true;
     renderSubtitlePreview();
   });
 
@@ -1879,33 +1929,8 @@ document.addEventListener("DOMContentLoaded", () => {
       output_filename: customFilename || null,
       reuse_existing_ass: false,
       reuse_existing_wav: false,
-      styling: {
-        font_name: state.fontFamily,
-        font_size: state.fontSize,
-        bold: state.bold,
-        italic: state.italic,
-        primary_color: state.textBaseColor,
-        outline_color: state.outlineColor,
-        outline_width: state.outlineWidth,
-        highlight_style: state.highlightStyle,
-        highlight_color: state.highlightColor,
-        highlight_scale_pct: state.highlightScalePct,
-        highlight_animation: state.highlightAnimation || "discrete",
-        box_type: state.boxType,
-        box_bg_color: state.boxBgColor,
-        box_opacity: state.boxOpacity,
-        box_font_color: state.boxFontColor,
-        pos_x_pct: state.posX,
-        pos_y_pct: state.posY,
-        max_lines: state.maxLines,
-        max_chars_per_line: state.maxChars,
-        line_width_pct: state.lineWidthPct
-      }
+      styling: getCurrentStylingPayload()
     };
-
-    if (state.isMultiSpeaker && state.speakerCount >= 2 && state.speakerChannels) {
-      payload.styling.speaker_channels = JSON.parse(JSON.stringify(state.speakerChannels));
-    }
 
     updateWorkflowStepper(burnVideo ? 'burning' : 'transcribing');
     if (btnGenerateAssOnly) btnGenerateAssOnly.classList.add('disabled');
@@ -1980,12 +2005,21 @@ document.addEventListener("DOMContentLoaded", () => {
     }, 400);
 
     try {
+      if (editorState.activeTab === "raw" && rawAssTextarea) {
+        if (rawAssTextarea.value !== editorState.initialContent) {
+          editorState.currentContent = rawAssTextarea.value;
+          editorState.isDirty = true;
+        }
+      }
+
       const payload = {
         video_path: videoPath,
         ass_path: effectiveAss,
         task_id: state.currentTaskId || editorState.taskId,
         output_filename: (outputFilenameInput ? outputFilenameInput.value.trim() : null) || state.outputFilename,
-        content: editorState.isDirty ? editorState.currentContent : null
+        content: editorState.isDirty ? editorState.currentContent : null,
+        styling: getCurrentStylingPayload(),
+        styling_modified: !!state.stylingModified
       };
 
       const res = await fetch('/api/burn-video', {
@@ -2003,7 +2037,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const data = await res.json();
       editorState.isDirty = false;
+      state.stylingModified = false;
       if (btnDrawerRevert) btnDrawerRevert.disabled = true;
+
+      if (data.ass_content) {
+        editorState.currentContent = data.ass_content;
+        editorState.initialContent = data.ass_content;
+        if (rawAssTextarea) rawAssTextarea.value = data.ass_content;
+      }
+      if (data.task_id) {
+        loadDrawerSubtitles(data.task_id);
+      }
 
       updateWorkflowStepper('burned');
       updateDrawerStatus(`✓ Video burned successfully: ${data.video_filename}`, 'success');
@@ -2792,7 +2836,83 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  function replaceDialogueTextPreservingTags(rawLineText, newCleanText) {
+    const posMatch = rawLineText.match(/^(\{\\an\d\\pos\([^)]+\)\})/);
+    const posTag = posMatch ? posMatch[1] : "";
+    const afterPos = posMatch ? rawLineText.slice(posMatch[1].length) : rawLineText;
+
+    const tagPattern = /(\{[^}]*?\\c&H[0-9a-fA-F]{8}&[^}]*?\})([^{]+)(\{[^}]*?\\c&H[0-9a-fA-F]{8}&[^}]*?\})/;
+    const match = afterPos.match(tagPattern);
+    if (!match) {
+      const boxPattern = /(\{[^}]*?\\bord\d+[^}]*?\})([^{]+)(\{\\r[^}]*?\})/;
+      const boxMatch = afterPos.match(boxPattern);
+      if (!boxMatch) {
+        return posTag + newCleanText;
+      }
+      const tag1 = boxMatch[1];
+      const tag2 = boxMatch[3];
+      const preText = afterPos.slice(0, boxMatch.index);
+      const preClean = preText.replace(/\{[^}]*\}/g, "").replace(/\\N/g, " ").trim();
+      const preWordCount = preClean ? preClean.split(/\s+/).length : 0;
+      const newWords = newCleanText.trim().split(/\s+/);
+      if (newWords.length === 0 || !newCleanText.trim()) return posTag + newCleanText;
+      const activeIdx = Math.min(preWordCount, newWords.length - 1);
+      const newPre = newWords.slice(0, activeIdx).join(" ");
+      const newActive = newWords[activeIdx];
+      const newPost = newWords.slice(activeIdx + 1).join(" ");
+      return posTag + (newPre ? newPre + " " : "") + `${tag1}${newActive}${tag2}` + (newPost ? " " + newPost : "");
+    }
+
+    const tag1 = match[1];
+    const tag2 = match[3];
+    const preText = afterPos.slice(0, match.index);
+    const preClean = preText.replace(/\{[^}]*\}/g, "").replace(/\\N/g, " ").trim();
+    const preWordCount = preClean ? preClean.split(/\s+/).length : 0;
+
+    const newWords = newCleanText.trim().split(/\s+/);
+    if (newWords.length === 0 || !newCleanText.trim()) {
+      return posTag + newCleanText;
+    }
+    const activeIdx = Math.min(preWordCount, newWords.length - 1);
+    const newPre = newWords.slice(0, activeIdx).join(" ");
+    const newActive = newWords[activeIdx];
+    const newPost = newWords.slice(activeIdx + 1).join(" ");
+
+    return posTag + (newPre ? newPre + " " : "") + `${tag1}${newActive}${tag2}` + (newPost ? " " + newPost : "");
+  }
+
   function switchEditorTab(tabName) {
+    if (editorState.activeTab === "raw" && rawAssTextarea) {
+      if (rawAssTextarea.value !== editorState.initialContent) {
+        editorState.isDirty = true;
+      }
+      editorState.currentContent = rawAssTextarea.value;
+      const rawLines = editorState.currentContent.split("\n");
+      const updatedDialogues = [];
+      rawLines.forEach((line, idx) => {
+        if (line.startsWith("Dialogue:")) {
+          const parts = line.split(",", 9);
+          if (parts.length >= 10) {
+            const rawText = parts[9];
+            const cleanText = rawText.replace(/\{[^}]*\}/g, "").replace(/\\N/gi, " ").replace(/\\h/gi, " ").replace(/\s+/g, " ").trim();
+            updatedDialogues.push({
+              line_index: idx,
+              layer: parts[0].replace("Dialogue:", "").trim(),
+              start: parts[1].trim(),
+              end: parts[2].trim(),
+              style: parts[3].trim(),
+              speaker: parts[4].trim() || "Speaker 1",
+              raw_text: rawText,
+              clean_text: cleanText
+            });
+          }
+        }
+      });
+      if (updatedDialogues.length > 0) {
+        editorState.dialogues = updatedDialogues;
+        renderDialogueEditorItems(updatedDialogues);
+      }
+    }
     editorState.activeTab = tabName;
     if (tabName === "dialogue") {
       if (tabDialogueView) tabDialogueView.classList.add("active");
@@ -2808,6 +2928,18 @@ document.addEventListener("DOMContentLoaded", () => {
       if (editorTabHint) editorTabHint.textContent = "Full raw ASS v4.00+ script editor (supports manual tags)";
       if (rawAssTextarea) rawAssTextarea.value = editorState.currentContent;
     }
+  }
+
+  if (rawAssTextarea) {
+    rawAssTextarea.addEventListener("input", () => {
+      editorState.currentContent = rawAssTextarea.value;
+      editorState.isDirty = true;
+      if (btnDrawerRevert) btnDrawerRevert.disabled = false;
+      if (btnSaveAssDrawer) btnSaveAssDrawer.disabled = false;
+      if (btnSaveAssEditor) btnSaveAssEditor.disabled = false;
+      updateDrawerStatus("Modified (unsaved)", "modified");
+      updateEditorStatus("Unsaved changes in raw ASS script", "modified");
+    });
   }
 
   if (tabDialogueView && tabRawView) {
@@ -2910,9 +3042,7 @@ document.addEventListener("DOMContentLoaded", () => {
           const parts = targetLine.split(",", 9);
           if (parts.length >= 9) {
             const rawTextAfter = targetLine.slice(parts.join(",").length + 1);
-            const posTagMatch = rawTextAfter.match(/^(\{\\an\d\\pos\([^)]+\)\})/);
-            const posTag = posTagMatch ? posTagMatch[1] : "";
-            allLines[item.line_index] = parts.join(",") + "," + posTag + e.target.value;
+            allLines[item.line_index] = parts.join(",") + "," + replaceDialogueTextPreservingTags(rawTextAfter, e.target.value);
             editorState.currentContent = allLines.join("\n");
             if (rawAssTextarea) rawAssTextarea.value = editorState.currentContent;
           }
@@ -3204,9 +3334,7 @@ document.addEventListener("DOMContentLoaded", () => {
           const parts = targetLine.split(",", 9);
           if (parts.length >= 9) {
             const rawTextAfter = targetLine.slice(parts.join(",").length + 1);
-            const posTagMatch = rawTextAfter.match(/^(\{\\an\d\\pos\([^)]+\)\})/);
-            const posTag = posTagMatch ? posTagMatch[1] : "";
-            allLines[item.line_index] = parts.join(",") + "," + posTag + e.target.value;
+            allLines[item.line_index] = parts.join(",") + "," + replaceDialogueTextPreservingTags(rawTextAfter, e.target.value);
             editorState.currentContent = allLines.join("\n");
             if (rawAssTextarea) rawAssTextarea.value = editorState.currentContent;
             if (codeBodyPreview) codeBodyPreview.textContent = editorState.currentContent.split("\n").slice(0, 60).join("\n");
@@ -3316,7 +3444,9 @@ document.addEventListener("DOMContentLoaded", () => {
         reburn_video: false,
         media_path: editorState.mediaPath || state.videoPath,
         ass_path: editorState.assPath || state.existingAssPath,
-        output_filename: state.outputFilename
+        output_filename: state.outputFilename,
+        styling: getCurrentStylingPayload(),
+        styling_modified: !!state.stylingModified
       };
 
       const saveUrl = editorState.taskId
@@ -3337,6 +3467,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       editorState.initialContent = editorState.currentContent;
       editorState.isDirty = false;
+      state.stylingModified = false;
       if (data.file_path) {
         state.existingAssPath = data.file_path;
         state.hasExistingAss = true;

@@ -1,0 +1,323 @@
+# SPDX-FileCopyrightText: 2026 Joel Gonzales <joelontheroad>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+"""Test suite for subtitle formatting persistence on burning and re-burning.
+
+Validates that all formatting modifications (highlight colors, styles, positions,
+and direct edits to .ass files) are faithfully synchronized and respected whenever
+burning occurs without requiring re-transcription.
+"""
+
+import os
+from pathlib import Path
+
+from backend.app import (
+    BurnVideoRequest,
+    UpdateAssRequest,
+    _resolve_ass_file_path,
+    burn_video_endpoint,
+    update_ass_content,
+)
+from backend.ass_generator import generate_ass_content, hex_to_ass_color, update_ass_formatting
+
+
+def _create_sample_whisper_result() -> dict:
+    """Generate a deterministic single-speaker Whisper transcript result."""
+    return {
+        "segments": [
+            {
+                "text": "Hello and welcome to this video presentation.",
+                "start": 0.0,
+                "end": 2.5,
+                "words": [
+                    {"word": "Hello", "start": 0.0, "end": 0.4, "speaker": "SPEAKER_00"},
+                    {"word": "and", "start": 0.4, "end": 0.6, "speaker": "SPEAKER_00"},
+                    {"word": "welcome", "start": 0.6, "end": 1.1, "speaker": "SPEAKER_00"},
+                    {"word": "to", "start": 1.1, "end": 1.3, "speaker": "SPEAKER_00"},
+                    {"word": "this", "start": 1.3, "end": 1.6, "speaker": "SPEAKER_00"},
+                    {"word": "video", "start": 1.6, "end": 2.0, "speaker": "SPEAKER_00"},
+                    {"word": "presentation", "start": 2.0, "end": 2.5, "speaker": "SPEAKER_00"},
+                ],
+            }
+        ]
+    }
+
+
+def _create_multi_speaker_whisper_result() -> dict:
+    """Generate a deterministic multi-speaker Whisper transcript result."""
+    return {
+        "segments": [
+            {
+                "text": "Welcome to the podcast.",
+                "start": 0.0,
+                "end": 1.5,
+                "words": [
+                    {"word": "Welcome", "start": 0.0, "end": 0.5, "speaker": "SPEAKER_00"},
+                    {"word": "to", "start": 0.5, "end": 0.8, "speaker": "SPEAKER_00"},
+                    {"word": "the", "start": 0.8, "end": 1.0, "speaker": "SPEAKER_00"},
+                    {"word": "podcast", "start": 1.0, "end": 1.5, "speaker": "SPEAKER_00"},
+                ],
+            },
+            {
+                "text": "Thanks for having me.",
+                "start": 1.8,
+                "end": 3.0,
+                "words": [
+                    {"word": "Thanks", "start": 1.8, "end": 2.2, "speaker": "SPEAKER_01"},
+                    {"word": "for", "start": 2.2, "end": 2.4, "speaker": "SPEAKER_01"},
+                    {"word": "having", "start": 2.4, "end": 2.7, "speaker": "SPEAKER_01"},
+                    {"word": "me", "start": 2.7, "end": 3.0, "speaker": "SPEAKER_01"},
+                ],
+            },
+        ]
+    }
+
+
+def test_update_ass_formatting_direct_secondary_colour_edit():
+    """Verify that editing SecondaryColour directly in .ass syncs dialogue active tags without config."""
+    initial_config = {
+        "font_name": "Arial",
+        "font_size": 22,
+        "primary_color": "#FFFFFF",
+        "highlight_color": "#00E5FF",  # Default cyan
+        "outline_color": "#000000",
+    }
+    meta = {"width": 1920, "height": 1080}
+    ass_content = generate_ass_content(_create_sample_whisper_result(), initial_config, meta)
+
+    # Initial highlight in ASS format is &H00FFE500& (cyan &HAABBGGRR&)
+    initial_ass_hl = hex_to_ass_color("#00E5FF", 1.0)
+    assert f"\\c{initial_ass_hl}" in ass_content
+
+    # Simulate user opening .ass file and changing highlight color to pure red: #FF0000 -> &H000000FF&
+    target_red_ass = "&H000000FF&"
+    edited_ass = ass_content.replace(initial_ass_hl, target_red_ass)
+
+    # Run update_ass_formatting with NO config (direct disk burn)
+    synced_ass = update_ass_formatting(edited_ass, config=None, video_meta=meta)
+
+    # Styles table must preserve the user-edited SecondaryColour
+    assert target_red_ass in synced_ass
+    # Dialogue lines must have active word \\c tags updated to &H000000FF&
+    assert f"\\c{target_red_ass}" in synced_ass
+    # Old cyan highlight tag must not appear anywhere
+    assert f"\\c{initial_ass_hl}" not in synced_ass
+
+
+def test_update_ass_formatting_ui_styling_changes():
+    """Verify that changing UI styling parameters updates styles and dialogue events."""
+    initial_config = {
+        "font_name": "Arial",
+        "font_size": 20,
+        "primary_color": "#FFFFFF",
+        "highlight_color": "#00E5FF",
+        "outline_color": "#000000",
+        "outline_width": 2,
+        "position": "bottom",
+    }
+    meta = {"width": 1920, "height": 1080}
+    ass_content = generate_ass_content(_create_sample_whisper_result(), initial_config, meta)
+
+    # User re-styles in UI without re-transcribing
+    new_styling = {
+        "font_name": "Roboto",
+        "font_size": 30,
+        "primary_color": "#D0D0D0",
+        "highlight_color": "#FF00FF",  # Magenta
+        "outline_color": "#333333",
+        "outline_width": 4,
+        "bold": True,
+        "italic": True,
+        "position": "top",
+        "highlight_animation": "pop_zoom",
+    }
+    synced_ass = update_ass_formatting(ass_content, config=new_styling, video_meta=meta)
+
+    expected_hl = hex_to_ass_color("#FF00FF", 1.0)
+    expected_pri = hex_to_ass_color("#D0D0D0", 1.0)
+    expected_out = hex_to_ass_color("#333333", 1.0)
+
+    # Verify Style line in [V4+ Styles]
+    assert "Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour" in synced_ass
+    assert "Roboto" in synced_ass
+    assert expected_hl in synced_ass
+    assert expected_pri in synced_ass
+    assert expected_out in synced_ass
+
+    # Verify active word tags in Dialogue lines
+    assert f"\\c{expected_hl}" in synced_ass
+    assert f"\\c{expected_pri}" in synced_ass
+    assert f"\\3c{expected_out}" in synced_ass
+    assert "\\fscx108\\fscy108" in synced_ass
+
+
+def test_update_ass_formatting_multi_speaker_channels():
+    """Verify per-speaker highlight colors update independently for multi-speaker turns."""
+    config = {
+        "speaker_channels": {
+            "SPEAKER_00": {
+                "id": "SPEAKER_00",
+                "name": "Host",
+                "primary_color": "#FFFFFF",
+                "highlight_color": "#FFDF00",  # Yellow
+                "outline_color": "#000000",
+            },
+            "SPEAKER_01": {
+                "id": "SPEAKER_01",
+                "name": "Guest",
+                "primary_color": "#FFFFFF",
+                "highlight_color": "#00E5FF",  # Cyan
+                "outline_color": "#000000",
+            },
+        }
+    }
+    meta = {"width": 1920, "height": 1080}
+    ass_content = generate_ass_content(_create_multi_speaker_whisper_result(), config, meta)
+
+    # Now update Guest (SPEAKER_01) highlight color to green
+    updated_config = {
+        "speaker_channels": {
+            "SPEAKER_00": {
+                "id": "SPEAKER_00",
+                "name": "Host",
+                "primary_color": "#FFFFFF",
+                "highlight_color": "#FFDF00",
+                "outline_color": "#000000",
+            },
+            "SPEAKER_01": {
+                "id": "SPEAKER_01",
+                "name": "Guest",
+                "primary_color": "#FFFFFF",
+                "highlight_color": "#00FF00",  # Green
+                "outline_color": "#000000",
+            },
+        }
+    }
+    synced_ass = update_ass_formatting(ass_content, config=updated_config, video_meta=meta)
+
+    green_ass = hex_to_ass_color("#00FF00", 1.0)
+    yellow_ass = hex_to_ass_color("#FFDF00", 1.0)
+
+    assert f"\\c{green_ass}" in synced_ass
+    assert f"\\c{yellow_ass}" in synced_ass
+
+
+def test_resolve_ass_file_path_selects_newest_mtime(tmp_path: Path):
+    """Verify _resolve_ass_file_path always picks the most recently edited .ass candidate."""
+    video_file = tmp_path / "interview.mp4"
+    video_file.write_text("fake video data", encoding="utf-8")
+
+    ass_sibling = tmp_path / "interview.ass"
+    ass_sibling.write_text("[Events]\nDialogue: 0", encoding="utf-8")
+
+    ass_custom = tmp_path / "interview_voice_titles.ass"
+    ass_custom.write_text("[Events]\nDialogue: 1", encoding="utf-8")
+
+    # Set sibling as older, custom as newer
+    os.utime(ass_sibling, (1000, 1000))
+    os.utime(ass_custom, (2000, 2000))
+
+    resolved_path, _ = _resolve_ass_file_path(media_path=str(video_file))
+    assert resolved_path == str(ass_custom)
+
+    # Now user directly edits interview.ass on disk (newer timestamp)
+    os.utime(ass_sibling, (3000, 3000))
+
+    resolved_path2, _ = _resolve_ass_file_path(media_path=str(video_file))
+    assert resolved_path2 == str(ass_sibling)
+
+
+def test_burn_video_endpoint_preserves_external_ass_edits(tmp_path: Path, monkeypatch):
+    """Verify burn_video_endpoint reads user .ass edits, synchronizes formatting, and burns."""
+    video_file = tmp_path / "demo.mp4"
+    video_file.write_text("fake video bytes", encoding="utf-8")
+
+    meta = {"width": 1920, "height": 1080}
+    initial_config = {
+        "primary_color": "#FFFFFF",
+        "highlight_color": "#00E5FF",
+        "outline_color": "#000000",
+    }
+    ass_content = generate_ass_content(_create_sample_whisper_result(), initial_config, meta)
+
+    # User changed SecondaryColour in file to purple: #AA00FF -> &H00FF00AA&
+    purple_ass = hex_to_ass_color("#AA00FF", 1.0)
+    initial_cyan_ass = hex_to_ass_color("#00E5FF", 1.0)
+    edited_ass = ass_content.replace(initial_cyan_ass, purple_ass)
+
+    ass_file = tmp_path / "demo.ass"
+    ass_file.write_text(edited_ass, encoding="utf-8")
+
+    # Mock burn_subtitles_to_video and get_video_metadata
+    burned_ass_paths = []
+
+    def mock_burn(video_in, ass_in, video_out):
+        burned_ass_paths.append(ass_in)
+        Path(video_out).write_text("burned video", encoding="utf-8")
+
+    monkeypatch.setattr("backend.app.burn_subtitles_to_video", mock_burn)
+    monkeypatch.setattr("backend.app.get_video_metadata", lambda _: meta)
+
+    # Call burn_video_endpoint without styling payload (re-burn existing)
+    req = BurnVideoRequest(video_path=str(video_file), ass_path=str(ass_file))
+    result = burn_video_endpoint(req, auth="test_token")
+
+    assert result["success"] is True
+    assert len(burned_ass_paths) == 1
+
+    # Verify the ASS file content burned and saved on disk now has the purple highlight tag
+    saved_ass = ass_file.read_text(encoding="utf-8")
+    assert f"\\c{purple_ass}" in saved_ass
+    assert f"\\c{initial_cyan_ass}" not in saved_ass
+
+
+def test_update_ass_content_endpoint_reburn(tmp_path: Path, monkeypatch):
+    """Verify update_ass_content saves synchronized ASS formatting and re-burns video."""
+    video_file = tmp_path / "clip.mp4"
+    video_file.write_text("fake video", encoding="utf-8")
+
+    meta = {"width": 1920, "height": 1080}
+    initial_config = {
+        "primary_color": "#FFFFFF",
+        "highlight_color": "#00E5FF",
+        "outline_color": "#000000",
+    }
+    ass_content = generate_ass_content(_create_sample_whisper_result(), initial_config, meta)
+
+    ass_file = tmp_path / "clip.ass"
+    ass_file.write_text(ass_content, encoding="utf-8")
+
+    reburned_videos = []
+
+    def mock_burn(video_in, ass_in, video_out):
+        reburned_videos.append(video_out)
+        Path(video_out).write_text("reburned mp4", encoding="utf-8")
+
+    monkeypatch.setattr("backend.app.burn_subtitles_to_video", mock_burn)
+    monkeypatch.setattr("backend.app.get_video_metadata", lambda _: meta)
+
+    # Change highlight color in payload
+    updated_styling = {
+        "primary_color": "#FFFFFF",
+        "highlight_color": "#FF5500",  # Orange
+        "outline_color": "#000000",
+    }
+
+    req = UpdateAssRequest(
+        content=ass_content,
+        reburn_video=True,
+        media_path=str(video_file),
+        ass_path=str(ass_file),
+        styling=updated_styling,
+        styling_modified=True,
+    )
+
+    result = update_ass_content(req=req, auth="test_token")
+    assert result["success"] is True
+    assert result["reburned"] is True
+    assert len(reburned_videos) == 1
+
+    # Verify disk content was updated with the orange highlight color
+    orange_ass = hex_to_ass_color("#FF5500", 1.0)
+    saved_disk_ass = ass_file.read_text(encoding="utf-8")
+    assert f"\\c{orange_ass}" in saved_disk_ass

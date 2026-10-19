@@ -8,6 +8,7 @@ highlighting, custom typography, positional anchoring, bounding badge styling,
 and responsive multi-line layout algorithms.
 """
 
+import re
 from typing import Any
 
 
@@ -241,17 +242,18 @@ def generate_ass_content(
 
     # Register styles in [V4+ Styles]
     style_lines = [
-        f"Style: Default,{font_name},{font_size},{ass_primary},&H000000FF&,{ass_outline},{back_color},{bold},{italic},0,0,100,100,0,0,{border_style},{outline_width},0,2,{margin_lr},{margin_lr},{margin_v},1",
-        f"Style: HighlightBox,{font_name},{font_size},{ass_box_font},&H000000FF&,{ass_box_bg},{ass_box_bg},{bold},{italic},0,0,100,100,0,0,3,6,0,2,{margin_lr},{margin_lr},{margin_v},1",
+        f"Style: Default,{font_name},{font_size},{ass_primary},{ass_highlight},{ass_outline},{back_color},{bold},{italic},0,0,100,100,0,0,{border_style},{outline_width},0,2,{margin_lr},{margin_lr},{margin_v},1",
+        f"Style: HighlightBox,{font_name},{font_size},{ass_box_font},{ass_highlight},{ass_box_bg},{ass_box_bg},{bold},{italic},0,0,100,100,0,0,3,6,0,2,{margin_lr},{margin_lr},{margin_v},1",
     ]
     registered_styles = {"Default", "HighlightBox"}
 
     for spk_id, spk_cfg in speaker_channels.items():
         spk_pri = hex_to_ass_color(spk_cfg.get("primary_color", primary_color_hex), 1.0)
         spk_out = hex_to_ass_color(spk_cfg.get("outline_color", outline_color_hex), 1.0)
+        spk_hl = hex_to_ass_color(spk_cfg.get("highlight_color", highlight_color_hex), 1.0)
         spk_style_name = f"Speaker_{spk_id}"
         style_lines.append(
-            f"Style: {spk_style_name},{font_name},{font_size},{spk_pri},&H000000FF&,{spk_out},{back_color},{bold},{italic},0,0,100,100,0,0,{border_style},{outline_width},0,2,{margin_lr},{margin_lr},{margin_v},1"
+            f"Style: {spk_style_name},{font_name},{font_size},{spk_pri},{spk_hl},{spk_out},{back_color},{bold},{italic},0,0,100,100,0,0,{border_style},{outline_width},0,2,{margin_lr},{margin_lr},{margin_v},1"
         )
         registered_styles.add(spk_style_name)
 
@@ -431,3 +433,273 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         event_lines.append(f"Dialogue: 0,{start_ts},{end_ts},{style_name},{spk_display_name},0,0,0,,{pos_tag}{dialogue_text}")
 
     return header + "\n".join(event_lines) + "\n"
+
+
+def update_ass_formatting(
+    ass_content: str,
+    config: dict[str, Any] | None = None,
+    video_meta: dict[str, Any] | None = None,
+) -> str:
+    """Synchronize and update ASS subtitle formatting and active word highlight colors.
+
+    Honors all user formatting changes when burning or re-burning subtitles.
+    If the user directly edited SecondaryColour in [V4+ Styles] (or dialogue lines),
+    synchronizes word highlight tags to match. If configuration is provided from
+    the UI, updates the style table and overrides active word tags while preserving
+    dialogue text, timings, and manual wording edits.
+
+    Args:
+        ass_content: Full raw ASS script content string.
+        config: Optional dictionary containing updated styling parameters.
+        video_meta: Optional dictionary containing video dimensions (width, height).
+
+    Returns:
+        Updated ASS script content string with synchronized styles and event tags.
+    """
+    config = config or {}
+    lines = ass_content.splitlines()
+
+    play_res_x = 1920
+    play_res_y = 1080
+    if video_meta:
+        play_res_x = video_meta.get("width", 1920) or 1920
+        play_res_y = video_meta.get("height", 1080) or 1080
+    for line in lines:
+        if line.lower().startswith("playresx:"):
+            try:
+                play_res_x = int(line.split(":", 1)[1].strip())
+            except Exception:
+                pass
+        elif line.lower().startswith("playresy:"):
+            try:
+                play_res_y = int(line.split(":", 1)[1].strip())
+            except Exception:
+                pass
+
+    font_name = config.get("font_name")
+    font_size = config.get("font_size")
+    primary_color_hex = config.get("primary_color")
+    highlight_color_hex = config.get("highlight_color")
+    outline_color_hex = config.get("outline_color")
+    outline_width = config.get("outline_width")
+    bold = config.get("bold")
+    italic = config.get("italic")
+    position = config.get("position")
+    margin_v = config.get("margin_v")
+    highlight_animation = config.get("highlight_animation")
+    box_bg_color_hex = config.get("box_bg_color")
+    box_opacity = config.get("box_opacity")
+    box_font_color_hex = config.get("box_font_color")
+    speaker_channels = config.get("speaker_channels") or {}
+
+    pos_x = play_res_x // 2
+    pos_y = None
+
+    pos_x_pct = config.get("pos_x_pct")
+    pos_y_pct = config.get("pos_y_pct")
+    if pos_x_pct is not None:
+        try:
+            pos_x = int(play_res_x * (float(pos_x_pct) / 100.0))
+        except Exception:
+            pass
+
+    if pos_y_pct is not None:
+        try:
+            pos_y = int(play_res_y * (float(pos_y_pct) / 100.0))
+        except Exception:
+            pass
+    elif position is not None or margin_v is not None or font_size is not None:
+        effective_pos = position or "bottom"
+        effective_mv = margin_v if margin_v is not None else 54
+        effective_fs = font_size if font_size is not None else 22
+        if effective_pos == "top":
+            pos_y = effective_mv + (effective_fs * 2)
+        elif effective_pos == "middle":
+            pos_y = play_res_y // 2
+        else:
+            pos_y = play_res_y - effective_mv
+
+    styles: dict[str, list[str]] = {}
+    style_format_idx: dict[str, int] = {}
+    style_line_indices: dict[str, int] = {}
+
+    in_styles = False
+
+    for idx, line in enumerate(lines):
+        s_line = line.strip()
+        if s_line == "[V4+ Styles]":
+            in_styles = True
+            continue
+        elif s_line.startswith("[") and s_line.endswith("]"):
+            in_styles = False
+            continue
+
+        if in_styles:
+            if line.startswith("Format:"):
+                fields = [f.strip() for f in line[7:].split(",")]
+                style_format_idx = {name: f_idx for f_idx, name in enumerate(fields)}
+            elif line.startswith("Style:"):
+                parts = line[6:].split(",")
+                style_name = parts[0].strip()
+                styles[style_name] = [p.strip() for p in parts]
+                style_line_indices[style_name] = idx
+
+    def get_style_val(parts: list[str], field_name: str, default: str = "") -> str:
+        f_idx = style_format_idx.get(field_name)
+        if f_idx is not None and f_idx < len(parts):
+            return parts[f_idx]
+        return default
+
+    def set_style_val(parts: list[str], field_name: str, value: Any) -> None:
+        f_idx = style_format_idx.get(field_name)
+        if f_idx is not None and f_idx < len(parts):
+            parts[f_idx] = str(value)
+
+    resolved_styles = {}
+    for st_name, parts in styles.items():
+        p = list(parts)
+        is_spk = st_name.startswith("Speaker_")
+        spk_id = st_name.replace("Speaker_", "") if is_spk else None
+        spk_cfg = {}
+        if is_spk and spk_id:
+            spk_cfg = (
+                speaker_channels.get(spk_id)
+                or speaker_channels.get(spk_id.replace("SPEAKER_", ""))
+                or speaker_channels.get(f"SPEAKER_{spk_id}")
+                or {}
+            )
+            if hasattr(spk_cfg, "model_dump"):
+                spk_cfg = spk_cfg.model_dump()
+            elif hasattr(spk_cfg, "dict"):
+                spk_cfg = spk_cfg.dict()
+
+        effective_hl_hex = spk_cfg.get("highlight_color") or highlight_color_hex
+        if effective_hl_hex is not None:
+            st_hl = hex_to_ass_color(effective_hl_hex, 1.0)
+            set_style_val(p, "SecondaryColour", st_hl)
+        else:
+            # Synchronize to user-edited SecondaryColour in [V4+ Styles]
+            st_hl = get_style_val(p, "SecondaryColour", "&H0000D4FF&")
+
+        effective_pri_hex = spk_cfg.get("primary_color") or primary_color_hex
+        if effective_pri_hex is not None:
+            st_pri = hex_to_ass_color(effective_pri_hex, 1.0)
+            set_style_val(p, "PrimaryColour", st_pri)
+        else:
+            st_pri = get_style_val(p, "PrimaryColour", "&H00FFFFFF&")
+
+        effective_out_hex = spk_cfg.get("outline_color") or outline_color_hex
+        if effective_out_hex is not None:
+            st_out = hex_to_ass_color(effective_out_hex, 1.0)
+            set_style_val(p, "OutlineColour", st_out)
+        else:
+            st_out = get_style_val(p, "OutlineColour", "&H00000000&")
+
+        if outline_width is not None:
+            set_style_val(p, "Outline", outline_width)
+        if font_name is not None:
+            set_style_val(p, "Fontname", font_name)
+        if font_size is not None:
+            set_style_val(p, "Fontsize", font_size)
+        if bold is not None:
+            set_style_val(p, "Bold", 1 if bold else 0)
+        if italic is not None:
+            set_style_val(p, "Italic", 1 if italic else 0)
+        if margin_v is not None:
+            set_style_val(p, "MarginV", margin_v)
+
+        box_bg = hex_to_ass_color(box_bg_color_hex or "#00E5FF", box_opacity if box_opacity is not None else 0.85)
+        box_font = hex_to_ass_color(box_font_color_hex or "#000000", 1.0)
+
+        resolved_styles[st_name] = {
+            "parts": p,
+            "hl": st_hl,
+            "pri": st_pri,
+            "out": st_out,
+            "box_bg": box_bg,
+            "box_font": box_font,
+        }
+
+    for st_name, res in resolved_styles.items():
+        if st_name in style_line_indices:
+            joined_parts = ",".join(res["parts"])
+            lines[style_line_indices[st_name]] = f"Style: {joined_parts}"
+
+    def_res = resolved_styles.get(
+        "Default",
+        {
+            "hl": "&H0000D4FF&",
+            "pri": "&H00FFFFFF&",
+            "out": "&H00000000&",
+            "box_bg": "&H26FFE500&",
+            "box_font": "&H00000000&",
+        },
+    )
+
+    updated_lines = []
+    for line in lines:
+        if line.startswith("Dialogue:"):
+            d_parts = line.split(",", 9)
+            if len(d_parts) >= 10:
+                d_style = d_parts[3].strip()
+                st_info = resolved_styles.get(d_style, def_res)
+                target_hl = st_info["hl"]
+                target_pri = st_info["pri"]
+                target_out = st_info["out"]
+                target_box_bg = st_info["box_bg"]
+                target_box_font = st_info["box_font"]
+
+                d_text = d_parts[9]
+
+                if pos_y is not None:
+                    d_text = re.sub(
+                        r"\\pos\(\s*\d+\s*,\s*\d+\s*\)",
+                        lambda _: f"\\pos({pos_x},{pos_y})",
+                        d_text,
+                    )
+
+                def repl_active(match: re.Match) -> str:
+                    tag1, word, tag2 = match.group(1), match.group(2), match.group(3)
+                    new_tag1 = re.sub(r"\\c&H[0-9a-fA-F]{8}&", lambda _: f"\\c{target_hl}", tag1)
+                    new_tag1 = re.sub(r"\\3c&H[0-9a-fA-F]{8}&", lambda _: f"\\3c{target_out}", new_tag1)
+                    new_tag2 = re.sub(r"\\c&H[0-9a-fA-F]{8}&", lambda _: f"\\c{target_pri}", tag2)
+                    new_tag2 = re.sub(r"\\3c&H[0-9a-fA-F]{8}&", lambda _: f"\\3c{target_out}", new_tag2)
+                    if highlight_animation == "pop_zoom":
+                        if "\\fscx" not in new_tag1:
+                            new_tag1 = "\\fscx108\\fscy108" + new_tag1
+                        if "\\fscx" not in new_tag2:
+                            new_tag2 = "\\fscx100\\fscy100" + new_tag2
+                    elif highlight_animation in ("none", "color"):
+                        new_tag1 = re.sub(r"\\fscx\d+\\fscy\d+", "", new_tag1)
+                        new_tag2 = re.sub(r"\\fscx\d+\\fscy\d+", "", new_tag2)
+                    return f"{{{new_tag1}}}{word}{{{new_tag2}}}"
+
+                pattern = r"\{([^}]*?\\c&H[0-9a-fA-F]{8}&[^}]*?)\}([^{]+)\{([^}]*?\\c&H[0-9a-fA-F]{8}&[^}]*?)\}"
+                d_text = re.sub(pattern, repl_active, d_text)
+
+                def repl_box(match: re.Match) -> str:
+                    tag1, word, tag2 = match.group(1), match.group(2), match.group(3)
+                    new_tag1 = re.sub(r"\\3c&H[0-9a-fA-F]{8}&", lambda _: f"\\3c{target_box_bg}", tag1)
+                    new_tag1 = re.sub(r"\\c&H[0-9a-fA-F]{8}&", lambda _: f"\\c{target_box_font}", new_tag1)
+                    return f"{{{new_tag1}}}{word}{{{tag2}}}"
+
+                box_pattern = r"\{([^}]*?\\bord\d+[^}]*?\\3c&H[0-9a-fA-F]{8}&[^}]*?\\c&H[0-9a-fA-F]{8}&[^}]*?)\}([^{]+)(\{\\r[^}]*?\})"
+                d_text = re.sub(box_pattern, repl_box, d_text)
+
+                def repl_glow(match: re.Match) -> str:
+                    tag1, word, tag2 = match.group(1), match.group(2), match.group(3)
+                    new_tag1 = re.sub(r"\\3c&H[0-9a-fA-F]{8}&", lambda _: f"\\3c{target_hl}", tag1)
+                    new_tag2 = re.sub(r"\\3c&H[0-9a-fA-F]{8}&", lambda _: f"\\3c{target_out}", tag2)
+                    return f"{{{new_tag1}}}{word}{{{new_tag2}}}"
+
+                glow_pattern = r"\{([^}]*?\\3c&H[0-9a-fA-F]{8}&\\bord4[^}]*?)\}([^{]+)(\{[^}]*?\\3c&H[0-9a-fA-F]{8}&\\bord\d+[^}]*?\})"
+                d_text = re.sub(glow_pattern, repl_glow, d_text)
+
+                d_parts[9] = d_text
+                updated_lines.append(",".join(d_parts))
+                continue
+
+        updated_lines.append(line)
+
+    return "\n".join(updated_lines) + ("\n" if ass_content.endswith("\n") else "")
+

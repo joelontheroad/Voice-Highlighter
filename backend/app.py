@@ -36,7 +36,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from backend.ass_generator import generate_ass_content
+from backend.ass_generator import generate_ass_content, update_ass_formatting
 from backend.config import (
     StylePreset,
     delete_preset,
@@ -673,6 +673,8 @@ def process_transcription_job(
                 config=styling,
                 video_meta=meta
             )
+            tasks[task_id]["whisper_result"] = whisper_result
+            tasks[task_id]["styling"] = styling
 
             # Save ASS file in same directory as source file
             saved_in_dir = False
@@ -990,6 +992,8 @@ class UpdateAssRequest(BaseModel):
     media_path: str | None = None
     ass_path: str | None = None
     output_filename: str | None = None
+    styling: dict[str, Any] | None = None
+    styling_modified: bool | None = False
 
 
 class BurnVideoRequest(BaseModel):
@@ -1000,6 +1004,8 @@ class BurnVideoRequest(BaseModel):
     task_id: str | None = None
     output_filename: str | None = None
     content: str | None = None
+    styling: dict[str, Any] | None = None
+    styling_modified: bool | None = False
 
 
 class OpenVideoRequest(BaseModel):
@@ -1016,6 +1022,10 @@ def _resolve_ass_file_path(
 ) -> tuple[str | None, str | None]:
     """Resolve the canonical .ass file path from task ID, media path, or explicit subtitle path.
 
+    When multiple candidate files exist (e.g. sibling .ass and custom output name .ass),
+    evaluates modification timestamps (os.path.getmtime) so external edits made by the
+    user directly to the .ass file on disk are faithfully honored.
+
     Args:
         task_or_path: Task ID or file path to evaluate.
         media_path: Path to the media file whose sibling .ass should be checked.
@@ -1024,38 +1034,47 @@ def _resolve_ass_file_path(
     Returns:
         Tuple of (resolved_file_path, display_filename), or (None, None) if unresolved.
     """
+    candidates: list[str] = []
+
     # 1. Explicit ass_path
     if ass_path:
         p = os.path.expanduser(ass_path.strip())
         if os.path.exists(p):
-            return p, os.path.basename(p)
+            candidates.append(p)
 
     # 2. task_or_path can be an ASS file path, media path, or task_id
     if task_or_path:
         p = os.path.expanduser(task_or_path.strip())
         if p.endswith(".ass") and os.path.exists(p):
-            return p, os.path.basename(p)
-        if os.path.exists(p):
-            # Treat as media path: find sibling .ass
+            candidates.append(p)
+        elif os.path.exists(p):
             _, _, _, _, sib_ass = get_sibling_paths(p)
             if os.path.exists(sib_ass):
-                return sib_ass, os.path.basename(sib_ass)
-        # Check task in memory or on disk
+                candidates.append(sib_ass)
         t = _get_or_load_task(task_or_path)
         if t and t.get("ass_file") and os.path.exists(t["ass_file"]):
-            custom = t.get("custom_filename")
-            return t["ass_file"], f"{custom}.ass" if custom else os.path.basename(t["ass_file"])
+            candidates.append(t["ass_file"])
         disk_ass = os.path.join(OUTPUTS_DIR, f"{task_or_path}.ass")
         if os.path.exists(disk_ass):
-            return disk_ass, f"{task_or_path}.ass"
+            candidates.append(disk_ass)
 
-    # 3. media_path fallback
+    # 3. media_path sibling and voice_titles variants
     if media_path:
         mp = os.path.expanduser(media_path.strip())
         if os.path.exists(mp):
-            _, _, _, _, sib_ass = get_sibling_paths(mp)
+            clean_path, media_dir, base_name, _, sib_ass = get_sibling_paths(mp)
             if os.path.exists(sib_ass):
-                return sib_ass, os.path.basename(sib_ass)
+                candidates.append(sib_ass)
+            vt_ass = os.path.join(media_dir, f"{base_name}_voice_titles.ass")
+            if os.path.exists(vt_ass):
+                candidates.append(vt_ass)
+
+    if candidates:
+        # Deduplicate candidates while preserving order
+        unique_candidates = list(dict.fromkeys(candidates))
+        # Pick the most recently modified candidate so direct user edits are honored
+        best_candidate = max(unique_candidates, key=lambda cp: os.path.getmtime(cp))
+        return best_candidate, os.path.basename(best_candidate)
 
     return None, None
 
@@ -1169,6 +1188,8 @@ def update_ass_content(
     content_str = getattr(req, "content", "")
     reburn = getattr(req, "reburn_video", False)
     custom_name = getattr(req, "output_filename", None)
+    styling = getattr(req, "styling", None)
+    styling_modified = getattr(req, "styling_modified", False)
 
     file_path, display_name = _resolve_ass_file_path(task_id, media_p, ass_p)
     if not file_path:
@@ -1177,6 +1198,20 @@ def update_ass_content(
             file_path = sib_ass
         else:
             file_path = os.path.join(OUTPUTS_DIR, f"{task_id or 'edited_subtitles'}.ass")
+
+    meta = None
+    if media_p and os.path.exists(media_p):
+        try:
+            meta = get_video_metadata(media_p)
+        except Exception:
+            pass
+
+    # Synchronize all styling and active word formatting changes
+    content_str = update_ass_formatting(
+        ass_content=content_str,
+        config=styling if (styling_modified or styling) else None,
+        video_meta=meta,
+    )
 
     # Overwrite the ASS file with updated content
     os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
@@ -1262,11 +1297,46 @@ def burn_video_endpoint(req: BurnVideoRequest, auth: str = Depends(verify_auth))
                 detail="Subtitle (.ass) file not found to burn. Please generate subtitles first."
             )
 
-    # If updated content is provided from the inline editor, save it first
+    # 1. Resolve current ASS script content
     if req.content is not None and req.content.strip():
-        os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(req.content)
+        current_content = req.content
+    else:
+        with open(file_path, "r", encoding="utf-8") as f:
+            current_content = f.read()
+
+    # 2. Extract video metadata for geometry/margins
+    meta = None
+    try:
+        meta = get_video_metadata(clean_path)
+    except Exception:
+        pass
+
+    # 3. Resolve styling config
+    styling_cfg = req.styling
+    if not styling_cfg and req.task_id:
+        t_existing = _get_or_load_task(req.task_id)
+        if t_existing and t_existing.get("styling"):
+            styling_cfg = t_existing.get("styling")
+
+    # 4. Synchronize all formatting changes (highlight color, styles, position, tags)
+    updated_content = update_ass_formatting(
+        ass_content=current_content,
+        config=styling_cfg if (req.styling_modified or req.styling) else None,
+        video_meta=meta,
+    )
+
+    # 5. Save updated content back to the resolved ASS file
+    os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(updated_content)
+
+    if req.task_id:
+        output_ass_path = os.path.join(OUTPUTS_DIR, f"{req.task_id}.ass")
+        try:
+            with open(output_ass_path, "w", encoding="utf-8") as f:
+                f.write(updated_content)
+        except Exception:
+            pass
 
     # Determine output MP4 path
     raw_name = (req.output_filename or "").strip()
@@ -1314,6 +1384,7 @@ def burn_video_endpoint(req: BurnVideoRequest, auth: str = Depends(verify_auth))
         "video_filename": os.path.basename(saved_target),
         "ass_file": file_path,
         "ass_filename": os.path.basename(file_path),
+        "ass_content": updated_content,
         "download_url": f"/api/download/{burn_task_id}",
         "video_download_url": f"/api/download-video/{burn_task_id}",
         "message": f"Successfully burned subtitles into {os.path.basename(saved_target)} with NVIDIA RTX A5000 NVENC."
