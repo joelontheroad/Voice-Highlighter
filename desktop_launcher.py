@@ -19,10 +19,48 @@ import urllib.request
 import webbrowser
 
 SERVER_HOST = "127.0.0.1"
-SERVER_PORT = 8000
+DEFAULT_PORT = 8672
 AUTH_TOKEN = os.environ.get("VOICE_HIGHLIGHTER_AUTH_TOKEN") or secrets.token_hex(32)
-# SECURITY: Bind strictly to loopback 127.0.0.1 and pass ephemeral token in URL
-SERVER_URL = f"http://{SERVER_HOST}:{SERVER_PORT}/?token={AUTH_TOKEN}"
+
+
+def resolve_port(custom_port: int | None = None) -> int:
+    """Resolve the TCP port applying Directive 4 5-tier precedence.
+
+    Order of evaluation:
+    1. CLI argument or explicit function parameter
+    2. VOICE_HIGHLIGHTER_PORT environment variable
+    3. Built-in default port 8672
+
+    Args:
+        custom_port: Optional port explicitly provided by caller.
+
+    Returns:
+        Validated TCP port integer.
+    """
+    if custom_port is not None:
+        return custom_port
+
+    if "--port" in sys.argv:
+        try:
+            idx = sys.argv.index("--port")
+            if idx + 1 < len(sys.argv):
+                return int(sys.argv[idx + 1])
+        except (ValueError, IndexError):
+            pass
+
+    env_port = os.environ.get("VOICE_HIGHLIGHTER_PORT")
+    if env_port:
+        try:
+            return int(env_port)
+        except ValueError:
+            pass
+
+    return DEFAULT_PORT
+
+
+def get_server_url(port: int, host: str = SERVER_HOST) -> str:
+    """Generate authenticated local loopback URL with ephemeral token."""
+    return f"http://{host}:{port}/?token={AUTH_TOKEN}"
 
 
 def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
@@ -40,18 +78,18 @@ def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
         return s.connect_ex((host, port)) == 0
 
 
-def wait_for_server(target: str = SERVER_HOST, port: int = SERVER_PORT, timeout: float = 12.0) -> bool:
+def wait_for_server(host: str = SERVER_HOST, port: int = DEFAULT_PORT, timeout: float = 12.0) -> bool:
     """Poll the backend server health check endpoint until it responds.
 
     Args:
-        target: Target IP address or hostname.
+        host: Target IP address or hostname.
         port: Listening port number.
         timeout: Maximum seconds to poll before returning failure.
 
     Returns:
         True if the server responded with HTTP 200; False on timeout.
     """
-    check_url = f"http://{SERVER_HOST}:{SERVER_PORT}/api/system-info"
+    check_url = f"http://{host}:{port}/api/system-info"
     start = time.time()
     while time.time() - start < timeout:
         try:
@@ -63,23 +101,35 @@ def wait_for_server(target: str = SERVER_HOST, port: int = SERVER_PORT, timeout:
     return False
 
 
-def start_backend_server() -> subprocess.Popen | None:
+def start_backend_server(port: int = DEFAULT_PORT, host: str = SERVER_HOST) -> subprocess.Popen | None:
     """Launch the Uvicorn web server in a background subprocess.
+
+    Args:
+        port: TCP port number to bind.
+        host: Host loopback interface to bind.
 
     Returns:
         A subprocess.Popen instance representing the server, or None if already running.
     """
-    if is_port_in_use(SERVER_PORT, SERVER_HOST):
-        print(f"[Desktop Launcher] Server already running on port {SERVER_PORT}")
-        return None
+    if is_port_in_use(port, host):
+        # Verify if the existing service is indeed Voice Highlighter
+        if wait_for_server(host=host, port=port, timeout=1.0):
+            print(f"[Desktop Launcher] Voice Highlighter server already running on port {port}")
+            return None
+        sys.stderr.write(
+            f"[Desktop Launcher] Error: Port {port} is already in use by another application.\n"
+            f"[Desktop Launcher] Please specify a different port using --port <port> or VOICE_HIGHLIGHTER_PORT=<port>.\n"
+        )
+        sys.stderr.flush()
+        sys.exit(1)
 
     project_root = os.path.dirname(os.path.abspath(__file__))
     # SECURITY: Pass discrete arguments and enforce loopback host 127.0.0.1 (CWE-78)
     cmd = [
         sys.executable, "-m", "uvicorn",
         "backend.app:app",
-        "--host", SERVER_HOST,
-        "--port", str(SERVER_PORT),
+        "--host", host,
+        "--port", str(port),
     ]
     env = os.environ.copy()
     env["PYTHONWARNINGS"] = "ignore:resource_tracker"
@@ -135,10 +185,13 @@ def launch_browser_app_mode(url: str) -> bool:
     return False
 
 
-def main() -> None:
+def main(port: int | None = None) -> None:
     """Orchestrate desktop server startup, window presentation, and graceful exit."""
-    server_proc = start_backend_server()
-    if not wait_for_server(SERVER_URL):
+    active_port = resolve_port(port)
+    server_url = get_server_url(active_port)
+
+    server_proc = start_backend_server(port=active_port)
+    if not wait_for_server(host=SERVER_HOST, port=active_port):
         print("[Desktop Launcher] Waiting for server took longer than expected; proceeding to UI.")
 
     has_pywebview = False
@@ -153,7 +206,7 @@ def main() -> None:
             print("[Desktop Launcher] Opening native desktop window with PyWebView...")
             webview.create_window(
                 title="Voice Highlighter",
-                url=SERVER_URL,
+                url=server_url,
                 width=1400,
                 height=900,
                 min_size=(1024, 680),
@@ -162,10 +215,10 @@ def main() -> None:
             webview.start()
         except Exception as e:
             print(f"[Desktop Launcher] PyWebView display initialization failed ({e}). Falling back to App Mode.")
-            launch_browser_app_mode(SERVER_URL)
+            launch_browser_app_mode(server_url)
     else:
         print("[Desktop Launcher] Launching in App Mode...")
-        launch_browser_app_mode(SERVER_URL)
+        launch_browser_app_mode(server_url)
 
     # Graceful shutdown of backend server when window closes
     if server_proc and server_proc.poll() is None:

@@ -37,7 +37,7 @@ Accelerated with **WhisperX AI** (word-level forced alignment) and hardware-acce
    ```bash
    voice-highlighter serve
    ```
-   *Opens strictly on `127.0.0.1:8000` with an ephemeral single-session launch token.*
+   *Opens strictly on `127.0.0.1:8672` (or custom `VOICE_HIGHLIGHTER_PORT`) with an ephemeral single-session launch token.*
 
 3. **Or Launch in Desktop Window Mode**:
    ```bash
@@ -58,8 +58,8 @@ The `voice-highlighter` command conforms strictly to POSIX CLI stream separation
 | `--verbose` | None | Enable verbose diagnostic logging to `stderr`. |
 | `--json` | None | Output machine-readable structured JSON to `stdout`. |
 | `--reset-config` | None | Purge user presets/config and restore factory defaults. |
-| `serve` | `[--host 127.0.0.1] [--port 8000] [--no-browser]` | Start the local web studio on localhost. |
-| `desktop` | None | Launch standalone chromeless desktop window. |
+| `serve` | `[--host 127.0.0.1] [--port 8672] [--no-browser]` | Start the local web studio on localhost. Port can also be configured via `VOICE_HIGHLIGHTER_PORT`. |
+| `desktop` | `[--port 8672]` | Launch standalone chromeless desktop window. |
 | `preset list` | `[--json]` | List all locally available style presets. |
 | `preset show` | `[name] [--json]` | Display preset configuration in YAML or JSON format. |
 | `run` | `[input] [--preset default]` | Process input subtitle/audio file, or read from standard input (`-`). |

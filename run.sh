@@ -20,13 +20,15 @@ export PYTHONWARNINGS="ignore:resource_tracker"
 
 # Run dedicated desktop app window mode if requested
 if [[ "$*" == *"--app"* ]] || [[ "$*" == *"--desktop"* ]]; then
-    exec python3 desktop_launcher.py
+    exec python3 desktop_launcher.py "$@"
 fi
+
+DEFAULT_PORT="${VOICE_HIGHLIGHTER_PORT:-8672}"
 
 echo "=========================================================="
 echo " Starting Voice Highlighter Studio"
 echo " Adaptive hardware acceleration (NVIDIA / Apple Silicon / CPU)"
-echo " Open http://localhost:8000 in your browser"
+echo " Open http://127.0.0.1:$DEFAULT_PORT in your browser"
 echo "=========================================================="
 
 # Check if development reload flag was requested (--reload or --dev)
@@ -35,4 +37,4 @@ if [[ "$*" == *"--reload"* ]] || [[ "$*" == *"--dev"* ]]; then
     RELOAD_FLAG="--reload"
 fi
 
-exec python3 -m backend.cli serve --host 127.0.0.1 --port 8000 $RELOAD_FLAG "$@"
+exec python3 -m backend.cli serve --host 127.0.0.1 $RELOAD_FLAG "$@"

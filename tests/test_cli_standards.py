@@ -158,7 +158,7 @@ def test_format_clickable_url():
         def isatty(self) -> bool:
             return False
 
-    url = "http://127.0.0.1:8000/?token=abc123xyz"
+    url = "http://127.0.0.1:8672/?token=abc123xyz"
 
     # Test interactive TTY without NO_COLOR
     orig_no_color = os.environ.pop("NO_COLOR", None)
@@ -221,4 +221,50 @@ def test_is_headless():
                 os.environ[var] = val
             else:
                 os.environ.pop(var, None)
+
+
+def test_cli_serve_default_port(isolated_env):
+    """Verify that the serve subcommand advertises unique default port 8672."""
+    res = run_cli("serve", "--help", env=isolated_env)
+    assert res.returncode == 0
+    assert "8672" in res.stdout
+
+
+def test_cli_serve_env_port_override(isolated_env):
+    """Verify that VOICE_HIGHLIGHTER_PORT environment variable overrides serve default."""
+    env = isolated_env.copy()
+    env["VOICE_HIGHLIGHTER_PORT"] = "8999"
+    res = run_cli("serve", "--help", env=env)
+    assert res.returncode == 0
+    assert "8999" in res.stdout
+
+
+def test_cli_desktop_help_port(isolated_env):
+    """Verify that desktop subcommand accepts --port argument."""
+    res = run_cli("desktop", "--help", env=isolated_env)
+    assert res.returncode == 0
+    assert "--port" in res.stdout
+    assert "8672" in res.stdout
+
+
+def test_desktop_launcher_resolve_port(monkeypatch):
+    """Verify 5-tier precedence for port resolution in desktop launcher."""
+    from desktop_launcher import resolve_port
+
+    # 1. Parameter precedence
+    assert resolve_port(9100) == 9100
+
+    # 2. CLI flag precedence
+    monkeypatch.setattr(sys, "argv", ["desktop_launcher.py", "--port", "9200"])
+    assert resolve_port() == 9200
+
+    # 3. Environment variable precedence
+    monkeypatch.setattr(sys, "argv", ["desktop_launcher.py"])
+    monkeypatch.setenv("VOICE_HIGHLIGHTER_PORT", "9300")
+    assert resolve_port() == 9300
+
+    # 4. Default fallback
+    monkeypatch.delenv("VOICE_HIGHLIGHTER_PORT", raising=False)
+    assert resolve_port() == 8672
+
 

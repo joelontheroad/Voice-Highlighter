@@ -22,6 +22,26 @@ from backend.config import (
     reset_all_configuration,
 )
 
+DEFAULT_PORT = 8672
+
+
+def get_default_port() -> int:
+    """Resolve the default network port from environment or fallback constant.
+
+    Implements Directive 4 5-tier configuration precedence:
+    CLI flags > VOICE_HIGHLIGHTER_PORT env var > default port (8672).
+
+    Returns:
+        Integer TCP port number.
+    """
+    env_port = os.environ.get("VOICE_HIGHLIGHTER_PORT")
+    if env_port:
+        try:
+            return int(env_port)
+        except ValueError:
+            pass
+    return DEFAULT_PORT
+
 
 def setup_signal_handlers() -> None:
     """Register signal handlers to gracefully handle SIGINT and SIGTERM.
@@ -153,12 +173,13 @@ def main(argv: list[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="subcommand", help="Available subcommands")
 
     # 'serve' subcommand
+    default_port = get_default_port()
     serve_parser = subparsers.add_parser("serve", parents=[common_parser], help="Launch the local web interface strictly on localhost.")
     serve_parser.add_argument(
         "--port",
         type=int,
-        default=8000,
-        help="Port number to bind (default: 8000).",
+        default=default_port,
+        help=f"Port number to bind (default: {default_port}, or VOICE_HIGHLIGHTER_PORT).",
     )
     # SECURITY: Bind strictly to loopback interface 127.0.0.1 by default to prevent unauthorized network exposure
     serve_parser.add_argument(
@@ -179,7 +200,13 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # 'desktop' subcommand
-    subparsers.add_parser("desktop", parents=[common_parser], help="Launch native desktop chromeless window.")
+    desktop_parser = subparsers.add_parser("desktop", parents=[common_parser], help="Launch native desktop chromeless window.")
+    desktop_parser.add_argument(
+        "--port",
+        type=int,
+        default=default_port,
+        help=f"Port number for backend server (default: {default_port}, or VOICE_HIGHLIGHTER_PORT).",
+    )
 
     # 'preset' subcommand
     preset_parser = subparsers.add_parser("preset", parents=[common_parser], help="Inspect and manage local YAML presets.")
@@ -226,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
     # Handler: desktop
     if args.subcommand == "desktop":
         from desktop_launcher import main as desktop_main
-        desktop_main()
+        desktop_main(port=args.port)
         return 0
 
     # Handler: preset

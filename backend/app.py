@@ -1562,7 +1562,7 @@ async def serve_index(request: Request, token: str | None = Query(None)):
     if not is_authorized:
         return HTMLResponse(
             "<h3>401 Unauthorized</h3><p>Voice Highlighter requires an authenticated session.</p>"
-            "<p>Please open the authenticated link printed in your terminal (e.g. <code>http://127.0.0.1:8000/?token=...</code>).</p>",
+            "<p>Please open the authenticated link printed in your terminal (e.g. <code>http://127.0.0.1:8672/?token=...</code>).</p>",
             status_code=401
         )
 
@@ -1636,7 +1636,7 @@ def open_browser_window(url: str) -> None:
 
 
 def run_server(
-    port: int = 8000,
+    port: int = 8672,
     host: str = "127.0.0.1",
     reload: bool = False,
     no_browser: bool = False,
@@ -1644,7 +1644,7 @@ def run_server(
     """Run the local uvicorn server strictly bound to localhost.
 
     Args:
-        port: Network port number to bind.
+        port: Network port number to bind (default 8672).
         host: Interface IP address, default 127.0.0.1 (localhost only).
         reload: Whether to enable auto-reloading for development.
         no_browser: Whether to suppress automatic default browser launch on startup.
@@ -1667,10 +1667,16 @@ def run_server(
         timer.daemon = True
         timer.start()
 
-    if reload:
-        uvicorn.run("backend.app:app", host=host, port=port, reload=True, reload_dirs=["backend"])
-    else:
-        uvicorn.run(app, host=host, port=port, log_level="warning")
+    try:
+        if reload:
+            uvicorn.run("backend.app:app", host=host, port=port, reload=True, reload_dirs=["backend"])
+        else:
+            uvicorn.run(app, host=host, port=port, log_level="warning")
+    except OSError as exc:
+        sys.stderr.write(f"\n[Voice Highlighter] Error: Could not bind to {host}:{port} ({exc}).\n")
+        sys.stderr.write("[Voice Highlighter] The port may already be in use. Pass '--port <PORT>' or set VOICE_HIGHLIGHTER_PORT to choose a different port.\n")
+        sys.stderr.flush()
+        sys.exit(1)
 
 
 # Mount static frontend files
