@@ -1630,15 +1630,30 @@ def is_headless() -> bool:
 def open_browser_window(url: str) -> None:
     """Safely open the target URL in the user's default browser window without crashing.
 
+    Silences noisy stderr messages produced by external browser helper processes
+    (e.g., Chromium Linux zygote Broken pipe messages when attaching to an existing session).
+
     Args:
         url: Application URL including ephemeral authentication token.
     """
     try:
+        import shutil
+
+        if sys.platform.startswith("linux") and shutil.which("xdg-open"):
+            subprocess.Popen(
+                ["xdg-open", url],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            return
+
         import webbrowser
         webbrowser.open(url)
     except Exception as exc:
         # SECURITY: Catch any browser launch failures without crashing the server process
         sys.stderr.write(f"[Voice Highlighter] Notice: Could not open browser ({exc}).\n")
+
 
 
 def run_server(
