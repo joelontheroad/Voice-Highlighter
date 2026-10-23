@@ -142,6 +142,12 @@ Please review our [SECURITY.md](SECURITY.md) for details on responsible vulnerab
 
 ---
 
+## ❓ Questions & Answers (Q&A)
+
+For answers to frequently asked architectural, algorithmic, and operational questions (including multi-speaker distinction, diarization mechanics, and styling pipelines), consult [QA.md](QA.md).
+
+---
+
 ## 📄 License & Source Notice
 
 This project is licensed under the **GNU Affero General Public License v3.0 or later** ([GNU AGPLv3+](LICENSE)).
