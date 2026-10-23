@@ -17,6 +17,7 @@ from backend.app import (
     UpdateAssRequest,
     _resolve_ass_file_path,
     burn_video_endpoint,
+    get_ass_content,
     get_system_info,
     update_ass_content,
 )
@@ -366,4 +367,62 @@ def test_preset_persistence_cycle(tmp_path: Path, monkeypatch) -> None:
     deleted = delete_preset("test_custom_style")
     assert deleted is True
     assert not saved_path.exists()
+
+
+def test_get_ass_content_includes_video_deliverable_metadata(tmp_path: Path) -> None:
+    """Validate that get_ass_content includes video_file and video_filename deliverables."""
+    dummy_ass = tmp_path / "sample.ass"
+    dummy_ass.write_text(
+        "[Script Info]\nTitle: Test\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,{\\k20}Hello\n",
+        encoding="utf-8",
+    )
+
+    from backend.app import tasks
+
+    test_task_id = "test-task-deliverables-123"
+    tasks[test_task_id] = {
+        "task_id": test_task_id,
+        "ass_file": str(dummy_ass),
+        "video_file": "/tmp/media/sample_voice_titles.mp4",
+        "custom_filename": "sample_voice_titles",
+    }
+
+    res = get_ass_content(task_id=test_task_id)
+    assert res["success"] is True
+    assert res["has_burned_video"] is True
+    assert res["video_file"] == "/tmp/media/sample_voice_titles.mp4"
+    assert res["video_filename"] == "sample_voice_titles.mp4"
+
+
+def test_frontend_deliverable_bar_clean_layout() -> None:
+    """Validate that index.html and style.css implement the clean full-filename deliverable bar without overlapping badges."""
+    repo_root = Path(__file__).resolve().parent.parent
+    html_path = repo_root / "frontend" / "index.html"
+    css_path = repo_root / "frontend" / "style.css"
+
+    html_content = html_path.read_text(encoding="utf-8")
+    css_content = css_path.read_text(encoding="utf-8")
+
+    # Confirm clean deliverable label and input wrap
+    assert 'class="studio-filename-label"' in html_content
+    assert "Deliverable Base Name:" in html_content
+    assert 'id="outputFilenameInput"' in html_content
+    assert 'class="text-input filename-base-input"' in html_content
+
+    # Confirm full filename deliverable chips
+    assert 'id="chipActiveAss"' in html_content
+    assert 'id="valActiveAss"' in html_content
+    assert 'id="statusActiveAss"' in html_content
+    assert 'id="chipActiveVideo"' in html_content
+    assert 'id="valActiveVideo"' in html_content
+    assert 'id="statusActiveVideo"' in html_content
+
+    # Confirm removal of broken extension badge .ass / .mp4
+    assert ".ass / .mp4" not in html_content
+
+    # Confirm CSS does not position badges absolutely over input/label
+    assert ".studio-filename-bar" in css_content
+    assert ".deliverable-asset-chip" in css_content
+    assert ".deliverable-chip-name" in css_content
+
 

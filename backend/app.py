@@ -1153,7 +1153,9 @@ def get_ass_content(
         "detected_speakers": unique_speakers_found,
         "speaker_count": len(unique_speakers_found),
         "is_multi_speaker": len(unique_speakers_found) > 1,
-        "has_burned_video": bool(t.get("video_file") if t else False)
+        "has_burned_video": bool(t.get("video_file") if t else False),
+        "video_file": t.get("video_file") if t else None,
+        "video_filename": os.path.basename(t.get("video_file")) if (t and t.get("video_file")) else None
     }
 
 

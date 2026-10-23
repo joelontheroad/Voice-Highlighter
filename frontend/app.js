@@ -52,6 +52,9 @@ document.addEventListener("DOMContentLoaded", () => {
     pollInterval: null,
     hasExistingAss: false,
     existingAssPath: null,
+    existingAssName: null,
+    lastBurnedVideoPath: null,
+    lastBurnedVideoFilename: null,
     hasExistingWav: false,
     existingWavPath: null,
     // Multi-Speaker Color Channels
@@ -253,6 +256,105 @@ document.addEventListener("DOMContentLoaded", () => {
   const outputModeHint = document.getElementById("outputModeHint");
   const outputFilenameInput = document.getElementById("outputFilenameInput");
   const filenameExtBadge = document.getElementById("filenameExtBadge");
+  const valActiveAss = document.getElementById("valActiveAss");
+  const valActiveVideo = document.getElementById("valActiveVideo");
+  const statusActiveAss = document.getElementById("statusActiveAss");
+  const statusActiveVideo = document.getElementById("statusActiveVideo");
+  const chipActiveAss = document.getElementById("chipActiveAss");
+  const chipActiveVideo = document.getElementById("chipActiveVideo");
+
+  /**
+   * Synchronize the full filenames and live status of output deliverables (.ass and .mp4).
+   * Ensures the user always sees the complete deliverable filenames instead of bare extensions.
+   */
+  function syncDeliverableFilenames() {
+    const rawVal = outputFilenameInput ? outputFilenameInput.value.trim() : "";
+    let cleanBase = rawVal || state.outputFilename || "";
+    if (cleanBase) {
+      cleanBase = cleanBase.replace(/\.(ass|mp4)$/i, "").trim();
+    }
+    if (!cleanBase) {
+      if (state.videoMeta?.base_name) {
+        cleanBase = `${state.videoMeta.base_name}_voice_titles`;
+      } else {
+        cleanBase = "voice_titles";
+      }
+    }
+
+    // 1. Subtitles Deliverable (.ass)
+    if (valActiveAss) {
+      if (state.hasExistingAss && state.existingAssName) {
+        valActiveAss.textContent = state.existingAssName;
+        if (statusActiveAss) {
+          statusActiveAss.textContent = "✓ Ready";
+          statusActiveAss.className = "deliverable-status-tag ready";
+        }
+        if (chipActiveAss) {
+          chipActiveAss.classList.add("is-ready");
+          chipActiveAss.title = `Subtitles deliverable ready: ${state.existingAssName} (Click to inspect & edit words)`;
+        }
+      } else {
+        valActiveAss.textContent = `${cleanBase}.ass`;
+        if (statusActiveAss) {
+          statusActiveAss.textContent = "Not generated";
+          statusActiveAss.className = "deliverable-status-tag pending";
+        }
+        if (chipActiveAss) {
+          chipActiveAss.classList.remove("is-ready");
+          chipActiveAss.title = `Target subtitles deliverable: ${cleanBase}.ass (Run Step 1 to generate)`;
+        }
+      }
+    }
+
+    // 2. Burned Video Deliverable (.mp4)
+    if (valActiveVideo) {
+      if (state.lastBurnedVideoPath) {
+        const burnedName = state.lastBurnedVideoFilename || state.lastBurnedVideoPath.split("/").pop();
+        valActiveVideo.textContent = burnedName;
+        if (statusActiveVideo) {
+          statusActiveVideo.textContent = "✓ Ready";
+          statusActiveVideo.className = "deliverable-status-tag ready";
+        }
+        if (chipActiveVideo) {
+          chipActiveVideo.classList.add("is-ready");
+          chipActiveVideo.title = `Burned video deliverable ready: ${burnedName} (Click to open in player)`;
+        }
+      } else {
+        valActiveVideo.textContent = `${cleanBase}.mp4`;
+        if (statusActiveVideo) {
+          statusActiveVideo.textContent = "Not burned";
+          statusActiveVideo.className = "deliverable-status-tag pending";
+        }
+        if (chipActiveVideo) {
+          chipActiveVideo.classList.remove("is-ready");
+          chipActiveVideo.title = `Target burned video deliverable: ${cleanBase}.mp4 (Run Step 3 to burn)`;
+        }
+      }
+    }
+  }
+
+  // Interactive chip shortcuts
+  if (chipActiveAss) {
+    chipActiveAss.addEventListener("click", () => {
+      if (state.hasExistingAss && cardSubtitleDrawer) {
+        cardSubtitleDrawer.classList.remove("collapsed");
+        cardSubtitleDrawer.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    });
+  }
+
+  if (chipActiveVideo) {
+    chipActiveVideo.addEventListener("click", () => {
+      if (state.lastBurnedVideoPath) {
+        const btnOpenVideo = document.getElementById("btnOpenVideo");
+        if (btnOpenVideo) {
+          btnOpenVideo.click();
+        } else if (burnedDeliveryBanner) {
+          burnedDeliveryBanner.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+      }
+    });
+  }
 
   // Social Media Overlay Controls
   const socialPlatformBtns = document.querySelectorAll("#socialPlatformSelector .mini-pill-btn");
@@ -312,8 +414,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const drawerStatusText = document.getElementById("drawerStatusText");
   const btnDrawerRevert = document.getElementById("btnDrawerRevert");
   const btnDrawerBurn = document.getElementById("btnDrawerBurn");
-  const valActiveAss = document.getElementById("valActiveAss");
-  const valActiveVideo = document.getElementById("valActiveVideo");
   const btnModalSaveAndBurn = document.getElementById("btnModalSaveAndBurn");
 
   // Stepper Nodes
@@ -655,6 +755,10 @@ document.addEventListener("DOMContentLoaded", () => {
       metaRes.textContent = `Resolution: ${data.meta.width} × ${data.meta.height} (${data.meta.is_vertical ? '9:16' : '16:9'})`;
       metaDuration.textContent = `Duration: ${Math.round(data.meta.duration)}s`;
 
+      // Reset burned video deliverable on new source video load
+      state.lastBurnedVideoPath = null;
+      state.lastBurnedVideoFilename = null;
+
       // Update suggested deliverable filename if not customized yet
       if (data.suggested_filename) {
         state.outputFilename = data.suggested_filename;
@@ -672,7 +776,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (data.has_existing_ass) {
         state.hasExistingAss = true;
         state.existingAssPath = data.existing_ass_path;
-        if (valActiveAss) valActiveAss.textContent = data.existing_ass_name || data.existing_ass_path;
+        state.existingAssName = data.existing_ass_name || (data.existing_ass_path ? data.existing_ass_path.split("/").pop() : null);
         if (badgeExistingAss) {
           badgeExistingAss.classList.remove("hidden");
           if (badgeExistingAssText) {
@@ -703,7 +807,7 @@ document.addEventListener("DOMContentLoaded", () => {
       } else {
         state.hasExistingAss = false;
         state.existingAssPath = null;
-        if (valActiveAss) valActiveAss.textContent = "None generated yet";
+        state.existingAssName = null;
         if (badgeExistingAss) badgeExistingAss.classList.add("hidden");
         if (btnBurnOnly) {
           btnBurnOnly.classList.add("disabled");
@@ -712,6 +816,9 @@ document.addEventListener("DOMContentLoaded", () => {
         if (titleGenerateAss) titleGenerateAss.textContent = "Generate Subtitles (.ass format)";
         if (descGenerateAss) descGenerateAss.textContent = "Generate text from speech. You can edit the transcription in Step 2.";
         updateWorkflowStepper('idle');
+      }
+
+      syncDeliverableFilenames();
 
         // As there is no .ass created from audio yet, display "lorem ipsum" text with animated highlighting
         state.previewText = "Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt.";
@@ -1515,6 +1622,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (outputFilenameInput) {
     outputFilenameInput.addEventListener("input", (e) => {
       state.outputFilename = e.target.value.trim();
+      syncDeliverableFilenames();
     });
   }
 
@@ -1797,11 +1905,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  if (outputFilenameInput) {
-    outputFilenameInput.addEventListener("input", (e) => {
-      state.outputFilename = e.target.value.trim();
-    });
-  }
+
 
   // ----------------------------------------------------
   // 5. Submit Job & Progress Polling
@@ -1906,9 +2010,8 @@ document.addEventListener("DOMContentLoaded", () => {
       burnedDeliveryBanner.classList.remove("hidden");
       if (burnedVideoPathText) burnedVideoPathText.textContent = videoPath;
       state.lastBurnedVideoPath = videoPath;
-      if (valActiveVideo) {
-        valActiveVideo.textContent = filename || videoPath.split("/").pop() || videoPath;
-      }
+      state.lastBurnedVideoFilename = filename || (videoPath ? videoPath.split("/").pop() : null);
+      syncDeliverableFilenames();
       burnedDeliveryBanner.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   }
@@ -1949,19 +2052,18 @@ document.addEventListener("DOMContentLoaded", () => {
         state.currentTaskId = data.task_id;
         state.hasExistingAss = true;
         state.existingAssPath = data.download_url;
+        state.existingAssName = `${data.custom_filename || 'subtitles'}.ass`;
 
         if (btnDownloadAss) {
           btnDownloadAss.href = data.download_url;
           if (data.custom_filename) btnDownloadAss.download = `${data.custom_filename}.ass`;
         }
-        if (valActiveAss) {
-          valActiveAss.textContent = `${data.custom_filename || 'subtitles'}.ass`;
-        }
 
         if (data.video_download_url || data.video_file) {
           const finalVideoPath = data.video_file || `${state.videoPath || ''}`;
           state.lastBurnedVideoPath = finalVideoPath;
-          showDeliveryBanner(finalVideoPath, data.video_filename || data.custom_filename);
+          state.lastBurnedVideoFilename = data.video_filename || `${data.custom_filename || 'video'}.mp4`;
+          showDeliveryBanner(finalVideoPath, state.lastBurnedVideoFilename);
           updateWorkflowStepper('burned');
         } else {
           if (burnedDeliveryBanner) burnedDeliveryBanner.classList.add("hidden");
@@ -1972,6 +2074,7 @@ document.addEventListener("DOMContentLoaded", () => {
             cardSubtitleDrawer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           }
         }
+        syncDeliverableFilenames();
 
         if (codeBodyPreview) codeBodyPreview.textContent = data.ass_preview || "; Generated Subtitles Ready";
         if (btnGenerateAssOnly) btnGenerateAssOnly.classList.remove('disabled');
@@ -2140,7 +2243,12 @@ document.addEventListener("DOMContentLoaded", () => {
       updateDrawerStatus(`✓ Video burned successfully: ${data.video_filename}`, 'success');
 
       state.lastBurnedVideoPath = data.video_path || data.video_file;
-      if (valActiveVideo) valActiveVideo.textContent = data.video_filename || data.video_file;
+      state.lastBurnedVideoFilename = data.video_filename || (state.lastBurnedVideoPath ? state.lastBurnedVideoPath.split("/").pop() : null);
+      if (data.ass_filename) {
+        state.hasExistingAss = true;
+        state.existingAssName = data.ass_filename;
+      }
+      syncDeliverableFilenames();
 
       updateThermometer(100, "✓ NVENC hardware burn complete in ~3 seconds!", 5);
       setTimeout(() => {
@@ -3655,8 +3763,13 @@ document.addEventListener("DOMContentLoaded", () => {
         updateSpeakerControlsVisibility(1);
       }
 
-      if (valActiveAss) valActiveAss.textContent = data.filename || data.file_path;
-      if (valActiveVideo && data.has_burned_video) valActiveVideo.textContent = 'Burned video ready';
+      state.hasExistingAss = true;
+      state.existingAssName = data.filename || (data.file_path ? data.file_path.split("/").pop() : null);
+      if (data.has_burned_video && (data.video_filename || data.video_file)) {
+        state.lastBurnedVideoPath = data.video_file;
+        state.lastBurnedVideoFilename = data.video_filename || (data.video_file ? data.video_file.split("/").pop() : null);
+      }
+      syncDeliverableFilenames();
 
       renderDrawerDialogueItems(editorState.dialogues);
       updateDrawerStatus('Subtitles ready • Click any row to edit', 'normal');
@@ -3741,7 +3854,11 @@ document.addEventListener("DOMContentLoaded", () => {
       if (codeBodyPreview && data.preview) {
         codeBodyPreview.textContent = data.preview;
       }
-      if (valActiveAss) valActiveAss.textContent = data.filename || data.file_path;
+      if (data.filename) {
+        state.existingAssName = data.filename;
+        state.hasExistingAss = true;
+      }
+      syncDeliverableFilenames();
       renderDrawerDialogueItems(editorState.dialogues);
 
       if (modalAssEditor && !modalAssEditor.classList.contains("hidden")) {
@@ -3890,6 +4007,7 @@ document.addEventListener("DOMContentLoaded", () => {
   updateStageVisibility();
   renderSubtitlePreview();
   renderSocialOverlay();
+  syncDeliverableFilenames();
   if (state.videoPath) {
     loadVideoInfo(state.videoPath);
   }

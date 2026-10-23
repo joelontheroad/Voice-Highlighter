@@ -374,17 +374,43 @@
         </div>
 
         <!-- Deliverable Filename Bar -->
-        <div class="studio-filename-bar">
+        <div class="studio-filename-bar" id="studioFilenameBar">
           <div class="studio-filename-group">
-            <label for="outputFilenameInput">Output Deliverable Name:</label>
-            <div class="filename-input-group">
-              <input type="text" id="outputFilenameInput" class="text-input" placeholder="filename_without_extension">
-              <span class="filename-ext-badge" id="filenameExtBadge">.ass / .mp4</span>
+            <label for="outputFilenameInput" class="studio-filename-label">
+              <span class="filename-label-text">Deliverable Base Name:</span>
+              <span class="filename-label-hint">Names both .ass &amp; .mp4</span>
+            </label>
+            <div class="filename-input-wrap">
+              <input 
+                type="text" 
+                id="outputFilenameInput" 
+                class="text-input filename-base-input" 
+                placeholder="e.g. video_voice_titles" 
+                autocomplete="off" 
+                spellcheck="false"
+                title="Enter custom base filename for generated subtitles (.ass) and burned video (.mp4)"
+              >
             </div>
           </div>
-          <div class="active-assets-mini">
-            <span class="mini-asset-chip" id="chipActiveAss">📝 Subtitles: <strong id="valActiveAss">None yet</strong></span>
-            <span class="mini-asset-chip" id="chipActiveVideo">🎬 Burned: <strong id="valActiveVideo">None yet</strong></span>
+          <div class="studio-deliverables-display">
+            <!-- Full Subtitles Deliverable Chip -->
+            <div class="deliverable-asset-chip" id="chipActiveAss" title="Subtitle file deliverable (.ass format)">
+              <span class="deliverable-chip-icon">📝</span>
+              <div class="deliverable-chip-meta">
+                <span class="deliverable-chip-label">Subtitles:</span>
+                <strong class="deliverable-chip-name" id="valActiveAss">voice_titles.ass</strong>
+              </div>
+              <span class="deliverable-status-tag pending" id="statusActiveAss">Not generated</span>
+            </div>
+            <!-- Full Burned Video Deliverable Chip -->
+            <div class="deliverable-asset-chip" id="chipActiveVideo" title="Burned video deliverable (.mp4 format)">
+              <span class="deliverable-chip-icon">🎬</span>
+              <div class="deliverable-chip-meta">
+                <span class="deliverable-chip-label">Burned Video:</span>
+                <strong class="deliverable-chip-name" id="valActiveVideo">voice_titles.mp4</strong>
+              </div>
+              <span class="deliverable-status-tag pending" id="statusActiveVideo">Not burned</span>
+            </div>
           </div>
         </div>
 
