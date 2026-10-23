@@ -155,6 +155,23 @@ Unlike conventional web applications that expose HTTP ports to the local area ne
 
 ---
 
+### 2.5 Dual-Constraint Typographic Cadence & Interactive Bounding Envelope System
+
+To resolve the tension between video aspect boundaries and human reading comprehension speeds in short-form video (9:16 vertical video):
+
+1. **Decoupled Geometric and Typographic Constraints**:
+   - The subtitle system enforces a strict dual-boundary model: a spatial geometric boundary $W_{\text{pct}}$ defining ASS subtitle margins (`MarginL`, `MarginR`), and an independent typographic character budget $C_{\text{max}}$ that partitions speech into rapid, readable chunks independently of available screen width.
+   - Text wraps whenever either constraint is satisfied:
+     $$L_{\text{effective}} = \min\left(C_{\text{max}}, \max\left(12, \left\lfloor \frac{W_{\text{pct}}}{100} \times \frac{W_{\text{canvas}}}{\text{font\_size} \times 0.58} \right\rfloor\right)\right)$$
+
+2. **Dynamic Bounding Envelope Calculation with Headroom Scaling**:
+   - The interactive canvas visualizes a dynamic bounding envelope on the video stage derived in real-time from:
+     $$H_{\text{envelope}} = (M_{\text{lines}} \times H_{\text{line}}) + \Delta H_{\text{boost}} + P_{\text{box}}$$
+     where $\Delta H_{\text{boost}} = \text{font\_size} \times (\text{scale\_pct} / 100 - 1.0)$ provides the exact vertical clearance required for animated active-word scaling, and $P_{\text{box}}$ accounts for background badge padding.
+   - This provides video creators with an unambiguous visual boundary guaranteeing that subtitles never collide with platform UI elements (e.g., TikTok/Reels sidebars) under maximum line and word-boost conditions.
+
+---
+
 ## 3. Public Domain Prior Art Inheritance
 
 Voice Highlighter explicitly incorporates techniques from expired patents and historical public standards, affirming their status as unencumbered public domain technologies:

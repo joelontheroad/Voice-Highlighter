@@ -26,7 +26,10 @@
           </svg>
         </div>
         <div>
-          <h1 class="app-title">Voice Highlighter</h1>
+          <div class="brand-title-row">
+            <h1 class="app-title">Voice Highlighter</h1>
+            <span class="app-version-badge" id="appVersionBadge">v1.0.0</span>
+          </div>
           <p class="app-subtitle">Word-level animated subtitle generator powered by WhisperX</p>
         </div>
       </div>
@@ -68,34 +71,7 @@
                 </svg>
                 <span>Browse...</span>
               </button>
-              <button type="button" id="btnLoadVideo" class="btn btn-primary-gradient">Load</button>
             </div>
-          </div>
-
-          <!-- Quick Directory Jumps -->
-          <div class="quick-paths-wrap" id="quickPathsWrap">
-            <span class="quick-paths-label">Quick Jump:</span>
-            <div class="quick-paths-chips">
-              <button type="button" class="quick-chip" id="btnJumpVideos" title="Jump to user Videos directory">
-                📁 Videos
-              </button>
-              <button type="button" class="quick-chip" id="btnJumpProject" title="Jump to project folder">
-                📁 Project Dir
-              </button>
-              <button type="button" class="quick-chip" id="btnOpenInAppBrowser" title="Open in-app file browser">
-                🗂️ File Browser
-              </button>
-            </div>
-          </div>
-
-          <div class="form-group" style="margin-top: 14px;">
-            <label for="selectModelName" id="lblSelectModel">WhisperX AI Model (<span id="whisperModelDevice">CPU</span>)</label>
-            <select id="selectModelName" class="select-input">
-              <option value="large-v3" selected>large-v3 (Maximum Accuracy, 3GB)</option>
-              <option value="medium">medium (Fast & Accurate, 1.5GB)</option>
-              <option value="small">small (Very Fast, 480MB)</option>
-              <option value="base">base (Ultra Fast Preview, 140MB)</option>
-            </select>
           </div>
 
           <div class="video-meta-badges" id="videoMetaBadges">
@@ -117,12 +93,35 @@
         </div>
       </div>
 
+      <!-- AI Transcription Model Section -->
+      <div class="card glass-card card-ai-model" id="cardAiModel">
+        <div class="card-header">
+          <div class="card-title-row">
+            <span class="card-icon-badge">🧠</span>
+            <h2>AI Transcription Model</h2>
+          </div>
+          <span class="card-hint" id="hintModelDevice">WhisperX &bull; GPU Accelerated</span>
+        </div>
+        <div class="card-body">
+          <div class="form-group">
+            <label for="selectModelName" id="lblSelectModel">WhisperX Model (<span id="whisperModelDevice">CPU</span>)</label>
+            <select id="selectModelName" class="select-input">
+              <option value="large-v3" selected>large-v3 (Maximum Accuracy, 3GB)</option>
+              <option value="medium">medium (Fast & Accurate, 1.5GB)</option>
+              <option value="small">small (Very Fast, 480MB)</option>
+              <option value="base">base (Ultra Fast Preview, 140MB)</option>
+            </select>
+          </div>
+          <p class="model-description-hint">Higher-tier models offer maximum word-level alignment precision for challenging acoustic environments.</p>
+        </div>
+      </div>
+
       <!-- Style Presets Section -->
       <div class="card glass-card preset-card" id="cardPresets">
         <div class="card-header">
           <span class="preset-icon-badge">★</span>
-          <h2>Style Presets & Templates</h2>
-          <span class="card-hint">Saved in browser & exportable JSON</span>
+          <h2>Style Presets</h2>
+          <span class="card-hint">Persistent local presets & exportable JSON</span>
         </div>
         <div class="card-body">
           <div class="preset-controls-layout">
@@ -148,6 +147,10 @@
 
             <!-- Preset Action Buttons -->
             <div class="preset-actions-toolbar">
+              <button type="button" id="btnUpdatePreset" class="preset-btn-tool" title="Update active custom preset with current settings" disabled>
+                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                Update
+              </button>
               <button type="button" id="btnSavePreset" class="preset-btn-tool" title="Save current styling as a new preset">
                 <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
                 Save New...
@@ -241,6 +244,10 @@
           <div class="preview-text-controls">
             <button type="button" class="mini-btn active" id="btnTextLorem">Lorem Ipsum</button>
             <button type="button" class="mini-btn" id="btnTextDefault">Transcript Dialogue</button>
+            <button type="button" class="mini-btn" id="btnToggleBounds" title="Toggle visual boundary envelope of subtitle placement">
+              <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2.2" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" stroke-dasharray="3 3"></rect></svg>
+              <span>Text Bounds</span>
+            </button>
           </div>
         </div>
 
@@ -296,6 +303,12 @@
             <!-- Dynamic Social Media Platform Overlay (YouTube / Instagram / Facebook) -->
             <div class="social-ui-layer hidden" id="socialUiLayer"></div>
             
+            <!-- Subtitle Text Bounding Envelope (Visual boundary based on layout constraints) -->
+            <div class="subtitle-bounds-envelope hidden" id="subtitleBoundsEnvelope">
+              <div class="bounds-badge" id="boundsBadge">Bounds: 82% W • 1 Line • Max 28 Chars</div>
+              <div class="bounds-guidelines" id="boundsGuidelines"></div>
+            </div>
+
             <!-- Draggable Subtitle Box -->
             <div class="subtitle-drag-box hidden" id="subtitleDragBox" tabindex="0" title="Click and drag to position">
               <div class="drag-handle-hint">⋮⋮ Drag to Position</div>
@@ -787,6 +800,15 @@
                 </div>
               </div>
             </div>
+
+            <div class="quick-swatches" style="margin-top: -6px; margin-bottom: 6px;">
+              <span class="swatch-label">Quick Box Colors:</span>
+              <button type="button" class="swatch-btn swatch-box-bg" style="background:#000000; border: 1px solid rgba(255,255,255,0.3);" data-color="#000000" title="Pure Black"></button>
+              <button type="button" class="swatch-btn swatch-box-bg" style="background:#1E293B;" data-color="#1E293B" title="Dark Slate / Charcoal"></button>
+              <button type="button" class="swatch-btn swatch-box-bg" style="background:#FFDF00;" data-color="#FFDF00" title="Vibrant Yellow"></button>
+              <button type="button" class="swatch-btn swatch-box-bg" style="background:#00E5FF;" data-color="#00E5FF" title="Cyan Neon"></button>
+              <button type="button" class="swatch-btn swatch-box-bg" style="background:#DC2626;" data-color="#DC2626" title="Crimson Red"></button>
+            </div>
           </div>
 
           <!-- Highlight Font Size Boost Slider -->
@@ -987,7 +1009,7 @@
   <!-- Application Footer with AGPL-3.0 Section 13 Source Notice -->
   <footer class="app-footer">
     <div class="app-footer-container">
-      <span>Voice Highlighter Studio &bull; Word-Level AI Subtitling</span>
+      <span>Voice Highlighter Studio <strong id="footerVersion">v1.0.0</strong> &bull; Word-Level AI Subtitling</span>
       <span>&bull;</span>
       <a href="https://github.com/joelontheroad/Voice-Highlighter" target="_blank" rel="noopener noreferrer" class="source-code-link">Source Code (GNU AGPLv3)</a>
     </div>

@@ -81,7 +81,8 @@ document.addEventListener("DOMContentLoaded", () => {
         show_speaker_name: false
       }
     },
-    stylingModified: false
+    stylingModified: false,
+    showBounds: false
   };
 
   function getCurrentStylingPayload() {
@@ -115,14 +116,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // DOM Elements
   const videoPathInput = document.getElementById("videoPathInput");
-  const btnLoadVideo = document.getElementById("btnLoadVideo");
-
   const stagePlaceholder = document.getElementById("stagePlaceholder");
   const stagePoster = document.getElementById("stagePoster");
   const videoStage = document.getElementById("videoStage");
   const subtitleDragBox = document.getElementById("subtitleDragBox");
   const subtitleRenderedText = document.getElementById("subtitleRenderedText");
   const safeZoneOverlay = document.getElementById("safeZoneOverlay");
+  const btnToggleBounds = document.getElementById("btnToggleBounds");
+  const subtitleBoundsEnvelope = document.getElementById("subtitleBoundsEnvelope");
+  const boundsBadge = document.getElementById("boundsBadge");
+  const boundsGuidelines = document.getElementById("boundsGuidelines");
   const metaRes = document.getElementById("metaRes");
   const metaDuration = document.getElementById("metaDuration");
 
@@ -141,6 +144,7 @@ document.addEventListener("DOMContentLoaded", () => {
         stagePoster.src = "";
       }
       if (subtitleDragBox) subtitleDragBox.classList.add("hidden");
+      if (subtitleBoundsEnvelope) subtitleBoundsEnvelope.classList.add("hidden");
       if (safeZoneOverlay) safeZoneOverlay.classList.add("hidden");
       if (socialUiLayer) socialUiLayer.classList.add("hidden");
       if (metaRes) metaRes.textContent = "Resolution: --";
@@ -149,6 +153,10 @@ document.addEventListener("DOMContentLoaded", () => {
       if (stagePlaceholder) stagePlaceholder.classList.add("hidden");
       if (stagePoster) stagePoster.classList.remove("hidden");
       if (subtitleDragBox) subtitleDragBox.classList.remove("hidden");
+      if (state.showBounds && subtitleBoundsEnvelope) {
+        subtitleBoundsEnvelope.classList.remove("hidden");
+        updateBoundsEnvelope();
+      }
       if (safeZoneOverlay) safeZoneOverlay.classList.remove("hidden");
       if (state.socialPlatform !== "none" && socialUiLayer) {
         socialUiLayer.classList.remove("hidden");
@@ -225,6 +233,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const selectPreset = document.getElementById("selectPreset");
   const optgroupCustom = document.getElementById("optgroupCustom");
   const btnApplyPreset = document.getElementById("btnApplyPreset");
+  const btnUpdatePreset = document.getElementById("btnUpdatePreset");
   const btnSavePreset = document.getElementById("btnSavePreset");
   const btnRenamePreset = document.getElementById("btnRenamePreset");
   const btnDeletePreset = document.getElementById("btnDeletePreset");
@@ -333,6 +342,13 @@ document.addEventListener("DOMContentLoaded", () => {
       const wfSub1 = document.getElementById("wfSub1");
       const wfSub3 = document.getElementById("wfSub3");
       const deliveryEngineTag = document.getElementById("deliveryEngineTag");
+      const appVersionBadge = document.getElementById("appVersionBadge");
+      const footerVersion = document.getElementById("footerVersion");
+
+      if (info.version) {
+        if (appVersionBadge) appVersionBadge.textContent = `v${info.version}`;
+        if (footerVersion) footerVersion.textContent = `v${info.version}`;
+      }
 
       if (badgeText && info.active_badge_text) {
         badgeText.textContent = info.active_badge_text;
@@ -598,31 +614,19 @@ document.addEventListener("DOMContentLoaded", () => {
     btnBrowseFiles.addEventListener("click", () => openNativeFileDialog());
   }
 
-  if (btnJumpVideos) {
-    btnJumpVideos.addEventListener("click", () => openNativeFileDialog(VIDEOS_DIR));
-  }
-  if (btnJumpProject) {
-    btnJumpProject.addEventListener("click", () => openNativeFileDialog(PROJECT_DIR));
-  }
-
-  // Load Video Button
-  if (btnLoadVideo) {
-    btnLoadVideo.addEventListener("click", () => {
-      const p = videoPathInput ? videoPathInput.value.trim() : "";
-      if (!p) {
-        openNativeFileDialog();
-      } else {
-        loadVideoInfo(p);
-      }
-    });
-  }
-
   if (videoPathInput) {
     videoPathInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
         const p = videoPathInput.value.trim();
         if (p) loadVideoInfo(p);
+      }
+    });
+
+    videoPathInput.addEventListener("change", () => {
+      const p = videoPathInput.value.trim();
+      if (p && p !== state.videoPath) {
+        loadVideoInfo(p);
       }
     });
   }
@@ -685,6 +689,12 @@ document.addEventListener("DOMContentLoaded", () => {
           codeBodyPreview.textContent = data.existing_ass_preview;
         }
 
+        if (btnTextDefault) {
+          btnTextDefault.disabled = false;
+          btnTextDefault.classList.remove("disabled");
+          btnTextDefault.title = "Preview subtitle text from dialogue";
+        }
+
         // Auto-load subtitles into the inline drawer
         loadDrawerSubtitles({
           mediaPath: path,
@@ -707,7 +717,12 @@ document.addEventListener("DOMContentLoaded", () => {
         state.previewText = "Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt.";
         if (previewTextInput) previewTextInput.value = state.previewText;
         if (btnTextLorem) btnTextLorem.classList.add("active");
-        if (btnTextDefault) btnTextDefault.classList.remove("active");
+        if (btnTextDefault) {
+          btnTextDefault.disabled = true;
+          btnTextDefault.classList.add("disabled");
+          btnTextDefault.classList.remove("active");
+          btnTextDefault.title = "Transcript unavailable. Generate subtitles (.ass) first in Step 1.";
+        }
         state.activeWordIndex = 0;
         renderSubtitlePreview();
 
@@ -750,6 +765,58 @@ document.addEventListener("DOMContentLoaded", () => {
       sliderPosY.value = state.posY;
       labelPosX.textContent = `${state.posX}%`;
       labelPosY.textContent = `${state.posY}%`;
+    }
+    updateBoundsEnvelope();
+  }
+
+  function updateBoundsEnvelope() {
+    if (!subtitleBoundsEnvelope) return;
+    if (!state.showBounds || !state.hasLoadedVideo) {
+      subtitleBoundsEnvelope.classList.add("hidden");
+      if (btnToggleBounds) btnToggleBounds.classList.remove("active");
+      return;
+    }
+
+    subtitleBoundsEnvelope.classList.remove("hidden");
+    if (btnToggleBounds) btnToggleBounds.classList.add("active");
+
+    // Position matches subtitleDragBox coordinates
+    subtitleBoundsEnvelope.style.left = `${state.posX}%`;
+    subtitleBoundsEnvelope.style.top = `${state.posY}%`;
+
+    // Maximum width matches user's Line Width / Subtitle Box Width setting
+    subtitleBoundsEnvelope.style.width = `${state.lineWidthPct}%`;
+
+    // Base font size in preview (scaled proportional to preview height ~500px vs 1920px video)
+    const scaleRatio = 0.28;
+    const renderedFontSize = Math.round((state.fontSize || 68) * scaleRatio);
+    const lineHeightPx = renderedFontSize * 1.34;
+    const lines = Math.max(1, Math.min(3, state.maxLines || 1));
+
+    // Calculate boost headroom for highlighted word scale
+    const boostScale = (state.highlightScalePct || 100) / 100;
+    const boostHeadroom = Math.round(renderedFontSize * Math.max(0, boostScale - 1.0));
+
+    // Box padding if block pill or standard text padding
+    const isBox = (state.highlightStyle === "box");
+    const boxPadding = isBox ? 28 : 16;
+
+    const totalHeight = Math.round((lines * lineHeightPx) + boostHeadroom + boxPadding);
+    subtitleBoundsEnvelope.style.height = `${totalHeight}px`;
+
+    // Update live badge text
+    if (boundsBadge) {
+      const boostText = state.highlightScalePct > 100 ? ` • Boost ${state.highlightScalePct}%` : "";
+      boundsBadge.textContent = `Bounds: ${state.lineWidthPct}% W • ${lines} ${lines === 1 ? 'Line' : 'Lines'} • Max ${state.maxChars} Chars${boostText}`;
+    }
+
+    // Render guide lines inside envelope
+    if (boundsGuidelines) {
+      let guidesHtml = "";
+      for (let i = 1; i <= lines; i++) {
+        guidesHtml += `<div class="bounds-line-guide"><span class="bounds-line-label">Line ${i}</span></div>`;
+      }
+      boundsGuidelines.innerHTML = guidesHtml;
     }
   }
 
@@ -1015,6 +1082,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     subtitleRenderedText.innerHTML = htmlLines.join("");
+    updateBoundsEnvelope();
   }
 
   // Animated Word Highlight Loop (simulates speech word highlight)
@@ -1084,7 +1152,9 @@ document.addEventListener("DOMContentLoaded", () => {
     btnStyleColor.classList.add("active");
     btnStyleBox.classList.remove("active");
     paneHighlightColor.classList.remove("hidden");
+    paneHighlightColor.style.display = "";
     paneHighlightBox.classList.add("hidden");
+    paneHighlightBox.style.display = "";
     state.stylingModified = true;
     renderSubtitlePreview();
   });
@@ -1094,7 +1164,9 @@ document.addEventListener("DOMContentLoaded", () => {
     btnStyleBox.classList.add("active");
     btnStyleColor.classList.remove("active");
     paneHighlightBox.classList.remove("hidden");
+    paneHighlightBox.style.display = "";
     paneHighlightColor.classList.add("hidden");
+    paneHighlightColor.style.display = "";
     state.stylingModified = true;
     renderSubtitlePreview();
   });
@@ -1138,6 +1210,23 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       state.stylingModified = true;
       renderSubtitlePreview();
+    });
+  });
+
+  const boxSwatchBtns = document.querySelectorAll(".swatch-box-bg");
+  boxSwatchBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      const c = btn.dataset.color;
+      if (c) {
+        state.boxBgColor = c.toUpperCase();
+        if (colorBoxBg) colorBoxBg.value = c;
+        if (codeBoxBg) codeBoxBg.textContent = c.toUpperCase();
+        if (state.isMultiSpeaker && state.speakerChannels && state.speakerChannels[state.activeSpeakerId]) {
+          state.speakerChannels[state.activeSpeakerId].box_bg_color = c.toUpperCase();
+        }
+        state.stylingModified = true;
+        renderSubtitlePreview();
+      }
     });
   });
 
@@ -1654,7 +1743,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Preview Text Switcher
   if (btnTextDefault) {
+    if (!state.hasExistingAss) {
+      btnTextDefault.disabled = true;
+      btnTextDefault.classList.add("disabled");
+      btnTextDefault.title = "Transcript unavailable. Generate subtitles (.ass) first in Step 1.";
+    }
+
     btnTextDefault.addEventListener("click", () => {
+      if (btnTextDefault.disabled) return;
       btnTextDefault.classList.add("active");
       if (btnTextLorem) btnTextLorem.classList.remove("active");
       if (editorState.dialogues && editorState.dialogues.length > 0 && editorState.dialogues[0].clean_text) {
@@ -1687,24 +1783,15 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  if (btnLoadVideo) {
-    btnLoadVideo.addEventListener("click", () => {
-      const path = videoPathInput.value.trim();
-      if (path) {
-        loadVideoInfo(path);
-      }
+  // Toggle Subtitle Bounds Envelope
+  if (btnToggleBounds) {
+    btnToggleBounds.addEventListener("click", () => {
+      state.showBounds = !state.showBounds;
+      updateBoundsEnvelope();
     });
   }
 
   if (videoPathInput) {
-    videoPathInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        const path = videoPathInput.value.trim();
-        if (path) loadVideoInfo(path);
-      }
-    });
-
     videoPathInput.addEventListener("input", (e) => {
       state.videoPath = e.target.value.trim();
     });
@@ -2292,6 +2379,120 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  async function persistPresetToBackend(slug, displayName, snapshot) {
+    try {
+      const payload = {
+        name: slug,
+        description: displayName,
+        font_name: snapshot.fontFamily || "Montserrat",
+        font_size: Number(snapshot.fontSize) || 68,
+        bold: Boolean(snapshot.bold),
+        italic: Boolean(snapshot.italic),
+        primary_color: snapshot.primaryColor || "#FFFFFF",
+        outline_color: snapshot.outlineColor || "#000000",
+        outline_width: Number(snapshot.outlineWidth) !== undefined ? Number(snapshot.outlineWidth) : 3.0,
+        highlight_style: snapshot.highlightStyle || "color",
+        highlight_color: snapshot.highlightColor || "#FFDF00",
+        box_bg_color: snapshot.boxBgColor || "#000000",
+        box_opacity: snapshot.boxOpacity !== undefined ? Number(snapshot.boxOpacity) : 0.85,
+        box_font_color: snapshot.boxFontColor || "#FFFFFF",
+        box_type: snapshot.boxType || "word",
+        highlight_scale_pct: Number(snapshot.highlightScale) || 100,
+        pos_x_pct: snapshot.posX !== undefined ? Number(snapshot.posX) : 50,
+        pos_y_pct: snapshot.posY !== undefined ? Number(snapshot.posY) : 78,
+        line_width_pct: snapshot.lineWidthPct !== undefined ? Number(snapshot.lineWidthPct) : 82,
+        max_lines: Number(snapshot.maxLines) || 1,
+        max_chars_per_line: Number(snapshot.maxChars) || 28,
+        highlight_animation: snapshot.highlightAnimation || "discrete",
+        speaker_channels: snapshot.speaker_channels || {}
+      };
+
+      const res = await fetch("/api/presets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        console.warn("Could not save preset to disk:", res.status);
+      }
+    } catch (e) {
+      console.warn("Failed to persist preset to backend disk:", e);
+    }
+  }
+
+  async function deletePresetFromBackend(slug) {
+    try {
+      await fetch(`/api/presets/${encodeURIComponent(slug)}`, {
+        method: "DELETE"
+      });
+    } catch (e) {
+      console.warn("Failed to delete preset from backend disk:", e);
+    }
+  }
+
+  async function syncPresetsFromBackend() {
+    try {
+      const res = await fetch("/api/presets");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data || !Array.isArray(data.presets)) return;
+
+      const custom = getCustomPresets();
+      let updated = false;
+
+      for (const presetName of data.presets) {
+        if (presetName === "default") continue;
+        const id = "custom_" + presetName;
+        try {
+          const pRes = await fetch(`/api/presets/${encodeURIComponent(presetName)}`);
+          if (pRes.ok) {
+            const pData = await pRes.json();
+            custom[id] = {
+              id: id,
+              name: pData.description || presetName,
+              slug: presetName,
+              updated_at: new Date().toISOString(),
+              styling: {
+                posX: pData.pos_x_pct !== undefined ? pData.pos_x_pct : 50,
+                posY: pData.pos_y_pct !== undefined ? pData.pos_y_pct : 78,
+                fontFamily: pData.font_name || "Montserrat",
+                fontSize: pData.font_size || 68,
+                primaryColor: pData.primary_color || "#FFFFFF",
+                outlineColor: pData.outline_color || "#000000",
+                outlineWidth: pData.outline_width !== undefined ? pData.outline_width : 3.0,
+                bold: pData.bold !== undefined ? pData.bold : true,
+                italic: pData.italic !== undefined ? pData.italic : false,
+                highlightStyle: pData.highlight_style || "color",
+                highlightColor: pData.highlight_color || "#FFDF00",
+                highlightScale: pData.highlight_scale_pct || 100,
+                highlightAnimation: pData.highlight_animation || "discrete",
+                boxType: pData.box_type || "word",
+                boxOpacity: pData.box_opacity !== undefined ? pData.box_opacity : 0.85,
+                boxBgColor: pData.box_bg_color || "#000000",
+                boxFontColor: pData.box_font_color || "#FFFFFF",
+                maxLines: pData.max_lines || 1,
+                lineWidthPct: pData.line_width_pct !== undefined ? pData.line_width_pct : 82,
+                maxChars: pData.max_chars_per_line || 28,
+                speaker_channels: pData.speaker_channels || {}
+              }
+            };
+            updated = true;
+          }
+        } catch (err) {
+          console.warn(`Failed to fetch preset ${presetName} from backend:`, err);
+        }
+      }
+
+      if (updated) {
+        setCustomPresets(custom);
+        const lastActive = localStorage.getItem(PRESET_LAST_ACTIVE_KEY);
+        populatePresetDropdown(lastActive || (selectPreset ? selectPreset.value : ""));
+      }
+    } catch (e) {
+      console.warn("Failed to sync presets from backend:", e);
+    }
+  }
+
   function showPresetStatus(msg) {
     if (!presetStatusMsg) return;
     presetStatusMsg.textContent = msg;
@@ -2323,6 +2524,16 @@ document.addEventListener("DOMContentLoaded", () => {
   function updatePresetToolbarState() {
     const val = selectPreset.value;
     const isCustom = val && val.startsWith("custom_");
+    if (btnUpdatePreset) {
+      btnUpdatePreset.disabled = !isCustom;
+      if (isCustom) {
+        const custom = getCustomPresets();
+        const p = custom[val];
+        btnUpdatePreset.title = p ? `Update "${p.name}" with current styling` : "Update active custom preset";
+      } else {
+        btnUpdatePreset.title = "Default presets cannot be modified. Click 'Save New...' to save as a custom preset.";
+      }
+    }
     if (btnRenamePreset) btnRenamePreset.disabled = !isCustom;
     if (btnDeletePreset) btnDeletePreset.disabled = !isCustom;
   }
@@ -2407,18 +2618,31 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Highlight Style
-    if (styling.highlightStyle) {
-      state.highlightStyle = styling.highlightStyle;
-      if (styling.highlightStyle === "box") {
+    if (styling.highlightStyle || styling.highlight_style) {
+      const hStyle = styling.highlightStyle || styling.highlight_style;
+      state.highlightStyle = hStyle;
+      if (hStyle === "box") {
         if (btnStyleBox) btnStyleBox.classList.add("active");
         if (btnStyleColor) btnStyleColor.classList.remove("active");
-        if (paneHighlightBox) paneHighlightBox.style.display = "block";
-        if (paneHighlightColor) paneHighlightColor.style.display = "none";
+        if (paneHighlightBox) {
+          paneHighlightBox.classList.remove("hidden");
+          paneHighlightBox.style.display = "";
+        }
+        if (paneHighlightColor) {
+          paneHighlightColor.classList.add("hidden");
+          paneHighlightColor.style.display = "";
+        }
       } else {
         if (btnStyleColor) btnStyleColor.classList.add("active");
         if (btnStyleBox) btnStyleBox.classList.remove("active");
-        if (paneHighlightColor) paneHighlightColor.style.display = "block";
-        if (paneHighlightBox) paneHighlightBox.style.display = "none";
+        if (paneHighlightColor) {
+          paneHighlightColor.classList.remove("hidden");
+          paneHighlightColor.style.display = "";
+        }
+        if (paneHighlightBox) {
+          paneHighlightBox.classList.add("hidden");
+          paneHighlightBox.style.display = "";
+        }
       }
     }
 
@@ -2546,6 +2770,29 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  // Update Custom Preset Trigger
+  if (btnUpdatePreset) {
+    btnUpdatePreset.addEventListener("click", () => {
+      const val = selectPreset.value;
+      if (!val || !val.startsWith("custom_")) {
+        showPresetStatus("Default presets cannot be modified. Click 'Save New...' to save a custom preset.");
+        return;
+      }
+      const custom = getCustomPresets();
+      const p = custom[val];
+      if (!p) return;
+
+      const snapshot = getCurrentStylingSnapshot();
+      p.styling = snapshot;
+      p.updated_at = new Date().toISOString();
+      custom[val] = p;
+      setCustomPresets(custom);
+      showPresetStatus(`Updated preset "${p.name}"!`);
+      const fileSlug = p.slug || val.replace(/^custom_/, "");
+      persistPresetToBackend(fileSlug, p.name, snapshot);
+    });
+  }
+
   // Save New Preset Trigger
   if (btnSavePreset && presetNameDrawer) {
     btnSavePreset.addEventListener("click", () => {
@@ -2598,25 +2845,31 @@ document.addEventListener("DOMContentLoaded", () => {
       const custom = getCustomPresets();
 
       if (presetDrawerMode === "save") {
-        const id = "custom_" + Date.now();
+        const fileSlug = name.toLowerCase().replace(/[^a-z0-9_-]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "") || ("preset_" + Date.now());
+        const id = "custom_" + fileSlug;
+        const snapshot = getCurrentStylingSnapshot();
         custom[id] = {
           id: id,
           name: name,
+          slug: fileSlug,
           updated_at: new Date().toISOString(),
-          styling: getCurrentStylingSnapshot()
+          styling: snapshot
         };
         setCustomPresets(custom);
         populatePresetDropdown(id);
         localStorage.setItem(PRESET_LAST_ACTIVE_KEY, id);
         showPresetStatus(`Preset "${name}" saved!`);
+        persistPresetToBackend(fileSlug, name, snapshot);
       } else if (presetDrawerMode === "rename") {
         const id = selectPreset.value;
         if (id && custom[id]) {
           custom[id].name = name;
           custom[id].updated_at = new Date().toISOString();
+          const slug = custom[id].slug || id.replace(/^custom_/, "");
           setCustomPresets(custom);
           populatePresetDropdown(id);
           showPresetStatus(`Preset renamed to "${name}"!`);
+          persistPresetToBackend(slug, name, custom[id].styling);
         }
       } else if (presetDrawerMode === "export") {
         const cleanName = name.replace(/^[🔥🏷️🎬✨★\s]+/, "").trim() || "Custom Preset";
@@ -2678,11 +2931,13 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!p) return;
 
       if (confirm(`Are you sure you want to delete preset "${p.name}"?`)) {
+        const slug = p.slug || id.replace(/^custom_/, "");
         delete custom[id];
         setCustomPresets(custom);
         populatePresetDropdown("factory:tiktok_pop");
         loadAndApplyPreset("factory:tiktok_pop");
         showPresetStatus(`Preset "${p.name}" deleted.`);
+        deletePresetFromBackend(slug);
       }
     });
   }
@@ -3408,17 +3663,24 @@ document.addEventListener("DOMContentLoaded", () => {
       updateWorkflowStepper(data.has_burned_video ? 'burned' : 'subtitles_ready');
 
       // Update preview text to dialogue line 1 if available
-      if (editorState.dialogues && editorState.dialogues.length > 0 && editorState.dialogues[0].clean_text) {
-        const cleanPhrase = editorState.dialogues[0].clean_text.replace(/\\N/gi, " ").replace(/\\h/gi, " ").replace(/\s+/g, " ").trim();
-        state.previewText = cleanPhrase;
-        if (previewTextInput) previewTextInput.value = cleanPhrase;
+      if (editorState.dialogues && editorState.dialogues.length > 0) {
         if (btnTextDefault) {
-          btnTextDefault.textContent = "Transcript Dialogue";
-          btnTextDefault.classList.add("active");
+          btnTextDefault.disabled = false;
+          btnTextDefault.classList.remove("disabled");
+          btnTextDefault.title = "Preview subtitle text from dialogue";
         }
-        if (btnTextLorem) btnTextLorem.classList.remove("active");
-        state.activeWordIndex = 0;
-        renderSubtitlePreview();
+        if (editorState.dialogues[0].clean_text) {
+          const cleanPhrase = editorState.dialogues[0].clean_text.replace(/\\N/gi, " ").replace(/\\h/gi, " ").replace(/\s+/g, " ").trim();
+          state.previewText = cleanPhrase;
+          if (previewTextInput) previewTextInput.value = cleanPhrase;
+          if (btnTextDefault) {
+            btnTextDefault.textContent = "Transcript Dialogue";
+            btnTextDefault.classList.add("active");
+          }
+          if (btnTextLorem) btnTextLorem.classList.remove("active");
+          state.activeWordIndex = 0;
+          renderSubtitlePreview();
+        }
       }
 
       if (cardSubtitleDrawer && cardSubtitleDrawer.classList.contains("collapsed")) {
@@ -3632,7 +3894,7 @@ document.addEventListener("DOMContentLoaded", () => {
     loadVideoInfo(state.videoPath);
   }
 
-  // Initialize Presets from localStorage
+  // Initialize Presets from localStorage & sync from backend disk
   let savedActivePreset = localStorage.getItem(PRESET_LAST_ACTIVE_KEY) || "factory:tiktok_pop";
   if (!savedActivePreset) {
     savedActivePreset = "factory:tiktok_pop";
@@ -3640,4 +3902,5 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   populatePresetDropdown(savedActivePreset);
   loadAndApplyPreset(savedActivePreset);
+  syncPresetsFromBackend();
 });

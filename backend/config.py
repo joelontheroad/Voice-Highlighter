@@ -229,6 +229,9 @@ def safe_resolve_preset_path(preset_name: str) -> Path:
     return target_path
 
 
+DEFAULT_PRESET_NAMES: frozenset[str] = frozenset({"default", "tiktok-bold", "podcast-duo", "laser-karaoke"})
+
+
 def load_preset(preset_name: str = "default") -> StylePreset:
     """Load and validate a YAML preset file using safe deserialization.
 
@@ -246,7 +249,7 @@ def load_preset(preset_name: str = "default") -> StylePreset:
     if not preset_path.exists():
         # Create and persist default factory preset if missing
         default_preset = StylePreset(name=preset_name)
-        save_preset(default_preset)
+        save_preset(default_preset, allow_builtin=True)
         return default_preset
 
     try:
@@ -262,15 +265,27 @@ def load_preset(preset_name: str = "default") -> StylePreset:
         raise ValueError(f"Invalid preset schema in '{preset_name}': {exc}") from exc
 
 
-def save_preset(preset: StylePreset) -> Path:
+def save_preset(preset: StylePreset, allow_builtin: bool = False) -> Path:
     """Save a preset to disk with secure POSIX permissions (mode 0600).
 
     Args:
         preset: StylePreset instance to serialize and persist.
+        allow_builtin: If True, permits saving or seeding built-in factory presets.
+            User requests cannot overwrite protected built-in presets.
 
     Returns:
         Path to the persisted YAML preset file.
+
+    Raises:
+        ValueError: If user attempts to overwrite a protected built-in preset.
     """
+    clean_name = preset.name.strip().lower()
+    if not allow_builtin and clean_name in DEFAULT_PRESET_NAMES:
+        raise ValueError(
+            f"Cannot overwrite protected built-in preset '{preset.name}'. "
+            f"Use 'Save New...' to save custom styling under a new name."
+        )
+
     preset_path = safe_resolve_preset_path(preset.name)
     data = preset.model_dump()
 
@@ -319,7 +334,7 @@ def delete_preset(preset_name: str) -> bool:
     Returns:
         True if the preset existed and was removed; False if default or missing.
     """
-    if preset_name == "default":
+    if preset_name.strip().lower() in DEFAULT_PRESET_NAMES:
         return False
     preset_path = safe_resolve_preset_path(preset_name)
     if preset_path.exists():
@@ -342,7 +357,7 @@ def reset_all_configuration() -> None:
                     pass
     # Reinitialize default factory presets
     default_preset = StylePreset(name="default", description="High-energy yellow spoken word highlight")
-    save_preset(default_preset)
+    save_preset(default_preset, allow_builtin=True)
 
     tiktok_preset = StylePreset(
         name="tiktok-bold",
@@ -356,7 +371,7 @@ def reset_all_configuration() -> None:
         line_width_pct=85.0,
         max_lines=1,
     )
-    save_preset(tiktok_preset)
+    save_preset(tiktok_preset, allow_builtin=True)
 
     podcast_duo_preset = StylePreset(
         name="podcast-duo",
@@ -382,7 +397,7 @@ def reset_all_configuration() -> None:
             ),
         },
     )
-    save_preset(podcast_duo_preset)
+    save_preset(podcast_duo_preset, allow_builtin=True)
 
     laser_karaoke_preset = StylePreset(
         name="laser-karaoke",
@@ -393,4 +408,5 @@ def reset_all_configuration() -> None:
         highlight_color="#FFDF00",
         highlight_animation="karaoke_wipe",
     )
-    save_preset(laser_karaoke_preset)
+    save_preset(laser_karaoke_preset, allow_builtin=True)
+

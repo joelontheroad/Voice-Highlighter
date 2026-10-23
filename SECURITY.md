@@ -4,10 +4,10 @@
 
 We actively maintain and provide security patches for the following versions:
 
-| Version | Supported          |
-| ------- | ------------------ |
-| latest  | :white_check_mark: |
-| < 1.0   | :x:                |
+| Version         | Supported          |
+| --------------- | ------------------ |
+| 1.0.x (latest)  | :white_check_mark: |
+| < 1.0           | :x:                |
 
 ---
 

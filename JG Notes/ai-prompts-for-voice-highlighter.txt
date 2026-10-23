@@ -53,3 +53,21 @@ Provide an opinion on whether there's anything unique in our program that we can
 
 Provide a research document.
 
+----------------
+/plan I want  you to do research on the possibility of distinguishing up to five different voices and how we would denote which voice is speaking as we display their text.
+
+Create a research document.
+
+
+-------------------
+Prompts not yet executed.
+----------------
+
+/plan We're going to make a few refinements again.
+1)  We need a way to update presets that we've created.  If one created is active, there should be an update button.  The user should not be able to change the default presets provided by the program.
+2) We need a button that will turn and off the bounding box of the where the text can appear based upon the controls "max characters per line,", "Line width/subtitle box width", font family/size, "Highlighted word font size boost", and the number of lines displayed (1, 2, or 3).   What's the difference between "max characters per line" and "Line width/subtitle box width"? I don't understand the distinction.  Are they effectively the same?
+
+Make an implementation plan.
+
+
+

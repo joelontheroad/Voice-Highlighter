@@ -11,14 +11,17 @@ burning occurs without requiring re-transcription.
 import os
 from pathlib import Path
 
+from backend import __version__
 from backend.app import (
     BurnVideoRequest,
     UpdateAssRequest,
     _resolve_ass_file_path,
     burn_video_endpoint,
+    get_system_info,
     update_ass_content,
 )
 from backend.ass_generator import generate_ass_content, hex_to_ass_color, update_ass_formatting
+from backend.config import StylePreset, delete_preset, load_preset, save_preset
 
 
 def _create_sample_whisper_result() -> dict:
@@ -321,3 +324,46 @@ def test_update_ass_content_endpoint_reburn(tmp_path: Path, monkeypatch):
     orange_ass = hex_to_ass_color("#FF5500", 1.0)
     saved_disk_ass = ass_file.read_text(encoding="utf-8")
     assert f"\\c{orange_ass}" in saved_disk_ass
+
+
+def test_system_info_version_compliance() -> None:
+    """Validate that /api/system-info returns the canonical application SemVer version."""
+    info = get_system_info()
+    assert info["success"] is True
+    assert "version" in info
+    assert info["version"] == __version__
+    assert info["version"] == "1.0.0"
+
+
+def test_preset_persistence_cycle(tmp_path: Path, monkeypatch) -> None:
+    """Validate that style presets can be serialized, persisted to disk as YAML, and reloaded."""
+    test_presets_dir = tmp_path / "presets"
+    test_presets_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("backend.config.get_presets_dir", lambda: test_presets_dir)
+
+    preset = StylePreset(
+        name="test_custom_style",
+        description="My Custom Test Style",
+        font_name="Outfit",
+        font_size=72,
+        bold=True,
+        highlight_style="box",
+        box_bg_color="#1E293B",
+        box_opacity=0.9,
+    )
+
+    saved_path = save_preset(preset)
+    assert saved_path.exists()
+    assert saved_path.name == "test_custom_style.yaml"
+
+    loaded = load_preset("test_custom_style")
+    assert loaded.name == "test_custom_style"
+    assert loaded.description == "My Custom Test Style"
+    assert loaded.font_name == "Outfit"
+    assert loaded.box_bg_color == "#1E293B"
+    assert loaded.box_opacity == 0.9
+
+    deleted = delete_preset("test_custom_style")
+    assert deleted is True
+    assert not saved_path.exists()
+

@@ -36,6 +36,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from backend import __version__
 from backend.ass_generator import generate_ass_content, update_ass_formatting
 from backend.config import (
     StylePreset,
@@ -401,7 +402,8 @@ def get_system_info():
         "short_engine": short_engine,
         "burn_engine": burn_engine,
         "whisper_engine": whisper_engine,
-        "gpu_diagnostic": gpu_diagnostic
+        "gpu_diagnostic": gpu_diagnostic,
+        "version": __version__
     }
 
 
@@ -1496,6 +1498,8 @@ def save_preset_endpoint(preset: StylePreset, auth: str = Depends(verify_auth)):
     try:
         p_path = save_preset(preset)
         return {"success": True, "name": preset.name, "path": sanitize_log_path(str(p_path))}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1519,6 +1523,8 @@ def delete_preset_endpoint(preset_name: str, auth: str = Depends(verify_auth)):
         if not deleted:
             raise HTTPException(status_code=400, detail="Cannot delete default preset")
         return {"success": True, "deleted": preset_name}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
