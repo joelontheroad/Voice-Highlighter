@@ -7,10 +7,18 @@ Validates schema constraints, speaker turn segmentation, per-speaker
 V4+ style generation in ASS files, and dialogue event actor attribution.
 """
 
+import os
+import wave
 from pathlib import Path
 
+import numpy as np
+import pytest
+from fastapi import HTTPException
+
+from backend.app import AUDIO_DIR, app, get_speaker_sample
 from backend.ass_generator import chunk_words_into_blocks, generate_ass_content
 from backend.config import SpeakerChannel, StylePreset, reset_all_configuration
+from backend.diarizer import diarize_whisper_result, extract_audio_snippet_bytes
 
 
 def test_speaker_channel_model_validation():
@@ -289,5 +297,172 @@ def test_five_speaker_channels_support():
     # Verify dialogue events reference the speaker styles
     for i in range(5):
         assert f"Speaker_SPEAKER_0{i}" in ass_text
+
+
+def test_extract_audio_snippet_bytes_riff_header(tmp_path: Path):
+    """Verify extract_audio_snippet_bytes yields a valid 16kHz RIFF/WAV binary stream."""
+    wav_path = str(tmp_path / "sample.wav")
+    sr = 16000
+    dur = 2.0
+    t = np.linspace(0, dur, int(sr * dur), endpoint=False)
+    sine = (np.sin(2 * np.pi * 440 * t) * 32767).astype(np.int16)
+
+    with wave.open(wav_path, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        wf.writeframes(sine.tobytes())
+
+    snippet_bytes = extract_audio_snippet_bytes(wav_path, 0.5, 1.5)
+    assert len(snippet_bytes) > 0
+    # RIFF header verification
+    assert snippet_bytes[:4] == b"RIFF"
+    assert snippet_bytes[8:12] == b"WAVE"
+
+
+def test_diarize_whisper_result_acoustic_clustering(tmp_path: Path):
+    """Verify acoustic clustering distinguishes distinct voices and extracts representative snippets."""
+    wav_path = str(tmp_path / "dialogue.wav")
+    sr = 16000
+
+    # Speaker 1: low tone (160 Hz)
+    t1 = np.linspace(0, 3.0, int(3.0 * sr), endpoint=False)
+    s1 = (np.sin(2 * np.pi * 160 * t1) * 32767).astype(np.int16)
+
+    # Speaker 2: high tone (720 Hz)
+    t2 = np.linspace(0, 3.0, int(3.0 * sr), endpoint=False)
+    s2 = (np.sin(2 * np.pi * 720 * t2) * 32767).astype(np.int16)
+
+    # Alternate dialogue turns: S1 -> S2 -> S1 -> S2
+    full_audio = np.concatenate([s1, s2, s1, s2])
+    with wave.open(wav_path, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        wf.writeframes(full_audio.tobytes())
+
+    whisper_result = {
+        "segments": [
+            {
+                "start": 0.5,
+                "end": 2.5,
+                "text": "Hello, welcome to the episode.",
+                "words": [
+                    {"word": "Hello", "start": 0.5, "end": 1.0},
+                    {"word": "welcome", "start": 1.0, "end": 2.5},
+                ],
+            },
+            {
+                "start": 3.5,
+                "end": 5.5,
+                "text": "Thanks for having me on today.",
+                "words": [
+                    {"word": "Thanks", "start": 3.5, "end": 4.0},
+                    {"word": "having", "start": 4.0, "end": 5.5},
+                ],
+            },
+            {
+                "start": 6.5,
+                "end": 8.5,
+                "text": "Let us discuss the latest topic.",
+                "words": [
+                    {"word": "Let", "start": 6.5, "end": 7.0},
+                    {"word": "discuss", "start": 7.0, "end": 8.5},
+                ],
+            },
+            {
+                "start": 9.5,
+                "end": 11.5,
+                "text": "I am excited to share my thoughts.",
+                "words": [
+                    {"word": "excited", "start": 9.5, "end": 10.0},
+                    {"word": "share", "start": 10.0, "end": 11.5},
+                ],
+            },
+        ]
+    }
+
+    result, speaker_samples = diarize_whisper_result(
+        audio_wav_path=wav_path,
+        whisper_result=whisper_result,
+        min_speakers=2,
+        max_speakers=5,
+    )
+
+    # Ensure two distinct speaker clusters were found
+    assert len(speaker_samples) == 2
+    assert "SPEAKER_00" in speaker_samples
+    assert "SPEAKER_01" in speaker_samples
+
+    # Verify segments were assigned speaker tags
+    for seg in result["segments"]:
+        assert seg["speaker"] in ("SPEAKER_00", "SPEAKER_01")
+        for w in seg.get("words", []):
+            assert w["speaker"] == seg["speaker"]
+
+    # Verify snippets contain valid audio bytes
+    for spk_id, meta in speaker_samples.items():
+        assert len(meta["bytes"]) > 0
+        assert meta["bytes"][:4] == b"RIFF"
+        assert meta["duration"] > 0
+
+
+def test_diarize_single_segment_graceful_fallback(tmp_path: Path):
+    """Verify single-segment audio gracefully assigns SPEAKER_00 without clustering errors."""
+    wav_path = str(tmp_path / "solo.wav")
+    sr = 16000
+    t = np.linspace(0, 2.0, int(2.0 * sr), endpoint=False)
+    sine = (np.sin(2 * np.pi * 300 * t) * 32767).astype(np.int16)
+    with wave.open(wav_path, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        wf.writeframes(sine.tobytes())
+
+    whisper_result = {
+        "segments": [
+            {
+                "start": 0.2,
+                "end": 1.8,
+                "text": "Solo presenter voice test.",
+                "words": [{"word": "Solo", "start": 0.2, "end": 1.8}],
+            }
+        ]
+    }
+
+    result, samples = diarize_whisper_result(wav_path, whisper_result)
+    assert len(samples) == 1
+    assert "SPEAKER_00" in samples
+    assert result["segments"][0]["speaker"] == "SPEAKER_00"
+
+
+def test_speaker_sample_api_endpoint(tmp_path: Path):
+    """Verify get_speaker_sample streams WAV audio when file exists and raises 404 on missing file."""
+    auth_token = app.state.auth_token
+    test_task = "test-task-123"
+    test_spk = "SPEAKER_00"
+    sample_file = os.path.join(AUDIO_DIR, f"{test_task}_{test_spk}.wav")
+
+    # Write synthetic WAV file to AUDIO_DIR
+    sr = 16000
+    with wave.open(sample_file, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        wf.writeframes(b"\x00\x00" * 8000)
+
+    try:
+        # 1. Authorized request with valid snippet returns FileResponse with audio/wav media_type
+        response = get_speaker_sample(test_task, test_spk, auth=auth_token)
+        assert response.media_type == "audio/wav"
+        assert os.path.abspath(response.path) == os.path.abspath(sample_file)
+
+        # 2. Missing speaker sample raises HTTPException 404
+        with pytest.raises(HTTPException) as exc_info:
+            get_speaker_sample(test_task, "SPEAKER_99", auth=auth_token)
+        assert exc_info.value.status_code == 404
+    finally:
+        if os.path.exists(sample_file):
+            os.remove(sample_file)
 
 

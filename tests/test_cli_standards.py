@@ -83,7 +83,7 @@ def test_cli_version(isolated_env):
     """Verify single source of version, AGPLv3 mention, and repository URL."""
     res = run_cli("--version", env=isolated_env)
     assert res.returncode == 0
-    assert "1.0.0" in res.stdout
+    assert "1.1.0" in res.stdout
     assert "AGPL" in res.stdout
     assert "https://github.com/joelontheroad/Voice-Highlighter" in res.stdout
 

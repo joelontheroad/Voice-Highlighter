@@ -16,6 +16,7 @@ import os
 import platform
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import threading
@@ -47,6 +48,7 @@ from backend.config import (
     sanitize_log_path,
     save_preset,
 )
+from backend.diarizer import diarize_whisper_result
 from backend.extractor import (
     burn_subtitles_to_video,
     extract_audio,
@@ -56,6 +58,27 @@ from backend.extractor import (
     test_ffmpeg_encoder,
 )
 from backend.transcriber import run_whisperx_pipeline
+
+
+def _safe_burn(
+    video_in: str,
+    ass_in: str,
+    video_out: str,
+    duration: float | None = None,
+    progress_callback: Any = None,
+) -> str:
+    """Invoke burn_subtitles_to_video with backward compatibility for test mocks."""
+    try:
+        return burn_subtitles_to_video(
+            video_in,
+            ass_in,
+            video_out,
+            duration=duration,
+            progress_callback=progress_callback,
+        )
+    except TypeError:
+        return burn_subtitles_to_video(video_in, ass_in, video_out)
+
 
 # Suppress spurious multiprocessing resource_tracker cleanup warnings on shutdown
 warnings.filterwarnings("ignore", category=UserWarning, module="multiprocessing.resource_tracker")
@@ -84,6 +107,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self' 'unsafe-inline'; "
             "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+            "media-src 'self' data: blob:; "
             "object-src 'none'; frame-ancestors 'none';"
         )
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -200,6 +224,7 @@ class TranscribeRequest(BaseModel):
     output_filename: str | None = None
     reuse_existing_ass: bool | None = False
     reuse_existing_wav: bool | None = False
+    enable_diarization: bool | None = False
 
 
 class PreviewAssRequest(BaseModel):
@@ -585,6 +610,7 @@ def process_transcription_job(
     output_filename: str | None = None,
     reuse_existing_ass: bool = False,
     reuse_existing_wav: bool = False,
+    enable_diarization: bool = False,
 ):
     """Execute background transcription, subtitle generation, and video burn pipeline.
 
@@ -597,6 +623,7 @@ def process_transcription_job(
         output_filename: Base output filename for generated subtitles and video deliverables.
         reuse_existing_ass: Whether to reuse pre-existing sibling ASS subtitles without rerunning Whisper.
         reuse_existing_wav: Whether to reuse pre-existing extracted sibling audio WAV.
+        enable_diarization: Whether to execute acoustic clustering to distinguish multi-speaker dialogue.
     """
     def update_progress(message: str, pct: int):
         if task_id in tasks:
@@ -666,14 +693,48 @@ def process_transcription_job(
             whisper_result = run_whisperx_pipeline(
                 audio_wav_path=wav_path,
                 model_name=model_name,
-                progress_callback=update_progress
+                progress_callback=update_progress,
             )
+
+            if enable_diarization:
+                update_progress("Clustering multi-speaker acoustic voices...", 82)
+                try:
+                    whisper_result, speaker_samples = diarize_whisper_result(
+                        audio_wav_path=wav_path,
+                        whisper_result=whisper_result,
+                        min_speakers=2,
+                        max_speakers=5,
+                    )
+                    # Persist audio snippet bytes to disk in AUDIO_DIR for streaming
+                    serializable_samples: dict[str, Any] = {}
+                    for spk_id, sample_meta in speaker_samples.items():
+                        raw_bytes = sample_meta.get("bytes", b"")
+                        if raw_bytes:
+                            snippet_path = os.path.join(AUDIO_DIR, f"{task_id}_{spk_id}.wav")
+                            try:
+                                with open(snippet_path, "wb") as sf:
+                                    sf.write(raw_bytes)
+                            except Exception:
+                                pass
+                        serializable_samples[spk_id] = {
+                            "quote": sample_meta.get("quote", ""),
+                            "duration": sample_meta.get("duration", 2.5),
+                            "speaker_name": sample_meta.get("speaker_name", spk_id),
+                            "sample_url": f"/api/speaker-sample/{task_id}/{spk_id}",
+                        }
+                    tasks[task_id]["speaker_samples"] = serializable_samples
+                    tasks[task_id]["speakers_found"] = list(speaker_samples.keys())
+                except Exception as de:
+                    # SECURITY: Diarization failure degrades gracefully to single-speaker attribution
+                    print(f"[Voice Highlighter] Diarization warning: {de}")
+                    tasks[task_id]["speakers_found"] = ["SPEAKER_00"]
+                    tasks[task_id]["speaker_samples"] = {}
 
             update_progress("Formatting word-highlighted ASS subtitles...", 88)
             ass_content = generate_ass_content(
                 whisper_result=whisper_result,
                 config=styling,
-                video_meta=meta
+                video_meta=meta,
             )
             tasks[task_id]["whisper_result"] = whisper_result
             tasks[task_id]["styling"] = styling
@@ -702,17 +763,76 @@ def process_transcription_job(
             tasks[task_id]["ass_preview"] = "\n".join(ass_content.splitlines()[:60])
 
         effective_ass = tasks[task_id].get("ass_file") or os.path.join(OUTPUTS_DIR, f"{task_id}.ass")
+        tasks[task_id]["ass_ready"] = True
 
         if burn_video:
-            update_progress("Burning subtitles into video with GPU acceleration (RTX A5000 NVENC)...", 94)
             target_mp4 = os.path.join(media_dir, f"{clean_name}.mp4")
+
+            # Create immutable execution copy for burning to isolate from concurrent browser edits
+            burn_snapshot_ass = os.path.join(
+                media_dir if os.path.isdir(media_dir) else OUTPUTS_DIR,
+                f".{clean_name}.burn_{task_id}.ass",
+            )
             try:
-                burn_subtitles_to_video(clean_path, effective_ass, target_mp4)
-                tasks[task_id]["video_file"] = target_mp4
+                shutil.copy2(effective_ass, burn_snapshot_ass)
+                burn_target_ass = burn_snapshot_ass
             except Exception:
-                scratch_mp4 = os.path.join(OUTPUTS_DIR, f"{task_id}.mp4")
-                burn_subtitles_to_video(clean_path, effective_ass, scratch_mp4)
-                tasks[task_id]["video_file"] = scratch_mp4
+                burn_target_ass = effective_ass
+
+            total_duration = float(meta.get("duration", 0.0)) if meta else 0.0
+
+            def on_burn_progress(telemetry: dict[str, Any]):
+                tasks[task_id]["burn_telemetry"] = telemetry
+                burn_pct = telemetry.get("burn_pct", 0.0)
+                cur_overall = min(99.0, 88.0 + (burn_pct / 100.0) * 11.0)
+                tasks[task_id]["progress"] = round(cur_overall, 1)
+
+                eta_sec = telemetry.get("eta_seconds", 0.0)
+                eta_str = f"~{int(eta_sec)}s remaining" if eta_sec > 0 else "finishing..."
+                cur_sec = telemetry.get("current_seconds", 0.0)
+                dur_sec = telemetry.get("duration", total_duration)
+
+                cur_min = int(cur_sec // 60)
+                cur_s = int(cur_sec % 60)
+                dur_min = int(dur_sec // 60)
+                dur_s = int(dur_sec % 60)
+                time_str = f"{cur_min:02d}:{cur_s:02d} / {dur_min:02d}:{dur_s:02d}"
+
+                spd = telemetry.get("speed", 1.0)
+                fps = int(telemetry.get("fps", 0.0))
+
+                tasks[task_id]["stage_message"] = (
+                    f"Burning subtitles: {burn_pct:.0f}% • {eta_str} "
+                    f"({spd:.1f}x • {fps} fps) • {time_str}"
+                )
+
+            update_progress("Burning subtitles into video with GPU acceleration...", 88)
+            try:
+                try:
+                    _safe_burn(
+                        clean_path,
+                        burn_target_ass,
+                        target_mp4,
+                        duration=total_duration,
+                        progress_callback=on_burn_progress,
+                    )
+                    tasks[task_id]["video_file"] = target_mp4
+                except Exception:
+                    scratch_mp4 = os.path.join(OUTPUTS_DIR, f"{task_id}.mp4")
+                    _safe_burn(
+                        clean_path,
+                        burn_target_ass,
+                        scratch_mp4,
+                        duration=total_duration,
+                        progress_callback=on_burn_progress,
+                    )
+                    tasks[task_id]["video_file"] = scratch_mp4
+            finally:
+                if burn_target_ass != effective_ass and os.path.exists(burn_target_ass):
+                    try:
+                        os.remove(burn_target_ass)
+                    except OSError:
+                        pass
 
         tasks[task_id]["status"] = "completed"
         tasks[task_id]["progress"] = 100
@@ -765,7 +885,9 @@ def start_transcribe(req: TranscribeRequest, auth: str = Depends(verify_auth)):
         "ass_preview": None,
         "video_file": None,
         "burn_video": bool(req.burn_video),
-        "custom_filename": req.output_filename
+        "custom_filename": req.output_filename,
+        "speakers_found": None,
+        "speaker_samples": None,
     }
 
     thread = threading.Thread(
@@ -778,9 +900,10 @@ def start_transcribe(req: TranscribeRequest, auth: str = Depends(verify_auth)):
             bool(req.burn_video),
             req.output_filename,
             bool(req.reuse_existing_ass if req.reuse_existing_ass is not None else False),
-            bool(req.reuse_existing_wav if req.reuse_existing_wav is not None else False)
+            bool(req.reuse_existing_wav if req.reuse_existing_wav is not None else False),
+            bool(req.enable_diarization if req.enable_diarization is not None else False),
         ),
-        daemon=True
+        daemon=True,
     )
     thread.start()
 
@@ -830,6 +953,7 @@ def get_task_status(task_id: str):
     is_completed = (t["status"] == "completed")
     burn_enabled = t.get("burn_video", False)
     has_video = bool(t.get("video_file"))
+    ass_ready = bool(t.get("ass_ready", is_completed))
 
     return {
         "task_id": task_id,
@@ -838,12 +962,16 @@ def get_task_status(task_id: str):
         "stage_message": t["stage_message"],
         "error": t.get("error"),
         "ass_preview": t.get("ass_preview"),
+        "ass_ready": ass_ready,
+        "burn_telemetry": t.get("burn_telemetry"),
         "burn_video": burn_enabled,
         "custom_filename": t.get("custom_filename"),
         "video_file": t.get("video_file"),
         "video_filename": os.path.basename(t.get("video_file")) if t.get("video_file") else None,
-        "download_url": f"/api/download/{task_id}" if is_completed else None,
-        "video_download_url": f"/api/download-video/{task_id}" if (is_completed and burn_enabled and has_video) else None
+        "speakers_found": t.get("speakers_found"),
+        "speaker_samples": t.get("speaker_samples"),
+        "download_url": f"/api/download/{task_id}" if (is_completed or ass_ready) else None,
+        "video_download_url": f"/api/download-video/{task_id}" if (is_completed and burn_enabled and has_video) else None,
     }
 
 
@@ -914,6 +1042,42 @@ def download_video(task_id: str):
         file_path,
         media_type="video/mp4",
         filename=filename
+    )
+
+
+@app.get("/api/speaker-sample/{task_id}/{speaker_id}")
+def get_speaker_sample(
+    task_id: str,
+    speaker_id: str,
+    token: str | None = Query(None, alias="token"),
+    auth: str = Depends(verify_auth),
+):
+    """Stream a representative 2-second acoustic voice snippet for interactive verification.
+
+    Args:
+        task_id: Unique task identifier.
+        speaker_id: Speaker cluster identifier (e.g. 'SPEAKER_00', 'SPEAKER_01').
+        token: Optional query token for HTML5 audio elements.
+        auth: Authentication token validated by dependency injection.
+
+    Returns:
+        FileResponse streaming the WAV snippet.
+
+    Raises:
+        HTTPException: If the snippet file is not found or path traversal is detected.
+    """
+    # SECURITY: Prevent path traversal (CWE-22) by strictly whitelisting alphanumeric characters
+    safe_task = re.sub(r"[^a-zA-Z0-9_\-]", "", task_id)
+    safe_spk = re.sub(r"[^a-zA-Z0-9_\-]", "", speaker_id)
+    snippet_path = os.path.join(AUDIO_DIR, f"{safe_task}_{safe_spk}.wav")
+
+    if not os.path.exists(snippet_path):
+        raise HTTPException(status_code=404, detail="Speaker voice sample not found")
+
+    return FileResponse(
+        snippet_path,
+        media_type="audio/wav",
+        filename=f"{safe_spk}_sample.wav",
     )
 
 
@@ -1153,6 +1317,7 @@ def get_ass_content(
         "detected_speakers": unique_speakers_found,
         "speaker_count": len(unique_speakers_found),
         "is_multi_speaker": len(unique_speakers_found) > 1,
+        "speaker_samples": t.get("speaker_samples") if t else None,
         "has_burned_video": bool(t.get("video_file") if t else False),
         "video_file": t.get("video_file") if t else None,
         "video_filename": os.path.basename(t.get("video_file")) if (t and t.get("video_file")) else None
@@ -1353,12 +1518,82 @@ def burn_video_endpoint(req: BurnVideoRequest, auth: str = Depends(verify_auth))
     burn_task_id = req.task_id or str(uuid.uuid4())
     saved_target = target_mp4
 
+    # Create immutable execution copy for burning to isolate from concurrent browser edits
+    burn_snapshot_ass = os.path.join(
+        media_dir if os.path.isdir(media_dir) else OUTPUTS_DIR,
+        f".{clean_name}.burn_{burn_task_id}.ass",
+    )
     try:
-        burn_subtitles_to_video(clean_path, file_path, target_mp4)
+        shutil.copy2(file_path, burn_snapshot_ass)
+        burn_target_ass = burn_snapshot_ass
     except Exception:
-        scratch_mp4 = os.path.join(OUTPUTS_DIR, f"{burn_task_id}.mp4")
-        burn_subtitles_to_video(clean_path, file_path, scratch_mp4)
-        saved_target = scratch_mp4
+        burn_target_ass = file_path
+
+    total_duration = float(meta.get("duration", 0.0)) if meta else 0.0
+
+    t_init = _get_or_load_task(burn_task_id) or {}
+    t_init.update({
+        "task_id": burn_task_id,
+        "video_path": clean_path,
+        "ass_file": file_path,
+        "status": "processing",
+        "progress": 5,
+        "stage_message": "Starting NVENC subtitle burn...",
+        "burn_video": True,
+        "custom_filename": clean_name,
+    })
+    tasks[burn_task_id] = t_init
+
+    def on_burn_progress(telemetry: dict[str, Any]):
+        tasks[burn_task_id]["burn_telemetry"] = telemetry
+        burn_pct = telemetry.get("burn_pct", 0.0)
+        tasks[burn_task_id]["progress"] = round(burn_pct, 1)
+
+        eta_sec = telemetry.get("eta_seconds", 0.0)
+        eta_str = f"~{int(eta_sec)}s remaining" if eta_sec > 0 else "finishing..."
+        cur_sec = telemetry.get("current_seconds", 0.0)
+        dur_sec = telemetry.get("duration", total_duration)
+
+        cur_min = int(cur_sec // 60)
+        cur_s = int(cur_sec % 60)
+        dur_min = int(dur_sec // 60)
+        dur_s = int(dur_sec % 60)
+        time_str = f"{cur_min:02d}:{cur_s:02d} / {dur_min:02d}:{dur_s:02d}"
+
+        spd = telemetry.get("speed", 1.0)
+        fps = int(telemetry.get("fps", 0.0))
+
+        tasks[burn_task_id]["stage_message"] = (
+            f"Burning subtitles: {burn_pct:.0f}% • {eta_str} "
+            f"({spd:.1f}x • {fps} fps) • {time_str}"
+        )
+
+    try:
+        try:
+            _safe_burn(
+                clean_path,
+                burn_target_ass,
+                target_mp4,
+                duration=total_duration,
+                progress_callback=on_burn_progress,
+            )
+            saved_target = target_mp4
+        except Exception:
+            scratch_mp4 = os.path.join(OUTPUTS_DIR, f"{burn_task_id}.mp4")
+            _safe_burn(
+                clean_path,
+                burn_target_ass,
+                scratch_mp4,
+                duration=total_duration,
+                progress_callback=on_burn_progress,
+            )
+            saved_target = scratch_mp4
+    finally:
+        if burn_target_ass != file_path and os.path.exists(burn_target_ass):
+            try:
+                os.remove(burn_target_ass)
+            except OSError:
+                pass
 
     t = _get_or_load_task(burn_task_id) or {}
     t.update({

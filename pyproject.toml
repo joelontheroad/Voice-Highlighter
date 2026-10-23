@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "voice-highlighter"
-version = "1.0.0"
+version = "1.1.0"
 description = "AI Word-Level Subtitle Generator with WhisperX"
 readme = "README.md"
 requires-python = ">=3.10"

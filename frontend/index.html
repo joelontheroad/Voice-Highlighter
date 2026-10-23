@@ -28,7 +28,7 @@
         <div>
           <div class="brand-title-row">
             <h1 class="app-title">Voice Highlighter</h1>
-            <span class="app-version-badge" id="appVersionBadge">v1.0.0</span>
+            <span class="app-version-badge" id="appVersionBadge">v1.1.0</span>
           </div>
           <p class="app-subtitle">Word-level animated subtitle generator powered by WhisperX</p>
         </div>
@@ -113,6 +113,15 @@
             </select>
           </div>
           <p class="model-description-hint">Higher-tier models offer maximum word-level alignment precision for challenging acoustic environments.</p>
+          <div class="form-group-toggle" id="wrapEnableDiarization" style="margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border-subtle, rgba(255,255,255,0.08));">
+            <label class="toggle-checkbox" id="toggleDiarizationWrap" for="checkEnableDiarization" style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+              <input type="checkbox" id="checkEnableDiarization" style="width: 16px; height: 16px; accent-color: var(--accent, #6366f1); cursor: pointer;">
+              <span style="font-weight: 500; font-size: 0.88rem; color: var(--text-primary, #f8fafc);">👥 Multi-Speaker Voice Separation (Diarization)</span>
+            </label>
+            <p class="model-description-hint" style="margin-top: 4px; margin-left: 26px;">
+              Automatically clusters distinct speakers (1–5 voices) and assigns individual highlight colors offline without cloud tokens.
+            </p>
+          </div>
         </div>
       </div>
 
@@ -555,7 +564,10 @@
               <div class="thermometer-pulse-dot"></div>
               <h3 id="thermometerTitle">Transcribing & Burning Video...</h3>
             </div>
-            <span class="thermometer-pct-badge" id="thermometerPercentBadge">0%</span>
+            <div class="thermometer-header-right">
+              <span class="thermometer-vitals-badge hidden" id="thermometerVitalsBadge">⚡ 0.0x • 0 fps</span>
+              <span class="thermometer-pct-badge" id="thermometerPercentBadge">0%</span>
+            </div>
           </div>
 
           <div class="thermometer-track">
@@ -566,7 +578,10 @@
           </div>
 
           <div class="thermometer-status-row">
-            <span id="thermometerStageMessage" class="thermometer-stage-msg">Initializing WhisperX AI speech recognition...</span>
+            <div class="thermometer-status-info">
+              <span id="thermometerStageMessage" class="thermometer-stage-msg">Initializing WhisperX AI speech recognition...</span>
+              <span id="thermometerEtaMessage" class="thermometer-eta-msg hidden"></span>
+            </div>
             <div class="thermometer-milestones" id="thermometerMilestones">
               <span class="milestone-pill" id="msAudio">1. Audio</span>
               <span class="milestone-pill" id="msWhisper">2. WhisperX</span>
@@ -762,6 +777,18 @@
                   Styling colors apply to: <strong id="currentEditingSpeakerName">Speaker 1</strong>
                 </span>
                 <span class="channel-dot-indicator" id="currentEditingSpeakerDot" style="background:#FFDF00; color:#FFDF00;"></span>
+              </div>
+
+              <!-- Acoustic Voice Snippet Audio Player (Track B) -->
+              <div class="speaker-sample-player-row" id="speakerSamplePlayerRow" style="margin-top: 10px; display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.28); padding: 8px 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.08);">
+                <button type="button" class="btn btn-secondary btn-sm" id="btnPlaySpeakerSample" style="display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 5px 12px; font-size: 0.8rem; font-weight: 600; min-width: 86px; border-radius: 4px;" disabled title="Play representative 2-second voice snippet">
+                  <span id="speakerSamplePlayIcon">▶</span>
+                  <span id="speakerSamplePlayText">Listen</span>
+                </button>
+                <div class="speaker-sample-info" style="display: flex; flex-direction: column; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.78rem;">
+                  <span id="speakerSampleQuote" style="color: var(--text-secondary, #94a3b8); font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">"Audio sample ready after transcription"</span>
+                </div>
+                <audio id="speakerSampleAudio" preload="none" style="display: none;"></audio>
               </div>
 
               <div class="form-row-2" style="margin-top: 10px;">
@@ -1077,13 +1104,13 @@
   <!-- Application Footer with AGPL-3.0 Section 13 Source Notice -->
   <footer class="app-footer">
     <div class="app-footer-container">
-      <span>Voice Highlighter Studio <strong id="footerVersion">v1.0.0</strong> &bull; Word-Level AI Subtitling</span>
+      <span>Voice Highlighter Studio <strong id="footerVersion">v1.1.0</strong> &bull; Word-Level AI Subtitling</span>
       <span>&bull;</span>
       <a href="https://github.com/joelontheroad/Voice-Highlighter" target="_blank" rel="noopener noreferrer" class="source-code-link">Source Code (GNU AGPLv3)</a>
     </div>
   </footer>
 
-  <script src="app.js?v=4.4"></script>
+  <script src="app.js?v=5.0"></script>
 </body>
 </html>
 

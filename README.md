@@ -3,7 +3,7 @@
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL_3.0-blue.svg)](LICENSE)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Standards: 100% Compliant](https://img.shields.io/badge/Open_Source_Standards-100%25_PASS-success.svg)](AGENTS.md)
-[![Version: 1.0.0](https://img.shields.io/badge/Version-1.0.0-emerald.svg)](pyproject.toml)
+[![Version: 1.1.0](https://img.shields.io/badge/Version-1.1.0-emerald.svg)](pyproject.toml)
 
 > **A high-performance, privacy-respecting AI tool for generating, editing, and burning word-highlighted animated subtitles directly into videos.**
 
@@ -70,7 +70,7 @@ The `voice-highlighter` command conforms strictly to POSIX/GNU CLI stream separa
 | Flag / Subcommand | Arguments | Description |
 |---|---|---|
 | `-h, --help` | None | Display command help and exit (< 200ms). |
-| `-v, --version` | None | Output tool version (`1.0.0`), GNU AGPLv3 license, and repository URL. |
+| `-v, --version` | None | Output tool version (`1.1.0`), GNU AGPLv3 license, and repository URL. |
 | `-q, --quiet` | None | Suppress all informational banners (errors and machine data only). |
 | `--verbose` | None | Enable verbose diagnostic output on `stderr`. |
 | `--json` | None | Output structured machine-readable JSON to `stdout`. |

@@ -57,7 +57,9 @@ document.addEventListener("DOMContentLoaded", () => {
     lastBurnedVideoFilename: null,
     hasExistingWav: false,
     existingWavPath: null,
-    // Multi-Speaker Color Channels
+    // Multi-Speaker Color Channels & Acoustic Diarization (Track B)
+    enableDiarization: false,
+    speakerSamples: {},
     speakerCount: 1,
     detectedSpeakers: ["Speaker 1"],
     isMultiSpeaker: false,
@@ -265,6 +267,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const colorSpeakerHighlight = document.getElementById("colorSpeakerHighlight");
   const codeSpeakerHighlight = document.getElementById("codeSpeakerHighlight");
   const speakerSwatchChips = document.querySelectorAll(".speaker-swatch-chip");
+  const checkEnableDiarization = document.getElementById("checkEnableDiarization");
+  const btnPlaySpeakerSample = document.getElementById("btnPlaySpeakerSample");
+  const speakerSamplePlayIcon = document.getElementById("speakerSamplePlayIcon");
+  const speakerSamplePlayText = document.getElementById("speakerSamplePlayText");
+  const speakerSampleQuote = document.getElementById("speakerSampleQuote");
+  const speakerSampleAudio = document.getElementById("speakerSampleAudio");
+  const speakerSamplePlayerRow = document.getElementById("speakerSamplePlayerRow");
 
   // Lines & Line Width
   const linePillBtns = document.querySelectorAll("#lineCountSelector .pill-btn");
@@ -1637,17 +1646,106 @@ document.addEventListener("DOMContentLoaded", () => {
       if (codeBoxBg) codeBoxBg.textContent = ch.box_bg_color;
       state.boxBgColor = ch.box_bg_color;
     }
+
+    updateSpeakerSampleUI();
+  }
+
+  function updateSpeakerSampleUI() {
+    if (!speakerSamplePlayerRow || !btnPlaySpeakerSample) return;
+    const currentSpk = state.activeSpeakerId || "SPEAKER_00";
+    const sample = state.speakerSamples ? state.speakerSamples[currentSpk] : null;
+
+    if (sample && sample.sample_url) {
+      btnPlaySpeakerSample.disabled = false;
+      btnPlaySpeakerSample.classList.remove("disabled");
+      if (speakerSampleQuote) {
+        const quoteText = sample.quote ? `"${sample.quote}"` : `Sample for ${sample.speaker_name || currentSpk}`;
+        speakerSampleQuote.textContent = `${quoteText} (${sample.duration || 2.5}s)`;
+        speakerSampleQuote.style.color = "var(--text-main, #f8fafc)";
+      }
+    } else {
+      btnPlaySpeakerSample.disabled = true;
+      btnPlaySpeakerSample.classList.add("disabled");
+      if (speakerSampleQuote) {
+        speakerSampleQuote.textContent = state.isMultiSpeaker
+          ? "Voice sample ready after transcription"
+          : "Enable Multi-Speaker Diarization to hear voice samples";
+        speakerSampleQuote.style.color = "var(--text-muted, #94a3b8)";
+      }
+      if (speakerSampleAudio && !speakerSampleAudio.paused) {
+        speakerSampleAudio.pause();
+      }
+      if (speakerSamplePlayIcon) speakerSamplePlayIcon.textContent = "▶";
+      if (speakerSamplePlayText) speakerSamplePlayText.textContent = "Listen";
+    }
+  }
+
+  if (btnPlaySpeakerSample && speakerSampleAudio) {
+    btnPlaySpeakerSample.addEventListener("click", () => {
+      const currentSpk = state.activeSpeakerId || "SPEAKER_00";
+      const sample = state.speakerSamples ? state.speakerSamples[currentSpk] : null;
+      if (!sample || !sample.sample_url) return;
+
+      if (!speakerSampleAudio.paused) {
+        speakerSampleAudio.pause();
+        speakerSampleAudio.currentTime = 0;
+        if (speakerSamplePlayIcon) speakerSamplePlayIcon.textContent = "▶";
+        if (speakerSamplePlayText) speakerSamplePlayText.textContent = "Listen";
+        return;
+      }
+
+      const token = state.authToken || (new URLSearchParams(window.location.search)).get("token") || "";
+      let playUrl = sample.sample_url;
+      if (token) {
+        playUrl += (playUrl.includes("?") ? "&" : "?") + `token=${encodeURIComponent(token)}`;
+      }
+
+      speakerSampleAudio.src = playUrl;
+      speakerSampleAudio.play().then(() => {
+        if (speakerSamplePlayIcon) speakerSamplePlayIcon.textContent = "⏹";
+        if (speakerSamplePlayText) speakerSamplePlayText.textContent = "Stop";
+      }).catch(err => {
+        console.warn("Could not play speaker sample audio:", err);
+      });
+    });
+
+    speakerSampleAudio.addEventListener("ended", () => {
+      if (speakerSamplePlayIcon) speakerSamplePlayIcon.textContent = "▶";
+      if (speakerSamplePlayText) speakerSamplePlayText.textContent = "Listen";
+    });
+
+    speakerSampleAudio.addEventListener("error", () => {
+      if (speakerSamplePlayIcon) speakerSamplePlayIcon.textContent = "▶";
+      if (speakerSamplePlayText) speakerSamplePlayText.textContent = "Listen";
+    });
+  }
+
+  if (checkEnableDiarization) {
+    checkEnableDiarization.addEventListener("change", () => {
+      state.enableDiarization = checkEnableDiarization.checked;
+      if (checkEnableDiarization.checked && !state.isMultiSpeaker) {
+        setMultiSpeakerMode(true, Math.max(2, state.speakerCount || 2));
+      }
+    });
   }
 
   if (btnModeSingleSpeaker) {
     btnModeSingleSpeaker.addEventListener("click", () => {
       setMultiSpeakerMode(false);
+      if (checkEnableDiarization) {
+        checkEnableDiarization.checked = false;
+        state.enableDiarization = false;
+      }
     });
   }
 
   if (btnModeMultiSpeaker) {
     btnModeMultiSpeaker.addEventListener("click", () => {
       setMultiSpeakerMode(true, state.speakerCount >= 2 ? state.speakerCount : 5);
+      if (checkEnableDiarization) {
+        checkEnableDiarization.checked = true;
+        state.enableDiarization = true;
+      }
     });
   }
 
@@ -2112,6 +2210,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const studioProgressThermometer = document.getElementById("studioProgressThermometer");
   const thermometerTitle = document.getElementById("thermometerTitle");
   const thermometerPercentBadge = document.getElementById("thermometerPercentBadge");
+  const thermometerVitalsBadge = document.getElementById("thermometerVitalsBadge");
+  const thermometerEtaMessage = document.getElementById("thermometerEtaMessage");
   const thermometerFill = document.getElementById("thermometerFill");
   const thermometerStageMessage = document.getElementById("thermometerStageMessage");
   const msAudio = document.getElementById("msAudio");
@@ -2132,10 +2232,12 @@ document.addEventListener("DOMContentLoaded", () => {
         thermometerStageMessage.textContent = initialMsg;
         thermometerStageMessage.style.color = "#93c5fd";
       }
+      if (thermometerVitalsBadge) thermometerVitalsBadge.classList.add("hidden");
+      if (thermometerEtaMessage) thermometerEtaMessage.classList.add("hidden");
     }
   }
 
-  function updateThermometer(percent, stageMsg, milestoneIndex = 1, customTitle = null) {
+  function updateThermometer(percent, stageMsg, milestoneIndex = 1, customTitle = null, telemetry = null) {
     if (!studioProgressThermometer) return;
     studioProgressThermometer.classList.remove("hidden");
     const pct = Math.max(0, Math.min(100, Math.round(percent)));
@@ -2143,6 +2245,31 @@ document.addEventListener("DOMContentLoaded", () => {
     if (thermometerFill) thermometerFill.style.width = `${pct}%`;
     if (stageMsg && thermometerStageMessage) thermometerStageMessage.textContent = stageMsg;
     if (customTitle && thermometerTitle) thermometerTitle.textContent = customTitle;
+
+    if (telemetry && (telemetry.speed || telemetry.fps || telemetry.frame)) {
+      if (thermometerVitalsBadge) {
+        const speedVal = (telemetry.speed || 1.0).toFixed(1);
+        const fpsVal = Math.round(telemetry.fps || 0);
+        const frameVal = (telemetry.frame || 0).toLocaleString();
+        thermometerVitalsBadge.textContent = `⚡ ${speedVal}x • ${fpsVal} fps • Frame ${frameVal}`;
+        thermometerVitalsBadge.classList.remove("hidden");
+      }
+      if (thermometerEtaMessage && (telemetry.eta_seconds > 0 || telemetry.duration > 0)) {
+        const etaSec = Math.round(telemetry.eta_seconds || 0);
+        const etaText = etaSec > 0 ? `~${etaSec}s remaining` : "finishing...";
+        const curSec = Math.round(telemetry.current_seconds || 0);
+        const durSec = Math.round(telemetry.duration || 0);
+        const curMin = Math.floor(curSec / 60);
+        const curS = String(curSec % 60).padStart(2, "0");
+        const durMin = Math.floor(durSec / 60);
+        const durS = String(durSec % 60).padStart(2, "0");
+        thermometerEtaMessage.textContent = `⏱️ ${etaText} (${curMin}:${curS} / ${durMin}:${durS})`;
+        thermometerEtaMessage.classList.remove("hidden");
+      }
+    } else {
+      if (thermometerVitalsBadge) thermometerVitalsBadge.classList.add("hidden");
+      if (thermometerEtaMessage) thermometerEtaMessage.classList.add("hidden");
+    }
 
     const milestones = [msAudio, msWhisper, msAlign, msAss, msBurn];
     milestones.forEach((el, idx) => {
@@ -2161,6 +2288,8 @@ document.addEventListener("DOMContentLoaded", () => {
   function hideThermometer() {
     if (studioProgressThermometer) {
       studioProgressThermometer.classList.add("hidden");
+      if (thermometerVitalsBadge) thermometerVitalsBadge.classList.add("hidden");
+      if (thermometerEtaMessage) thermometerEtaMessage.classList.add("hidden");
     }
   }
 
@@ -2196,7 +2325,8 @@ document.addEventListener("DOMContentLoaded", () => {
         data.progress,
         data.stage_message,
         milestone,
-        data.burn_video ? "Transcribing & Burning Video (RTX A5000 NVENC)..." : "Generating Subtitles (.ass) with WhisperX..."
+        data.burn_video ? "Transcribing & Burning Video (RTX A5000 NVENC)..." : "Generating Subtitles (.ass) with WhisperX...",
+        data.burn_telemetry
       );
 
       // Keep legacy anchors updated for backwards compatibility
@@ -2204,8 +2334,47 @@ document.addEventListener("DOMContentLoaded", () => {
       if (statusPercent) statusPercent.textContent = `${data.progress}%`;
       if (statusStageMessage) statusStageMessage.textContent = data.stage_message;
 
+      // Progressive disclosure: Activate Step 2 & Dialog Transcript as soon as .ass is ready
+      if (data.ass_ready) {
+        state.hasExistingAss = true;
+        state.existingAssPath = data.download_url;
+        state.existingAssName = `${data.custom_filename || 'subtitles'}.ass`;
+
+        if (btnTextDefault) {
+          btnTextDefault.disabled = false;
+          btnTextDefault.classList.remove("disabled");
+          btnTextDefault.title = "Preview subtitle text from dialogue";
+        }
+        if (btnFocusStep2) {
+          btnFocusStep2.classList.remove("disabled");
+        }
+        if (btnBurnOnly) {
+          btnBurnOnly.classList.remove("disabled");
+        }
+        if (btnDownloadAss && data.download_url) {
+          btnDownloadAss.href = data.download_url;
+          if (data.custom_filename) btnDownloadAss.download = `${data.custom_filename}.ass`;
+        }
+
+        // Preload drawer subtitle dialogue lines if not loaded yet
+        if (!state.drawerLoadedForTask || state.drawerLoadedForTask !== taskId) {
+          state.drawerLoadedForTask = taskId;
+          loadDrawerSubtitles(taskId);
+        }
+      }
+
+      if (data.speaker_samples) {
+        state.speakerSamples = data.speaker_samples;
+        updateSpeakerSampleUI();
+      }
+      if (data.speakers_found && data.speakers_found.length > 1) {
+        state.isMultiSpeaker = true;
+        updateSpeakerControlsVisibility(data.speakers_found.length, data.speakers_found);
+      }
+
       if (data.status === "completed") {
         clearInterval(state.pollInterval);
+        state.pollInterval = null;
         updateThermometer(100, "Done! Process completed successfully.", 5);
         setTimeout(() => hideThermometer(), 1000);
 
@@ -2240,11 +2409,9 @@ document.addEventListener("DOMContentLoaded", () => {
         if (btnGenerateAssOnly) btnGenerateAssOnly.classList.remove('disabled');
         if (btnTranscribeAndBurn) btnTranscribeAndBurn.classList.remove('disabled');
         if (btnBurnOnly) btnBurnOnly.classList.remove('disabled');
-
-        // Automatically populate dialogue list
-        loadDrawerSubtitles(data.task_id);
       } else if (data.status === "error") {
         clearInterval(state.pollInterval);
+        state.pollInterval = null;
         updateThermometer(100, `Error: ${data.error}`, 1, "Failed");
         if (thermometerStageMessage) thermometerStageMessage.style.color = "#f87171";
         if (btnGenerateAssOnly) btnGenerateAssOnly.classList.remove('disabled');
@@ -2279,6 +2446,7 @@ document.addEventListener("DOMContentLoaded", () => {
       output_filename: customFilename || null,
       reuse_existing_ass: false,
       reuse_existing_wav: false,
+      enable_diarization: Boolean((checkEnableDiarization && checkEnableDiarization.checked) || state.enableDiarization || state.isMultiSpeaker),
       styling: getCurrentStylingPayload()
     };
 
@@ -2346,13 +2514,12 @@ document.addEventListener("DOMContentLoaded", () => {
       btnModalSaveAndBurn.textContent = 'Burning...';
     }
 
+    const burnTaskId = state.currentTaskId || editorState.taskId || (`burn_${Date.now()}`);
+
     // Show horizontal thermometer progress meter directly below buttons
-    showThermometer("Burning Video with NVIDIA RTX A5000 NVENC...", 15, "Compiling ASS dialogue events and starting NVENC encode...");
-    let burnProgress = 15;
-    const burnProgressTimer = setInterval(() => {
-      burnProgress = Math.min(88, burnProgress + Math.floor(Math.random() * 12) + 6);
-      updateThermometer(burnProgress, "Burning styled word highlights with GPU hardware acceleration...", 5);
-    }, 400);
+    showThermometer("Burning Video with Hardware Acceleration...", 5, "Compiling ASS dialogue events and starting encoder...");
+    if (state.pollInterval) clearInterval(state.pollInterval);
+    state.pollInterval = setInterval(() => pollStatus(burnTaskId), 500);
 
     try {
       if (editorState.activeTab === "raw" && rawAssTextarea) {
@@ -2365,7 +2532,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const payload = {
         video_path: videoPath,
         ass_path: effectiveAss,
-        task_id: state.currentTaskId || editorState.taskId,
+        task_id: burnTaskId,
         output_filename: (outputFilenameInput ? outputFilenameInput.value.trim() : null) || state.outputFilename,
         content: editorState.isDirty ? editorState.currentContent : null,
         styling: getCurrentStylingPayload(),
@@ -2378,7 +2545,10 @@ document.addEventListener("DOMContentLoaded", () => {
         body: JSON.stringify(payload)
       });
 
-      clearInterval(burnProgressTimer);
+      if (state.pollInterval) {
+        clearInterval(state.pollInterval);
+        state.pollInterval = null;
+      }
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -2410,7 +2580,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       syncDeliverableFilenames();
 
-      updateThermometer(100, "✓ NVENC hardware burn complete in ~3 seconds!", 5);
+      updateThermometer(100, "✓ Hardware transcode complete! Deliverable ready.", 5);
       setTimeout(() => {
         showDeliveryBanner(state.lastBurnedVideoPath, data.video_filename);
       }, 700);
@@ -2424,7 +2594,10 @@ document.addEventListener("DOMContentLoaded", () => {
         setTimeout(() => { modalAssEditor.classList.add('hidden'); }, 500);
       }
     } catch (err) {
-      clearInterval(burnProgressTimer);
+      if (state.pollInterval) {
+        clearInterval(state.pollInterval);
+        state.pollInterval = null;
+      }
       console.error("Burn video error:", err);
       alert(`Error burning video: ${err.message}`);
       updateThermometer(100, `Error: ${err.message}`, 5, "Burn Failed");
@@ -3983,6 +4156,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
       state.existingAssPath = data.file_path;
       state.hasExistingAss = true;
+
+      if (data.speaker_samples) {
+        state.speakerSamples = data.speaker_samples;
+        updateSpeakerSampleUI();
+      }
 
       // Update speaker channels based on detected speakers
       const spkCount = data.speaker_count || (data.detected_speakers ? data.detected_speakers.length : 1);

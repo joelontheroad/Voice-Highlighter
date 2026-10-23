@@ -333,7 +333,7 @@ def test_system_info_version_compliance() -> None:
     assert info["success"] is True
     assert "version" in info
     assert info["version"] == __version__
-    assert info["version"] == "1.0.0"
+    assert info["version"] == "1.1.0"
 
 
 def test_preset_persistence_cycle(tmp_path: Path, monkeypatch) -> None:
@@ -424,5 +424,87 @@ def test_frontend_deliverable_bar_clean_layout() -> None:
     assert ".studio-filename-bar" in css_content
     assert ".deliverable-asset-chip" in css_content
     assert ".deliverable-chip-name" in css_content
+
+
+def test_transcode_telemetry_status_reporting() -> None:
+    """Verify get_task_status exposes ass_ready and burn_telemetry for UI anti-stall feedback."""
+    from backend.app import get_task_status, tasks
+
+    task_id = "test-telemetry-task-999"
+    tasks[task_id] = {
+        "task_id": task_id,
+        "status": "processing",
+        "progress": 92.5,
+        "stage_message": "Burning subtitles: 45% • ~24s remaining",
+        "ass_ready": True,
+        "burn_telemetry": {
+            "frame": 5400,
+            "fps": 182.0,
+            "speed": 7.4,
+            "current_seconds": 90.0,
+            "duration": 200.0,
+            "burn_pct": 45.0,
+            "eta_seconds": 14.8,
+        },
+        "burn_video": True,
+    }
+
+    res = get_task_status(task_id)
+    assert res["status"] == "processing"
+    assert res["ass_ready"] is True
+    assert res["burn_telemetry"] is not None
+    assert res["burn_telemetry"]["fps"] == 182.0
+    assert res["burn_telemetry"]["speed"] == 7.4
+    assert res["burn_telemetry"]["burn_pct"] == 45.0
+    assert res["download_url"] == f"/api/download/{task_id}"
+
+
+def test_ffmpeg_progress_telemetry_calculation(tmp_path: Path, monkeypatch) -> None:
+    """Verify _execute_ffmpeg_with_progress parses out_time_us, speed, and computes ETA."""
+    from backend.extractor import _execute_ffmpeg_with_progress
+
+    simulated_stdout = [
+        "frame=100\n",
+        "fps=50.0\n",
+        "speed=2.0x\n",
+        "out_time_us=50000000\n",  # 50 seconds
+        "progress=continue\n",
+        "progress=end\n",
+    ]
+
+    class FakeProc:
+        def __init__(self):
+            self.stdout = simulated_stdout
+            self.stderr = []
+            self.returncode = 0
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: FakeProc())
+
+    captured_telemetry = []
+
+    def on_progress(metrics):
+        captured_telemetry.append(metrics)
+
+    rc, stderr = _execute_ffmpeg_with_progress(
+        cmd=["ffmpeg"],
+        cwd=str(tmp_path),
+        duration=100.0,  # 100 seconds total
+        progress_callback=on_progress,
+    )
+
+    assert rc == 0
+    assert len(captured_telemetry) >= 1
+    last = captured_telemetry[-1]
+    assert last["current_seconds"] == 50.0
+    assert last["burn_pct"] == 50.0
+    assert last["speed"] == 2.0
+    assert last["fps"] == 50.0
+    assert last["frame"] == 100
+    # Remaining 50s / speed 2.0x = 25s ETA
+    assert last["eta_seconds"] == 25.0
+
 
 

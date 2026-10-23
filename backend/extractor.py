@@ -14,6 +14,8 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+from collections.abc import Callable
 from typing import Any
 
 # Cache for tested encoders
@@ -299,17 +301,126 @@ def extract_audio(video_path: str, output_wav_path: str) -> str:
     return output_wav_path
 
 
-def burn_subtitles_to_video(video_path: str, ass_path: str, output_video_path: str) -> str:
+def _execute_ffmpeg_with_progress(
+    cmd: list[str],
+    cwd: str,
+    duration: float = 0.0,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> tuple[int, str]:
+    """Execute FFmpeg with real-time stream pipe polling (-progress pipe:1).
+
+    SECURITY: Runs discrete command argument array (CWE-78 mitigation).
+    Reads stdout line-by-line for telemetry key-value pairs without buffering,
+    streaming out_time_us, fps, speed, and frame while a separate daemon thread
+    captures stderr to prevent process buffer deadlocks.
+
+    Args:
+        cmd: Discrete command argument list.
+        cwd: Working directory for process execution.
+        duration: Total video duration in seconds for progress percentage calculation.
+        progress_callback: Optional callback receiving live telemetry metrics.
+
+    Returns:
+        Tuple of (returncode, captured_stderr_string).
+    """
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+    stderr_lines: list[str] = []
+
+    def capture_stderr():
+        if proc.stderr:
+            for line in proc.stderr:
+                stderr_lines.append(line)
+
+    stderr_thread = threading.Thread(target=capture_stderr, daemon=True)
+    stderr_thread.start()
+
+    current_metrics: dict[str, Any] = {
+        "frame": 0,
+        "fps": 0.0,
+        "speed": 1.0,
+        "current_seconds": 0.0,
+        "duration": duration,
+        "burn_pct": 0.0,
+        "eta_seconds": 0.0,
+    }
+
+    if proc.stdout:
+        for raw_line in proc.stdout:
+            line = raw_line.strip()
+            if not line or "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            key = key.strip()
+            val = val.strip()
+
+            if key == "frame":
+                try:
+                    current_metrics["frame"] = int(val)
+                except ValueError:
+                    pass
+            elif key == "fps":
+                try:
+                    current_metrics["fps"] = float(val)
+                except ValueError:
+                    pass
+            elif key == "speed":
+                if val.endswith("x"):
+                    try:
+                        current_metrics["speed"] = max(0.01, float(val[:-1]))
+                    except ValueError:
+                        pass
+            elif key in ("out_time_us", "out_time_ms"):
+                try:
+                    us = int(val)
+                    cur_sec = us / 1_000_000.0
+                    current_metrics["current_seconds"] = cur_sec
+                    if duration > 0:
+                        burn_pct = min(99.5, max(0.0, (cur_sec / duration) * 100.0))
+                        current_metrics["burn_pct"] = burn_pct
+                        rem_sec = max(0.0, duration - cur_sec)
+                        speed = current_metrics["speed"]
+                        current_metrics["eta_seconds"] = rem_sec / speed if speed > 0 else 0.0
+                except ValueError:
+                    pass
+            elif key == "progress":
+                if progress_callback:
+                    try:
+                        progress_callback(dict(current_metrics))
+                    except Exception:
+                        pass
+
+    proc.wait()
+    stderr_thread.join(timeout=2.0)
+    full_stderr = "".join(stderr_lines)
+    return proc.returncode, full_stderr
+
+
+def burn_subtitles_to_video(
+    video_path: str,
+    ass_path: str,
+    output_video_path: str,
+    duration: float | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> str:
     """Burn ASS subtitles into the video stream using hardware-accelerated encoding.
 
     Attempts hardware-accelerated encoding first (Apple VideoToolbox, NVENC, QSV, AMF)
     and automatically falls back to CPU-based libx264 if hardware encoding encounters
-    an error.
+    an error. Streams real-time transcode telemetry via -progress pipe:1.
 
     Args:
         video_path: Path to the source video file.
         ass_path: Path to the Advanced SubStation Alpha (.ass) subtitle file.
         output_video_path: Destination path for the rendered MP4 file.
+        duration: Optional media duration in seconds for progress and ETA calculations.
+        progress_callback: Optional callable receiving periodic telemetry dictionaries.
 
     Returns:
         Path to the generated MP4 file.
@@ -323,6 +434,13 @@ def burn_subtitles_to_video(video_path: str, ass_path: str, output_video_path: s
     ass_filename = os.path.basename(ass_path)
     ffmpeg = get_ffmpeg_binary()
 
+    if duration is None or duration <= 0:
+        try:
+            meta = get_video_metadata(video_path)
+            duration = float(meta.get("duration", 0.0))
+        except Exception:
+            duration = 0.0
+
     encoder_name, encoder_flags, friendly_label = get_best_h264_encoder()
 
     # SECURITY: Discrete argument array mitigating command injection (CWE-78)
@@ -335,10 +453,14 @@ def burn_subtitles_to_video(video_path: str, ass_path: str, output_video_path: s
         "-pix_fmt", "yuv420p",
         "-c:a", "copy",
         "-movflags", "+faststart",
+        "-progress", "pipe:1",
+        "-nostats",
         os.path.abspath(output_video_path),
     ]
-    res = subprocess.run(cmd_primary, cwd=ass_dir, capture_output=True, text=True)
-    if res.returncode == 0 and os.path.exists(output_video_path) and os.path.getsize(output_video_path) > 0:
+    rc, stderr_out = _execute_ffmpeg_with_progress(
+        cmd_primary, cwd=ass_dir, duration=duration, progress_callback=progress_callback
+    )
+    if rc == 0 and os.path.exists(output_video_path) and os.path.getsize(output_video_path) > 0:
         return output_video_path
 
     # Fallback to libx264 CPU if the primary hardware encoder fails
@@ -353,13 +475,18 @@ def burn_subtitles_to_video(video_path: str, ass_path: str, output_video_path: s
             "-pix_fmt", "yuv420p",
             "-c:a", "copy",
             "-movflags", "+faststart",
+            "-progress", "pipe:1",
+            "-nostats",
             os.path.abspath(output_video_path),
         ]
-        res_cpu = subprocess.run(cmd_cpu, cwd=ass_dir, capture_output=True, text=True)
-        if res_cpu.returncode == 0 and os.path.exists(output_video_path) and os.path.getsize(output_video_path) > 0:
+        rc_cpu, stderr_cpu = _execute_ffmpeg_with_progress(
+            cmd_cpu, cwd=ass_dir, duration=duration, progress_callback=progress_callback
+        )
+        if rc_cpu == 0 and os.path.exists(output_video_path) and os.path.getsize(output_video_path) > 0:
             return output_video_path
 
-        err_msg = res_cpu.stderr or res.stderr
+        err_msg = stderr_cpu or stderr_out
         raise RuntimeError(f"FFmpeg subtitle burning failed: {err_msg}")
 
-    raise RuntimeError(f"FFmpeg subtitle burning failed: {res.stderr}")
+    raise RuntimeError(f"FFmpeg subtitle burning failed: {stderr_out}")
+
