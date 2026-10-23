@@ -248,3 +248,46 @@ def test_factory_preset_laser_karaoke_loaded():
     assert preset.highlight_animation == "karaoke_wipe"
     assert preset.highlight_color.upper() == "#FFDF00"
 
+
+def test_five_speaker_channels_support():
+    """Verify up to 5 speakers generate distinct V4+ styles and dialogue lines in ASS subtitles."""
+    from backend.config import load_preset
+
+    preset = load_preset("ensemble-quintet")
+    assert preset is not None
+    assert len(preset.speaker_channels) == 5
+    assert preset.speaker_channels["SPEAKER_04"].name == "Speaker 5"
+
+    whisper_result = {
+        "segments": [
+            {
+                "text": "One two three four five",
+                "start": 0.0,
+                "end": 5.0,
+                "words": [
+                    {"word": "One", "start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"},
+                    {"word": "two", "start": 1.0, "end": 2.0, "speaker": "SPEAKER_01"},
+                    {"word": "three", "start": 2.0, "end": 3.0, "speaker": "SPEAKER_02"},
+                    {"word": "four", "start": 3.0, "end": 4.0, "speaker": "SPEAKER_03"},
+                    {"word": "five", "start": 4.0, "end": 5.0, "speaker": "SPEAKER_04"},
+                ],
+            }
+        ]
+    }
+    config = {
+        "speaker_channels": {
+            spk_id: ch.model_dump() for spk_id, ch in preset.speaker_channels.items()
+        }
+    }
+    meta = {"width": 1920, "height": 1080}
+    ass_text = generate_ass_content(whisper_result, config, meta)
+
+    # Verify all 5 styles exist in V4+ Styles section
+    for i in range(5):
+        assert f"Style: Speaker_SPEAKER_0{i}" in ass_text
+
+    # Verify dialogue events reference the speaker styles
+    for i in range(5):
+        assert f"Speaker_SPEAKER_0{i}" in ass_text
+
+

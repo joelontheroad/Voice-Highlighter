@@ -229,7 +229,9 @@ def safe_resolve_preset_path(preset_name: str) -> Path:
     return target_path
 
 
-DEFAULT_PRESET_NAMES: frozenset[str] = frozenset({"default", "tiktok-bold", "podcast-duo", "laser-karaoke"})
+DEFAULT_PRESET_NAMES: frozenset[str] = frozenset(
+    {"default", "tiktok-bold", "podcast-duo", "ensemble-quintet", "laser-karaoke"}
+)
 
 
 def load_preset(preset_name: str = "default") -> StylePreset:
@@ -398,6 +400,53 @@ def reset_all_configuration() -> None:
         },
     )
     save_preset(podcast_duo_preset, allow_builtin=True)
+
+    ensemble_quintet_preset = StylePreset(
+        name="ensemble-quintet",
+        description="5-Speaker dialogue with distinct Gold, Cyan, Hot Pink, Lime, and Purple highlights",
+        font_name="Montserrat",
+        font_size=68,
+        bold=True,
+        highlight_color="#FFDF00",
+        speaker_channels={
+            "SPEAKER_00": SpeakerChannel(
+                id="SPEAKER_00",
+                name="Speaker 1",
+                primary_color="#FFFFFF",
+                highlight_color="#FFDF00",
+                outline_color="#000000",
+            ),
+            "SPEAKER_01": SpeakerChannel(
+                id="SPEAKER_01",
+                name="Speaker 2",
+                primary_color="#FFFFFF",
+                highlight_color="#00E5FF",
+                outline_color="#000000",
+            ),
+            "SPEAKER_02": SpeakerChannel(
+                id="SPEAKER_02",
+                name="Speaker 3",
+                primary_color="#FFFFFF",
+                highlight_color="#FF007F",
+                outline_color="#000000",
+            ),
+            "SPEAKER_03": SpeakerChannel(
+                id="SPEAKER_03",
+                name="Speaker 4",
+                primary_color="#FFFFFF",
+                highlight_color="#00FF66",
+                outline_color="#000000",
+            ),
+            "SPEAKER_04": SpeakerChannel(
+                id="SPEAKER_04",
+                name="Speaker 5",
+                primary_color="#FFFFFF",
+                highlight_color="#B026FF",
+                outline_color="#000000",
+            ),
+        },
+    )
+    save_preset(ensemble_quintet_preset, allow_builtin=True)
 
     laser_karaoke_preset = StylePreset(
         name="laser-karaoke",

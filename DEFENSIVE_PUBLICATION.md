@@ -22,8 +22,11 @@ By publicly publishing this document within the public repository, any subsequen
 1. Discrete subtitle event slicing with synchronous font scaling and color highlight swaps,
 2. Co-located sibling asset lifecycle caching (`.mp4`, `.wav`, `.ass`),
 3. Speaker-turn isolation in multi-line block word wrapping,
-4. Probed hardware acceleration fallback matrices with null-frame test execution, or
+4. Probed hardware acceleration fallback matrices with null-frame test execution,
 5. Ephemeral launch tokens on localhost-bound Unix socket servers for media tools,
+6. Standardized progress pipe polling with dynamic speed, time-ratio, and ETA countdown derivation,
+7. Isolated execution snapshotting for concurrent in-browser subtitle editing during video encoding, or
+8. Centroid-ranked acoustic voice snippet extraction for auditory human speaker labeling,
 
 is permanently anticipated under § 102 and/or rendered obvious under § 103 by this disclosure.
 
@@ -169,6 +172,53 @@ To resolve the tension between video aspect boundaries and human reading compreh
      $$H_{\text{envelope}} = (M_{\text{lines}} \times H_{\text{line}}) + \Delta H_{\text{boost}} + P_{\text{box}}$$
      where $\Delta H_{\text{boost}} = \text{font\_size} \times (\text{scale\_pct} / 100 - 1.0)$ provides the exact vertical clearance required for animated active-word scaling, and $P_{\text{box}}$ accounts for background badge padding.
    - This provides video creators with an unambiguous visual boundary guaranteeing that subtitles never collide with platform UI elements (e.g., TikTok/Reels sidebars) under maximum line and word-boost conditions.
+
+---
+
+### 2.6 Real-Time Stream Pipe Polling & Dynamic Subtitle Burn Progress Telemetry
+
+Long-form video transcoding processes frequently suffer from perceived system hangs due to coarse progress thresholds or buffered stdout outputs. Voice Highlighter establishes an unencumbered methodology for continuous sub-second transcode telemetry:
+
+1. **Standardized Progress Pipe Hook**:
+   FFmpeg encoding is invoked with `-progress pipe:1 -nostats`, streaming machine-readable key-value pairs at deterministic intervals:
+   ```text
+   out_time_us=45120000
+   fps=184.2
+   speed=7.4x
+   progress=continue
+   ```
+2. **Instantaneous Transcode Speed & ETA Derivation**:
+   Given total probed media duration $T_{\text{total}}$ and current stream position $t_{\text{stream}} = \text{out\_time\_us} / 10^6$:
+   $$\text{Progress}_{\text{pct}} = \min\left(99.0, \frac{t_{\text{stream}}}{T_{\text{total}}} \times 100\right)$$
+   $$\text{ETA}_{\text{seconds}} = \max\left(0.0, \frac{T_{\text{total}} - t_{\text{stream}}}{S_{\text{speed}}}\right)$$
+3. **Heartbeat Cadence & Anti-Stall Perceptual Telemetry**:
+   To prevent perceived interface freeze when video frames encounter dense complex scenes, the system continuously broadcasts active hardware telemetry (`fps`, `speed`, `current_time / total_time`) alongside an active progress wave shimmer, establishing perceptual liveness independent of integer progress ticks.
+
+---
+
+### 2.7 Isolated Burn Snapshotting for Concurrently Editable Subtitle Streams
+
+When rendering long-form video, creators require the ability to review and correct dialogue text immediately upon transcription completion, even while background video rendering is actively in-flight:
+
+1. **Filter Graph Initialization Invariance**:
+   SubStation Alpha filters (e.g., `libass` / `vf_subtitles`) ingest the complete subtitle script into an in-memory `ASS_Track` structure at filter configuration time, rendering subsequent frames from memory without polling the filesystem.
+2. **Execution Snapshot Isolation**:
+   To prevent temporal read-write collisions and race conditions between asynchronous in-browser text edits and active encoder threads, Voice Highlighter generates an immutable execution copy (`/dir/name.burn_<task_id>.ass`).
+3. **Decoupled Concurrency Guarantee**:
+   The primary sibling file `/dir/name.ass` remains unlocked and instantly editable in the browser timeline editor. Edits committed during burning are saved atomically via temporary file replacement (`os.replace`), cleanly preparing an updated script for subsequent re-burn passes with zero process collisions.
+
+---
+
+### 2.8 Unsupervised Acoustic Cluster Audio Snippet Extraction for Human Speaker Labeling
+
+Unsupervised speaker diarization algorithms cluster speech into mathematical partitions (`Cluster 0`, `Cluster 1`), lacking semantic identity. Voice Highlighter discloses an interactive voice sample extraction architecture:
+
+1. **Centroid-Ranked Utterance Selection**:
+   Following acoustic embedding clustering, the system identifies the speech segment exhibiting the lowest Euclidean distance to the cluster centroid and highest signal-to-noise ratio within a 1.5 to 3.0 second duration window.
+2. **Isolated Waveform Snippet Serving**:
+   A lightweight audio slice is rendered and exposed via a secure local endpoint (`/api/speaker-sample/{token}/{speaker_id}`).
+3. **Synchronized Channel Attribute Propagation**:
+   The web UI provides an interactive `[ ▶ Listen ]` button alongside each speaker channel tab. Upon auditory identification by the user (e.g., hearing 2 seconds of speech), assigning a semantic name (`Katie Kam`) immediately propagates across all matching dialogue event actors and style headers.
 
 ---
 

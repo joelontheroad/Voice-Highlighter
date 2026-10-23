@@ -30,8 +30,15 @@ Accelerated with **WhisperX AI** (word-level forced phoneme alignment) and hardw
   - **1-Click Preset Update**: Instantly update active custom presets with your current styling modifications with a single click.
   - **Export & Import JSON**: Easily share custom presets between machines or backup configurations.
 - **Sibling Asset Lifecycle State Machine**: Automatically detects co-located `.wav` (16kHz mono audio) and `.ass` (word-level subtitles), skipping redundant extraction or transcription steps when re-styling or re-burning.
-- **Zero-Burn Inline Transcript Editor**: Review transcribed speech, fix proper nouns, and tweak timestamps directly in the web UI without re-encoding video.
+- **Progressive Disclosure & Inline Transcript Fast-Edit**:
+  - **Instant Dialog Transcript**: Toggle between Lorem Ipsum and actual transcribed speech with the **Dialog Transcript** preview mode.
+  - **Concurrent Fast-Edit Drawer**: Inspect, verify, and correct transcribed words or reassign speaker channels immediately once the `.ass` file is generated—even while background video burning is in progress.
+  - **Zero-Collision Snapshotting**: Background rendering uses isolated transcode snapshots, guaranteeing that editing subtitle lines never causes read/write collisions or crashes active FFmpeg processes.
+- **Real-Time Transcode Telemetry & Live ETA**:
+  - **Dynamic Stream Pipe Polling**: Reads hardware transcode metrics in real time via `-progress pipe:1`, updating every sub-second with active encoding frames, speed multipliers (e.g., `7.4x`), and dynamic Estimated Time Remaining (ETA) countdowns.
+  - **Anti-Stall Progress Thermometer**: Replaces static waiting bars with continuous progress, live media time ratios (`14:06 / 15:00`), and hardware vitals to eliminate frozen progress anxiety on long videos.
 - **Zero Telemetry & 100% Local**: Strictly binds to loopback interface `127.0.0.1` with a single-session CSPRNG launch token. No external font CDNs, no tracking, and complete offline capability.
+
 
 ---
 

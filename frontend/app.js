@@ -82,6 +82,36 @@ document.addEventListener("DOMContentLoaded", () => {
         box_bg_color: "#000000",
         box_font_color: "#FFFFFF",
         show_speaker_name: false
+      },
+      "SPEAKER_02": {
+        id: "SPEAKER_02",
+        name: "Speaker 3",
+        primary_color: "#FFFFFF",
+        highlight_color: "#FF007F",
+        outline_color: "#000000",
+        box_bg_color: "#000000",
+        box_font_color: "#FFFFFF",
+        show_speaker_name: false
+      },
+      "SPEAKER_03": {
+        id: "SPEAKER_03",
+        name: "Speaker 4",
+        primary_color: "#FFFFFF",
+        highlight_color: "#00FF66",
+        outline_color: "#000000",
+        box_bg_color: "#000000",
+        box_font_color: "#FFFFFF",
+        show_speaker_name: false
+      },
+      "SPEAKER_04": {
+        id: "SPEAKER_04",
+        name: "Speaker 5",
+        primary_color: "#FFFFFF",
+        highlight_color: "#B026FF",
+        outline_color: "#000000",
+        box_bg_color: "#000000",
+        box_font_color: "#FFFFFF",
+        show_speaker_name: false
       }
     },
     stylingModified: false,
@@ -112,7 +142,12 @@ document.addEventListener("DOMContentLoaded", () => {
       line_width_pct: state.lineWidthPct
     };
     if (state.isMultiSpeaker && state.speakerCount >= 2 && state.speakerChannels) {
-      payload.speaker_channels = JSON.parse(JSON.stringify(state.speakerChannels));
+      const activeChannels = {};
+      const spkKeys = Object.keys(state.speakerChannels).slice(0, state.speakerCount);
+      spkKeys.forEach(k => {
+        activeChannels[k] = state.speakerChannels[k];
+      });
+      payload.speaker_channels = JSON.parse(JSON.stringify(activeChannels));
     }
     return payload;
   }
@@ -218,12 +253,18 @@ document.addEventListener("DOMContentLoaded", () => {
   // Multi-Speaker Color Channels DOM Elements
   const speakerChannelsSection = document.getElementById("speakerChannelsSection");
   const speakerCountBadge = document.getElementById("speakerCountBadge");
+  const btnModeSingleSpeaker = document.getElementById("btnModeSingleSpeaker");
+  const btnModeMultiSpeaker = document.getElementById("btnModeMultiSpeaker");
   const btnToggleSpeakerChannels = document.getElementById("btnToggleSpeakerChannels");
+  const countPillBtns = document.querySelectorAll(".count-pill-btn");
   const speakerTabsBar = document.getElementById("speakerTabsBar");
   const speakerChannelMeta = document.getElementById("speakerChannelMeta");
   const currentEditingSpeakerName = document.getElementById("currentEditingSpeakerName");
   const currentEditingSpeakerDot = document.getElementById("currentEditingSpeakerDot");
   const inputSpeakerDisplayName = document.getElementById("inputSpeakerDisplayName");
+  const colorSpeakerHighlight = document.getElementById("colorSpeakerHighlight");
+  const codeSpeakerHighlight = document.getElementById("codeSpeakerHighlight");
+  const speakerSwatchChips = document.querySelectorAll(".speaker-swatch-chip");
 
   // Lines & Line Width
   const linePillBtns = document.querySelectorAll("#lineCountSelector .pill-btn");
@@ -1128,9 +1169,11 @@ document.addEventListener("DOMContentLoaded", () => {
       // Per-speaker styling when multi-speaker mode is active
       let spkChannel = null;
       if (state.isMultiSpeaker && state.speakerChannels) {
-        const spkKeys = Object.keys(state.speakerChannels);
+        const spkKeys = Object.keys(state.speakerChannels).slice(0, state.speakerCount);
         if (spkKeys.length >= 2) {
-          const spkKey = spkKeys[lineIdx % spkKeys.length];
+          const spkKey = (activeBlock.length === 1 && state.activeSpeakerId && spkKeys.includes(state.activeSpeakerId))
+            ? state.activeSpeakerId
+            : spkKeys[lineIdx % spkKeys.length];
           spkChannel = state.speakerChannels[spkKey];
         }
       }
@@ -1418,61 +1461,114 @@ document.addEventListener("DOMContentLoaded", () => {
   // ----------------------------------------------------
   // 4b. Multi-Speaker Color Channels System
   // ----------------------------------------------------
+  // ----------------------------------------------------
+  // 4b. Multi-Speaker Color Channels System (Up to 5 Voices)
+  // ----------------------------------------------------
+  const DEFAULT_SPEAKER_PALETTE = ["#FFDF00", "#00E5FF", "#FF007F", "#00FF66", "#B026FF", "#FF9900", "#D8B4FE", "#F43F5E"];
+
+  function ensureSpeakerChannels(count) {
+    const targetCount = Math.max(2, Math.min(count || 5, 5));
+    for (let i = 0; i < targetCount; i++) {
+      const spkId = `SPEAKER_0${i}`;
+      if (!state.speakerChannels[spkId]) {
+        state.speakerChannels[spkId] = {
+          id: spkId,
+          name: `Speaker ${i + 1}`,
+          primary_color: "#FFFFFF",
+          highlight_color: DEFAULT_SPEAKER_PALETTE[i % DEFAULT_SPEAKER_PALETTE.length],
+          outline_color: "#000000",
+          box_bg_color: "#000000",
+          box_font_color: "#FFFFFF",
+          show_speaker_name: false
+        };
+      }
+    }
+  }
+
+  function setMultiSpeakerMode(enabled, count = null) {
+    state.isMultiSpeaker = !!enabled;
+    if (enabled) {
+      const voiceCount = count || (state.speakerCount >= 2 ? state.speakerCount : 5);
+      state.speakerCount = voiceCount;
+      ensureSpeakerChannels(voiceCount);
+
+      if (speakerChannelsSection) speakerChannelsSection.classList.remove("hidden");
+      if (btnModeMultiSpeaker) {
+        btnModeMultiSpeaker.classList.add("active");
+        btnModeMultiSpeaker.setAttribute("aria-selected", "true");
+      }
+      if (btnModeSingleSpeaker) {
+        btnModeSingleSpeaker.classList.remove("active");
+        btnModeSingleSpeaker.setAttribute("aria-selected", "false");
+      }
+      if (speakerCountBadge) speakerCountBadge.textContent = `${voiceCount} Voices`;
+
+      // Highlight active count selector pill
+      if (countPillBtns && countPillBtns.length > 0) {
+        countPillBtns.forEach(btn => {
+          const btnCount = parseInt(btn.dataset.count, 10);
+          btn.classList.toggle("active", btnCount === voiceCount);
+        });
+      }
+
+      const activeKeys = Object.keys(state.speakerChannels).slice(0, voiceCount);
+      if (!activeKeys.includes(state.activeSpeakerId)) {
+        state.activeSpeakerId = activeKeys[0] || "SPEAKER_00";
+      }
+
+      renderSpeakerTabs();
+      syncActiveSpeakerUI();
+    } else {
+      if (speakerChannelsSection) speakerChannelsSection.classList.add("hidden");
+      if (btnModeSingleSpeaker) {
+        btnModeSingleSpeaker.classList.add("active");
+        btnModeSingleSpeaker.setAttribute("aria-selected", "true");
+      }
+      if (btnModeMultiSpeaker) {
+        btnModeMultiSpeaker.classList.remove("active");
+        btnModeMultiSpeaker.setAttribute("aria-selected", "false");
+      }
+      if (speakerCountBadge) speakerCountBadge.textContent = "1 Voice";
+    }
+
+    renderSubtitlePreview();
+    if (editorState.dialogues && editorState.dialogues.length > 0) {
+      renderDrawerDialogueItems(editorState.dialogues);
+    }
+  }
+
   function updateSpeakerControlsVisibility(speakerCount, detectedSpeakers) {
     const count = Math.max(1, speakerCount || 1);
     state.speakerCount = count;
 
     if (count <= 1 && !state.isMultiSpeaker) {
-      state.isMultiSpeaker = false;
-      if (speakerChannelsSection) speakerChannelsSection.classList.add("hidden");
-      if (speakerCountBadge) speakerCountBadge.textContent = "1 Speaker";
-      if (btnToggleSpeakerChannels) {
-        btnToggleSpeakerChannels.textContent = "Disabled";
-        btnToggleSpeakerChannels.classList.remove("active");
-      }
+      setMultiSpeakerMode(false);
     } else {
-      state.isMultiSpeaker = true;
-      if (speakerChannelsSection) speakerChannelsSection.classList.remove("hidden");
-      if (speakerCountBadge) speakerCountBadge.textContent = `${count} Speakers`;
-      if (btnToggleSpeakerChannels) {
-        btnToggleSpeakerChannels.textContent = "Enabled";
-        btnToggleSpeakerChannels.classList.add("active");
+      if (detectedSpeakers && detectedSpeakers.length > 0) {
+        detectedSpeakers.forEach((spkId, idx) => {
+          if (!state.speakerChannels[spkId]) {
+            state.speakerChannels[spkId] = {
+              id: spkId,
+              name: spkId.startsWith("SPEAKER_") ? `Speaker ${idx + 1}` : spkId,
+              primary_color: "#FFFFFF",
+              highlight_color: DEFAULT_SPEAKER_PALETTE[idx % DEFAULT_SPEAKER_PALETTE.length],
+              outline_color: "#000000",
+              box_bg_color: "#000000",
+              box_font_color: "#FFFFFF",
+              show_speaker_name: false
+            };
+          }
+        });
       }
-
-      // Ensure channels exist for detected speakers
-      const palette = ["#FFDF00", "#00E5FF", "#FF0055", "#00FF66", "#FF9900", "#D8B4FE", "#38BDF8", "#F43F5E"];
-      const speakers = (detectedSpeakers && detectedSpeakers.length > 0)
-        ? detectedSpeakers
-        : (count >= 2 ? ["SPEAKER_00", "SPEAKER_01"] : ["SPEAKER_00"]);
-
-      speakers.forEach((spkId, idx) => {
-        if (!state.speakerChannels[spkId]) {
-          state.speakerChannels[spkId] = {
-            id: spkId,
-            name: spkId.startsWith("SPEAKER_") ? `Speaker ${idx + 1}` : spkId,
-            primary_color: "#FFFFFF",
-            highlight_color: palette[idx % palette.length],
-            outline_color: "#000000",
-            box_bg_color: "#000000",
-            box_font_color: "#FFFFFF",
-            show_speaker_name: false
-          };
-        }
-      });
-
-      if (!state.speakerChannels[state.activeSpeakerId]) {
-        state.activeSpeakerId = speakers[0];
-      }
-
-      renderSpeakerTabs();
-      syncActiveSpeakerUI();
+      setMultiSpeakerMode(true, Math.max(count, (detectedSpeakers ? detectedSpeakers.length : 2)));
     }
   }
 
   function renderSpeakerTabs() {
     if (!speakerTabsBar) return;
     speakerTabsBar.innerHTML = "";
-    const keys = Object.keys(state.speakerChannels);
+    const limit = state.isMultiSpeaker ? state.speakerCount : 2;
+    const keys = Object.keys(state.speakerChannels).slice(0, limit);
 
     keys.forEach(key => {
       const ch = state.speakerChannels[key];
@@ -1514,15 +1610,22 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (inputSpeakerDisplayName) inputSpeakerDisplayName.value = ch.name || ch.id;
 
-    if (ch.primary_color && colorTextBase) {
-      colorTextBase.value = ch.primary_color;
-      if (codeTextBase) codeTextBase.textContent = ch.primary_color;
-      state.textBaseColor = ch.primary_color;
+    if (colorSpeakerHighlight) {
+      colorSpeakerHighlight.value = ch.highlight_color || "#FFDF00";
     }
+    if (codeSpeakerHighlight) {
+      codeSpeakerHighlight.textContent = (ch.highlight_color || "#FFDF00").toUpperCase();
+    }
+
     if (ch.highlight_color && colorHighlightText) {
       colorHighlightText.value = ch.highlight_color;
       if (codeHighlightText) codeHighlightText.textContent = ch.highlight_color;
       state.highlightColor = ch.highlight_color;
+    }
+    if (ch.primary_color && colorTextBase) {
+      colorTextBase.value = ch.primary_color;
+      if (codeTextBase) codeTextBase.textContent = ch.primary_color;
+      state.textBaseColor = ch.primary_color;
     }
     if (ch.outline_color && colorOutline) {
       colorOutline.value = ch.outline_color;
@@ -1536,25 +1639,73 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  if (btnModeSingleSpeaker) {
+    btnModeSingleSpeaker.addEventListener("click", () => {
+      setMultiSpeakerMode(false);
+    });
+  }
+
+  if (btnModeMultiSpeaker) {
+    btnModeMultiSpeaker.addEventListener("click", () => {
+      setMultiSpeakerMode(true, state.speakerCount >= 2 ? state.speakerCount : 5);
+    });
+  }
+
   if (btnToggleSpeakerChannels) {
     btnToggleSpeakerChannels.addEventListener("click", () => {
-      if (state.isMultiSpeaker) {
-        state.isMultiSpeaker = false;
-        if (speakerChannelsSection) speakerChannelsSection.classList.add("hidden");
-        btnToggleSpeakerChannels.textContent = "Disabled";
-        btnToggleSpeakerChannels.classList.remove("active");
-      } else {
-        state.isMultiSpeaker = true;
-        if (speakerChannelsSection) speakerChannelsSection.classList.remove("hidden");
-        btnToggleSpeakerChannels.textContent = "Enabled";
-        btnToggleSpeakerChannels.classList.add("active");
+      setMultiSpeakerMode(!state.isMultiSpeaker, state.speakerCount >= 2 ? state.speakerCount : 5);
+    });
+  }
+
+  if (countPillBtns && countPillBtns.length > 0) {
+    countPillBtns.forEach(btn => {
+      btn.addEventListener("click", () => {
+        const count = parseInt(btn.dataset.count, 10);
+        if (count >= 2 && count <= 5) {
+          setMultiSpeakerMode(true, count);
+        }
+      });
+    });
+  }
+
+  if (colorSpeakerHighlight) {
+    colorSpeakerHighlight.addEventListener("input", (e) => {
+      const val = e.target.value.toUpperCase();
+      if (codeSpeakerHighlight) codeSpeakerHighlight.textContent = val;
+      if (state.isMultiSpeaker && state.speakerChannels && state.speakerChannels[state.activeSpeakerId]) {
+        state.speakerChannels[state.activeSpeakerId].highlight_color = val;
+        if (colorHighlightText) colorHighlightText.value = val;
+        if (codeHighlightText) codeHighlightText.textContent = val;
+        state.highlightColor = val;
+        if (currentEditingSpeakerDot) currentEditingSpeakerDot.style.background = val;
         renderSpeakerTabs();
-        syncActiveSpeakerUI();
+        renderSubtitlePreview();
+        if (editorState.dialogues && editorState.dialogues.length > 0) {
+          renderDrawerDialogueItems(editorState.dialogues);
+        }
       }
-      renderSubtitlePreview();
-      if (editorState.dialogues && editorState.dialogues.length > 0) {
-        renderDrawerDialogueItems(editorState.dialogues);
-      }
+    });
+  }
+
+  if (speakerSwatchChips && speakerSwatchChips.length > 0) {
+    speakerSwatchChips.forEach(chip => {
+      chip.addEventListener("click", () => {
+        const c = chip.dataset.color.toUpperCase();
+        if (colorSpeakerHighlight) colorSpeakerHighlight.value = c;
+        if (codeSpeakerHighlight) codeSpeakerHighlight.textContent = c;
+        if (state.isMultiSpeaker && state.speakerChannels && state.speakerChannels[state.activeSpeakerId]) {
+          state.speakerChannels[state.activeSpeakerId].highlight_color = c;
+          if (colorHighlightText) colorHighlightText.value = c;
+          if (codeHighlightText) codeHighlightText.textContent = c;
+          state.highlightColor = c;
+          if (currentEditingSpeakerDot) currentEditingSpeakerDot.style.background = c;
+          renderSpeakerTabs();
+          renderSubtitlePreview();
+          if (editorState.dialogues && editorState.dialogues.length > 0) {
+            renderDrawerDialogueItems(editorState.dialogues);
+          }
+        }
+      });
     });
   }
 
@@ -1576,34 +1727,43 @@ document.addEventListener("DOMContentLoaded", () => {
   themeChips.forEach(chip => {
     chip.addEventListener("click", () => {
       const theme = chip.dataset.theme;
-      const keys = Object.keys(state.speakerChannels);
-      if (keys.length < 2) return;
-      const spk0 = keys[0];
-      const spk1 = keys[1];
+      ensureSpeakerChannels(5);
 
       if (theme === "yellow-cyan") {
-        state.speakerChannels[spk0].highlight_color = "#FFDF00";
-        state.speakerChannels[spk0].primary_color = "#FFFFFF";
-        state.speakerChannels[spk1].highlight_color = "#00E5FF";
-        state.speakerChannels[spk1].primary_color = "#FFFFFF";
+        state.speakerCount = 2;
+        state.speakerChannels["SPEAKER_00"].highlight_color = "#FFDF00";
+        state.speakerChannels["SPEAKER_00"].name = "Speaker 1";
+        state.speakerChannels["SPEAKER_01"].highlight_color = "#00E5FF";
+        state.speakerChannels["SPEAKER_01"].name = "Speaker 2";
       } else if (theme === "lime-pink") {
-        state.speakerChannels[spk0].highlight_color = "#00FF66";
-        state.speakerChannels[spk0].primary_color = "#FFFFFF";
-        state.speakerChannels[spk1].highlight_color = "#FF0055";
-        state.speakerChannels[spk1].primary_color = "#FFFFFF";
-      } else if (theme === "amber-lavender") {
-        state.speakerChannels[spk0].highlight_color = "#FF9900";
-        state.speakerChannels[spk0].primary_color = "#FFFFFF";
-        state.speakerChannels[spk1].highlight_color = "#D8B4FE";
-        state.speakerChannels[spk1].primary_color = "#FFFFFF";
+        state.speakerCount = 2;
+        state.speakerChannels["SPEAKER_00"].highlight_color = "#00FF66";
+        state.speakerChannels["SPEAKER_00"].name = "Speaker 1";
+        state.speakerChannels["SPEAKER_01"].highlight_color = "#FF007F";
+        state.speakerChannels["SPEAKER_01"].name = "Speaker 2";
+      } else if (theme === "trio") {
+        state.speakerCount = 3;
+        state.speakerChannels["SPEAKER_00"].highlight_color = "#FFDF00";
+        state.speakerChannels["SPEAKER_00"].name = "Speaker 1";
+        state.speakerChannels["SPEAKER_01"].highlight_color = "#00E5FF";
+        state.speakerChannels["SPEAKER_01"].name = "Speaker 2";
+        state.speakerChannels["SPEAKER_02"].highlight_color = "#FF007F";
+        state.speakerChannels["SPEAKER_02"].name = "Speaker 3";
+      } else if (theme === "quintet") {
+        state.speakerCount = 5;
+        state.speakerChannels["SPEAKER_00"].highlight_color = "#FFDF00";
+        state.speakerChannels["SPEAKER_00"].name = "Speaker 1";
+        state.speakerChannels["SPEAKER_01"].highlight_color = "#00E5FF";
+        state.speakerChannels["SPEAKER_01"].name = "Speaker 2";
+        state.speakerChannels["SPEAKER_02"].highlight_color = "#FF007F";
+        state.speakerChannels["SPEAKER_02"].name = "Speaker 3";
+        state.speakerChannels["SPEAKER_03"].highlight_color = "#00FF66";
+        state.speakerChannels["SPEAKER_03"].name = "Speaker 4";
+        state.speakerChannels["SPEAKER_04"].highlight_color = "#B026FF";
+        state.speakerChannels["SPEAKER_04"].name = "Speaker 5";
       }
 
-      syncActiveSpeakerUI();
-      renderSpeakerTabs();
-      renderSubtitlePreview();
-      if (editorState.dialogues && editorState.dialogues.length > 0) {
-        renderDrawerDialogueItems(editorState.dialogues);
-      }
+      setMultiSpeakerMode(true, state.speakerCount);
     });
   });
 
@@ -2435,6 +2595,78 @@ document.addEventListener("DOMContentLoaded", () => {
             name: "Guest",
             primary_color: "#ffffff",
             highlight_color: "#00e5ff",
+            outline_color: "#000000",
+            box_bg_color: "#000000",
+            box_font_color: "#ffffff",
+            show_speaker_name: false
+          }
+        }
+      }
+    },
+    "factory:ensemble_quintet": {
+      name: "🎭 Ensemble Quintet (5 Voices)",
+      styling: {
+        posX: 50,
+        posY: 78,
+        fontFamily: "Montserrat",
+        fontSize: 22,
+        primaryColor: "#ffffff",
+        outlineColor: "#000000",
+        outlineWidth: 3.5,
+        bold: true,
+        italic: false,
+        highlightStyle: "color",
+        highlightColor: "#ffdf00",
+        highlightScale: 115,
+        maxLines: 1,
+        lineWidthPct: 82,
+        maxChars: 28,
+        speaker_channels: {
+          "SPEAKER_00": {
+            id: "SPEAKER_00",
+            name: "Speaker 1",
+            primary_color: "#ffffff",
+            highlight_color: "#ffdf00",
+            outline_color: "#000000",
+            box_bg_color: "#000000",
+            box_font_color: "#ffffff",
+            show_speaker_name: false
+          },
+          "SPEAKER_01": {
+            id: "SPEAKER_01",
+            name: "Speaker 2",
+            primary_color: "#ffffff",
+            highlight_color: "#00e5ff",
+            outline_color: "#000000",
+            box_bg_color: "#000000",
+            box_font_color: "#ffffff",
+            show_speaker_name: false
+          },
+          "SPEAKER_02": {
+            id: "SPEAKER_02",
+            name: "Speaker 3",
+            primary_color: "#ffffff",
+            highlight_color: "#ff007f",
+            outline_color: "#000000",
+            box_bg_color: "#000000",
+            box_font_color: "#ffffff",
+            show_speaker_name: false
+          },
+          "SPEAKER_03": {
+            id: "SPEAKER_03",
+            name: "Speaker 4",
+            primary_color: "#ffffff",
+            highlight_color: "#00ff66",
+            outline_color: "#000000",
+            box_bg_color: "#000000",
+            box_font_color: "#ffffff",
+            show_speaker_name: false
+          },
+          "SPEAKER_04": {
+            id: "SPEAKER_04",
+            name: "Speaker 5",
+            primary_color: "#ffffff",
+            highlight_color: "#b026ff",
             outline_color: "#000000",
             box_bg_color: "#000000",
             box_font_color: "#ffffff",
@@ -3787,7 +4019,7 @@ document.addEventListener("DOMContentLoaded", () => {
           state.previewText = cleanPhrase;
           if (previewTextInput) previewTextInput.value = cleanPhrase;
           if (btnTextDefault) {
-            btnTextDefault.textContent = "Transcript Dialogue";
+            btnTextDefault.textContent = "Dialog Transcript";
             btnTextDefault.classList.add("active");
           }
           if (btnTextLorem) btnTextLorem.classList.remove("active");

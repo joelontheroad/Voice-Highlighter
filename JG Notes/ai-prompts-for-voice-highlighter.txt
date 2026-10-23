@@ -57,17 +57,52 @@ Provide a research document.
 /plan I want  you to do research on the possibility of distinguishing up to five different voices and how we would denote which voice is speaking as we display their text.
 
 Create a research document.
-
-
--------------------
-Prompts not yet executed.
-----------------
-
+--------------------------------
 /plan We're going to make a few refinements again.
 1)  We need a way to update presets that we've created.  If one created is active, there should be an update button.  The user should not be able to change the default presets provided by the program.
 2) We need a button that will turn and off the bounding box of the where the text can appear based upon the controls "max characters per line,", "Line width/subtitle box width", font family/size, "Highlighted word font size boost", and the number of lines displayed (1, 2, or 3).   What's the difference between "max characters per line" and "Line width/subtitle box width"? I don't understand the distinction.  Are they effectively the same?
 
 Make an implementation plan.
 
+-------------------------
+/plan  Does the program currently identify multiple speakers.  I have run it with multiple speakers and it doesn't appear to identify them.  All the text is formatted/highlighted the same.
 
+Create a Q&A doc. If one exists, add to it.
+
+--------------------------
+/plan Review licenses for your suggestion of "Integrate an un-gated ONNX or TorchScript acoustic embedding model (e.g. SpeechBrain ECAPA-TDNN or CAM++).".  Compare them to our existing license and Freedom to Operate statement to determine if they are compatitivle. 
+
+Also, how do they compare with pynote/hugging face, especially in terms of identifying different speakers?
+
+Your suggestion of "One-Click Speaker Channel Renaming:
+Allow users to label speakers (e.g., "Joel", "Guest") directly from the color panel or subtitle drawer" seems to me would only work if the user can hear the person.  Otherwise, how would the user be able identify them?  Can you play snippet of that person's audio? Don't you need to sample the audio in order to identify different speakers?  If so, doesn't this mean that the user can't actually identify speakers until after whisperX has done it's job?  How does this change the user's workflow? There's no "one click does all" button, isn't there? Unless you default to "Speaker 1", "Speaker 2", etc. and the software assigns those identifiers to the text.
+
+We'll increase the version number to V1.1.0 once we implement diarization, because we're adding major functionality with diarization.
+
+My main concern is this: the program is VERY useful as it is for quickly adding text to videos.  Adding diarization adds a layer of complexity that may get in the way of its utility.  I want to either: hide that complexity until the user needs it, or, create a separate program.  Not sure yet what I want to do.
+
+
+Add your findings to the "Multi Speaker Automated Diarization Plan"
+
+
+-------------------
+Prompts not yet executed.
+----------------
+
+/plan For long videos, the thermometer doesn't appear to give enough of an indication of what's going on.  It gives me an idea of where we are, but when there's long pauses, I don't know if it's stuck. For example, I'm burning a 15 minute video and it's been stuck at 94% for three minutes.  Has hit hung? I can check the command line and see lines being printed out.  I can also check nvidia-smi to see that FFMPEG is running.
+
+Do research to determine:
+- if we can get time estimates from ffmpeg and incorporate them into our thermometer and percent completed calcualtions
+- if not, suggest other ways to make the estimates more accurate, if possible.
+- do UX/human factor research on how to show that the process is still running if a thermometer doesn't appear to be moving.  Give me three UX recommendations.  I like the thermometer, so I prefer recommendations that add to it rather than replace it, but I'm open to suggestions of replacing makes better sense.
+
+Create a research document.
+---------------
+/plan.  Once an .ass file is created, the "Transcript Dialog" button should be active.  (Also, it should be named "Dialog Transcript.") "Subtitle Text Verification  & Fast-edit" should become active. I think these buttons should become active once an .ass file is created even if the user clicked on "Transcribe and Burn" and the program is burning.  Do you think this new functionality can cause problems if the user is editing the .ass file while the program is using it?  Will there be read/write collisions?  Or does ffmpeg ingest the .ass file all at once and does so one time only?
+
+Create an implementation plan.
+--------------
+Add this explanatory text above the text field in the "Live Subititle Preview" section.  "Text that appears as the preview:"
+
+--------------------
 
