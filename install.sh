@@ -136,7 +136,8 @@ Version=1.0
 Type=Application
 Name=Voice Highlighter
 Comment=AI Word-Highlighted Subtitle Studio
-Exec=bash -c 'cd "$DIR" && source .venv/bin/activate && export PATH="$DIR/bin:\$PATH" && python3 desktop_launcher.py'
+Path=$DIR
+Exec="$DIR/run.sh" --desktop --
 Terminal=false
 Categories=AudioVideo;Audio;Video;Graphics;
 StartupNotify=true

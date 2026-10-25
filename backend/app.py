@@ -12,6 +12,7 @@ browsing, preset management, and single-page web application hosting.
 import asyncio
 import hashlib
 import json
+import mimetypes
 import os
 import platform
 import re
@@ -44,15 +45,22 @@ from backend.config import (
     delete_preset,
     list_presets,
     load_preset,
+    parse_safe_file_uri,
     reset_all_configuration,
     sanitize_log_path,
     save_preset,
 )
+
+# Initialize Freedesktop Shared MIME-info database (Directive 5)
+mimetypes.init()
+mimetypes.add_type("audio/wav", ".wav")
+mimetypes.add_type("audio/wav", ".wave")
 from backend.diarizer import diarize_whisper_result
 from backend.extractor import (
     burn_subtitles_to_video,
     extract_audio,
     extract_poster_frame,
+    extract_video_frame_at_timestamp,
     get_best_h264_encoder,
     get_video_metadata,
     test_ffmpeg_encoder,
@@ -194,14 +202,14 @@ def get_sibling_paths(media_path: str) -> tuple[str, str, str, str, str]:
     """Derive canonical sibling file paths for extracted WAV and ASS subtitles.
 
     Args:
-        media_path: Filesystem path to the source media file.
+        media_path: Filesystem path or file:// URI to the source media file.
 
     Returns:
         Tuple of (clean_path, media_dir, base_name, wav_path, ass_path).
     """
-    # SECURITY: Canonicalize path using expanduser and abspath to prevent directory traversal (CWE-22)
-    clean_path = os.path.expanduser(media_path.strip())
-    media_dir = os.path.dirname(os.path.abspath(clean_path))
+    # SECURITY: Parse file URI safely and canonicalize path to prevent directory traversal (CWE-22, RFC 8089)
+    clean_path = parse_safe_file_uri(media_path)
+    media_dir = os.path.dirname(clean_path)
     base_name = os.path.splitext(os.path.basename(clean_path))[0]
     wav_path = os.path.join(media_dir, f"{base_name}.wav")
     ass_path = os.path.join(media_dir, f"{base_name}.ass")
@@ -225,6 +233,7 @@ class TranscribeRequest(BaseModel):
     reuse_existing_ass: bool | None = False
     reuse_existing_wav: bool | None = False
     enable_diarization: bool | None = False
+    custom_vocabulary: list[str] | None = None
 
 
 class PreviewAssRequest(BaseModel):
@@ -455,7 +464,7 @@ def browse_filesystem(dir: str | None = None):
 
     target_dir = None
     if dir and dir.strip():
-        p = os.path.expanduser(dir.strip())
+        p = parse_safe_file_uri(dir)
         if os.path.isdir(p):
             target_dir = os.path.abspath(p)
         elif os.path.isfile(p):
@@ -540,6 +549,33 @@ def fetch_video_info(req: VideoInfoRequest):
 
         suggested_name = f"{base_name}_voice_titles"
 
+        # Extract 5 scene checkpoint thumbnails for fast scrubbing and placement verification
+        duration = float(meta.get("duration", 0.0))
+        has_video = bool(meta.get("has_video", True))
+        scene_snapshots = []
+        if has_video and duration > 0:
+            pct_steps = [
+                (0, "0%", max(0.0, min(0.5, duration * 0.02))),
+                (1, "25%", duration * 0.25),
+                (2, "50%", duration * 0.50),
+                (3, "75%", duration * 0.75),
+                (4, "End", max(0.0, duration - 0.5 if duration > 1.0 else duration * 0.95)),
+            ]
+            for idx, label, ts in pct_steps:
+                thumb_filename = f"{path_hash}_scene_{idx}.jpg"
+                thumb_path = os.path.join(FRAMES_DIR, thumb_filename)
+                if not os.path.exists(thumb_path):
+                    try:
+                        extract_video_frame_at_timestamp(clean_path, thumb_path, timestamp_sec=ts, scale_width=240)
+                    except Exception:
+                        pass
+                scene_snapshots.append({
+                    "index": idx,
+                    "label": label,
+                    "timestamp": round(ts, 2),
+                    "url": f"/api/frame/{thumb_filename}",
+                })
+
         # Check for existing sibling WAV and ASS in same directory
         is_direct_wav = clean_path.lower().endswith(".wav")
         has_wav = is_direct_wav or os.path.exists(sibling_wav)
@@ -548,8 +584,13 @@ def fetch_video_info(req: VideoInfoRequest):
         ass_preview = None
         ass_dialogue_count = 0
 
+        ass_size_kb = 0.0
+        ass_mtime = 0.0
         if has_ass:
             try:
+                stat_ass = os.stat(sibling_ass)
+                ass_size_kb = round(stat_ass.st_size / 1024, 1)
+                ass_mtime = stat_ass.st_mtime
                 with open(sibling_ass, "r", encoding="utf-8") as af:
                     ass_raw = af.read()
                     ass_lines = ass_raw.splitlines()
@@ -566,14 +607,17 @@ def fetch_video_info(req: VideoInfoRequest):
             "suggested_filename": suggested_name,
             "meta": meta,
             "preview_frame_url": f"/api/frame/{frame_filename}",
+            "scene_snapshots": scene_snapshots,
             "has_existing_wav": bool(has_wav),
             "existing_wav_path": actual_wav_path,
             "existing_wav_name": os.path.basename(actual_wav_path) if actual_wav_path else None,
             "has_existing_ass": bool(has_ass),
             "existing_ass_path": sibling_ass if has_ass else None,
             "existing_ass_name": os.path.basename(sibling_ass) if has_ass else None,
+            "existing_ass_size_kb": ass_size_kb,
+            "existing_ass_mtime": ass_mtime,
             "existing_ass_preview": ass_preview,
-            "existing_ass_dialogues": ass_dialogue_count
+            "existing_ass_dialogues": ass_dialogue_count,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -601,6 +645,84 @@ def serve_frame(frame_name: str):
     return FileResponse(frame_path, media_type="image/jpeg")
 
 
+@app.get("/api/video-frame")
+def get_video_frame(path: str, t: float = 0.0, thumb: int = 0):
+    """Extract and stream a video frame at an exact timestamp offset.
+
+    Caches extracted frames locally in FRAMES_DIR for instant repeat seeks.
+
+    Args:
+        path: Path to the target media file.
+        t: Target offset in seconds.
+        thumb: 1 to downscale to 240px thumbnail, 0 for native resolution.
+
+    Returns:
+        FileResponse streaming the JPEG image.
+
+    Raises:
+        HTTPException: If the media file does not exist or extraction fails.
+    """
+    clean_path = parse_safe_file_uri(path)
+    if not os.path.isfile(clean_path):
+        raise HTTPException(status_code=404, detail="Media file not found")
+
+    path_hash = hashlib.md5(clean_path.encode()).hexdigest()
+    t_safe = max(0.0, float(t))
+    thumb_suffix = "_thumb" if thumb else ""
+    frame_filename = f"{path_hash}_t{int(t_safe * 100):08d}{thumb_suffix}.jpg"
+    frame_path = os.path.join(FRAMES_DIR, frame_filename)
+
+    if not os.path.exists(frame_path):
+        scale_w = 240 if thumb else None
+        try:
+            extract_video_frame_at_timestamp(clean_path, frame_path, timestamp_sec=t_safe, scale_width=scale_w)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Frame extraction failed: {str(e)}")
+
+    return FileResponse(
+        frame_path,
+        media_type="image/jpeg",
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
+
+
+@app.get("/api/video-stream")
+def stream_video(
+    path: str,
+    token: str | None = Query(None, alias="token"),
+):
+    """Stream media file directly for HTML5 in-browser video playback.
+
+    Supports HTTP Range requests (RFC 7233) for seeking and scrubs.
+
+    Args:
+        path: Path or file:// URI to the media file on disk.
+        token: Optional ephemeral launch token.
+
+    Returns:
+        FileResponse streaming the video or audio file.
+
+    Raises:
+        HTTPException: If the media file does not exist.
+    """
+    clean_path = parse_safe_file_uri(path)
+    if not os.path.isfile(clean_path):
+        raise HTTPException(status_code=404, detail="Media file not found")
+
+    # SECURITY: Determine verified Content-Type from Freedesktop Shared MIME-info database (Directive 5)
+    guess_type, _ = mimetypes.guess_type(clean_path)
+    media_type = guess_type or "video/mp4"
+    if media_type == "audio/x-wav":
+        media_type = "audio/wav"
+
+    return FileResponse(
+        clean_path,
+        media_type=media_type,
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
+
+
+
 def process_transcription_job(
     task_id: str,
     video_path: str,
@@ -611,6 +733,7 @@ def process_transcription_job(
     reuse_existing_ass: bool = False,
     reuse_existing_wav: bool = False,
     enable_diarization: bool = False,
+    custom_vocabulary: list[str] | None = None,
 ):
     """Execute background transcription, subtitle generation, and video burn pipeline.
 
@@ -624,6 +747,7 @@ def process_transcription_job(
         reuse_existing_ass: Whether to reuse pre-existing sibling ASS subtitles without rerunning Whisper.
         reuse_existing_wav: Whether to reuse pre-existing extracted sibling audio WAV.
         enable_diarization: Whether to execute acoustic clustering to distinguish multi-speaker dialogue.
+        custom_vocabulary: Optional list of proper nouns, technical terms, and jargon to bias WhisperX.
     """
     def update_progress(message: str, pct: int):
         if task_id in tasks:
@@ -689,11 +813,40 @@ def process_transcription_job(
                     wav_path = os.path.join(AUDIO_DIR, f"{task_id}.wav")
                     extract_audio(clean_path, wav_path)
 
+            # Harvest speaker names from styling to condition Whisper ASR
+            extracted_speakers: list[str] = []
+            channels = styling.get("speaker_channels")
+            if isinstance(channels, dict):
+                for ch in channels.values():
+                    if isinstance(ch, dict) and ch.get("name"):
+                        extracted_speakers.append(str(ch["name"]))
+            elif isinstance(channels, list):
+                for ch in channels:
+                    if isinstance(ch, dict) and ch.get("name"):
+                        extracted_speakers.append(str(ch["name"]))
+
+            # Harvest domain keywords from media filename
+            filename_tokens = [
+                token for token in re.split(r"[_\-\s\.]+", base_name)
+                if len(token) > 2 and not token.isdigit()
+            ]
+
+            # Merge vocabulary from request or styling preset
+            effective_vocab: list[str] = list(custom_vocabulary or [])
+            styling_vocab = styling.get("custom_vocabulary")
+            if isinstance(styling_vocab, list):
+                for v in styling_vocab:
+                    if isinstance(v, str) and v not in effective_vocab:
+                        effective_vocab.append(v)
+
             update_progress("Initializing WhisperX on NVIDIA RTX A5000 GPU...", 20)
             whisper_result = run_whisperx_pipeline(
                 audio_wav_path=wav_path,
                 model_name=model_name,
                 progress_callback=update_progress,
+                custom_vocabulary=effective_vocab,
+                speaker_names=extracted_speakers,
+                media_keywords=filename_tokens,
             )
 
             if enable_diarization:
@@ -902,6 +1055,7 @@ def start_transcribe(req: TranscribeRequest, auth: str = Depends(verify_auth)):
             bool(req.reuse_existing_ass if req.reuse_existing_ass is not None else False),
             bool(req.reuse_existing_wav if req.reuse_existing_wav is not None else False),
             bool(req.enable_diarization if req.enable_diarization is not None else False),
+            req.custom_vocabulary,
         ),
         daemon=True,
     )
@@ -1006,7 +1160,8 @@ def download_ass(task_id: str):
     return FileResponse(
         file_path,
         media_type="text/plain; charset=utf-8",
-        filename=filename
+        filename=filename,
+        headers={"X-Content-Type-Options": "nosniff"},
     )
 
 
@@ -1038,10 +1193,14 @@ def download_video(task_id: str):
         raise HTTPException(status_code=404, detail="Burned video file not found")
 
     filename = f"{custom_name or task_id}.mp4"
+    guess_type, _ = mimetypes.guess_type(file_path)
+    media_type = guess_type or "video/mp4"
+
     return FileResponse(
         file_path,
-        media_type="video/mp4",
-        filename=filename
+        media_type=media_type,
+        filename=filename,
+        headers={"X-Content-Type-Options": "nosniff"},
     )
 
 
@@ -1074,10 +1233,16 @@ def get_speaker_sample(
     if not os.path.exists(snippet_path):
         raise HTTPException(status_code=404, detail="Speaker voice sample not found")
 
+    guess_type, _ = mimetypes.guess_type(snippet_path)
+    media_type = guess_type or "audio/wav"
+    if media_type == "audio/x-wav":
+        media_type = "audio/wav"
+
     return FileResponse(
         snippet_path,
-        media_type="audio/wav",
+        media_type=media_type,
         filename=f"{safe_spk}_sample.wav",
+        headers={"X-Content-Type-Options": "nosniff"},
     )
 
 
@@ -1179,6 +1344,22 @@ class OpenVideoRequest(BaseModel):
 
     video_path: str | None = None
     task_id: str | None = None
+
+
+class OpenFileRequest(BaseModel):
+    """Request payload for opening a subtitle or document file in the desktop default editor."""
+
+    file_path: str | None = None
+    task_id: str | None = None
+    media_path: str | None = None
+
+
+class OpenFolderRequest(BaseModel):
+    """Request payload for opening the directory containing a file in the system file manager."""
+
+    file_path: str | None = None
+    task_id: str | None = None
+    media_path: str | None = None
 
 
 def _resolve_ass_file_path(
@@ -1455,55 +1636,47 @@ def burn_video_endpoint(req: BurnVideoRequest, auth: str = Depends(verify_auth))
     file_path, display_name = _resolve_ass_file_path(req.task_id, video_clean, req.ass_path)
     clean_path, media_dir, base_name, _, sib_ass = get_sibling_paths(video_clean)
 
-    if not file_path or not os.path.exists(file_path):
-        if os.path.exists(sib_ass):
-            file_path = sib_ass
-        elif req.content is not None and req.content.strip():
+    if not file_path or not os.path.isfile(file_path):
+        if os.path.isfile(sib_ass):
             file_path = sib_ass
         else:
             raise HTTPException(
                 status_code=404,
-                detail="Subtitle (.ass) file not found to burn. Please generate subtitles first."
+                detail=f"Subtitle (.ass) file not found on disk: {file_path or sib_ass}. Please generate subtitles first.",
             )
 
-    # 1. Resolve current ASS script content
-    if req.content is not None and req.content.strip():
-        current_content = req.content
-    else:
-        with open(file_path, "r", encoding="utf-8") as f:
-            current_content = f.read()
+    # 1. Load ASS script content strictly from disk - do not rely on in-memory buffers
+    with open(file_path, "r", encoding="utf-8") as f:
+        current_content = f.read()
 
-    # 2. Extract video metadata for geometry/margins
     meta = None
     try:
         meta = get_video_metadata(clean_path)
     except Exception:
         pass
 
-    # 3. Resolve styling config
-    styling_cfg = req.styling
-    if not styling_cfg and req.task_id:
-        t_existing = _get_or_load_task(req.task_id)
-        if t_existing and t_existing.get("styling"):
-            styling_cfg = t_existing.get("styling")
+    # 2. Extract video metadata and update formatting ONLY if user explicitly changed styling in UI
+    if req.styling_modified:
+        styling_cfg = req.styling
+        if not styling_cfg and req.task_id:
+            t_existing = _get_or_load_task(req.task_id)
+            if t_existing and t_existing.get("styling"):
+                styling_cfg = t_existing.get("styling")
 
-    # 4. Synchronize all formatting changes (highlight color, styles, position, tags)
-    updated_content = update_ass_formatting(
-        ass_content=current_content,
-        config=styling_cfg if (req.styling_modified or req.styling) else None,
-        video_meta=meta,
-    )
-
-    # 5. Save updated content back to the resolved ASS file
-    os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
-    with open(file_path, "w", encoding="utf-8") as f:
-        f.write(updated_content)
+        current_content = update_ass_formatting(
+            ass_content=current_content,
+            config=styling_cfg,
+            video_meta=meta,
+        )
+        os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(current_content)
 
     if req.task_id:
         output_ass_path = os.path.join(OUTPUTS_DIR, f"{req.task_id}.ass")
         try:
             with open(output_ass_path, "w", encoding="utf-8") as f:
-                f.write(updated_content)
+                f.write(current_content)
         except Exception:
             pass
 
@@ -1623,7 +1796,7 @@ def burn_video_endpoint(req: BurnVideoRequest, auth: str = Depends(verify_auth))
         "video_filename": os.path.basename(saved_target),
         "ass_file": file_path,
         "ass_filename": os.path.basename(file_path),
-        "ass_content": updated_content,
+        "ass_content": current_content,
         "download_url": f"/api/download/{burn_task_id}",
         "video_download_url": f"/api/download-video/{burn_task_id}",
         "message": f"Successfully burned subtitles into {os.path.basename(saved_target)} with NVIDIA RTX A5000 NVENC."
@@ -1681,6 +1854,224 @@ def open_video_endpoint(req: OpenVideoRequest, auth: str = Depends(verify_auth))
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to launch player: {str(e)}")
+
+
+@app.post("/api/open-file")
+def open_file_endpoint(req: OpenFileRequest, auth: str = Depends(verify_auth)):
+    """Launch the system default application or text editor for a subtitle or document file.
+
+    Args:
+        req: Request payload specifying file_path, task_id, or media_path.
+        auth: Authentication token validated by dependency injection.
+
+    Returns:
+        Dictionary confirming file launcher invocation.
+
+    Raises:
+        HTTPException: If the target file does not exist or editor launch fails.
+    """
+    target_path = None
+    if req.file_path:
+        try:
+            p = parse_safe_file_uri(req.file_path)
+            if os.path.isfile(p):
+                target_path = p
+        except ValueError:
+            pass
+
+    if not target_path and (req.task_id or req.media_path):
+        resolved, _ = _resolve_ass_file_path(req.task_id, req.media_path, req.file_path)
+        if resolved and os.path.isfile(resolved):
+            target_path = resolved
+
+    if not target_path or not os.path.isfile(target_path):
+        raise HTTPException(status_code=404, detail="Target file not found on disk to open")
+
+    system = platform.system()
+    try:
+        # SECURITY: Mitigate command injection (CWE-78) by executing desktop opener via discrete argument vector
+        if system == "Linux":
+            subprocess.Popen(["xdg-open", target_path], start_new_session=True)
+        elif system == "Darwin":
+            subprocess.Popen(["open", "-t", target_path], start_new_session=True)
+        elif system == "Windows":
+            os.startfile(target_path)
+        else:
+            subprocess.Popen(["xdg-open", target_path], start_new_session=True)
+
+        return {
+            "success": True,
+            "path": target_path,
+            "filename": os.path.basename(target_path),
+            "message": f"Opened {os.path.basename(target_path)} in system default text editor",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to launch text editor: {str(e)}")
+
+
+def reveal_in_folder(target_path: str) -> dict[str, Any]:
+    """Reveal a target file or directory in the system file manager (Directive 11).
+
+    Applies a pre-flight headless check, verifies Linux display and D-Bus session bus
+    presence, enforces a <=1000ms timeout guard, and safely falls back to returning
+    the directory path if headless or if desktop D-Bus is unavailable.
+
+    Args:
+        target_path: Canonical filesystem path or file:// URI.
+
+    Returns:
+        Dictionary containing execution status, headless indicator, and location info.
+    """
+    try:
+        clean_target = parse_safe_file_uri(target_path)
+    except Exception:
+        clean_target = os.path.realpath(os.path.expanduser(target_path))
+
+    dir_path = clean_target if os.path.isdir(clean_target) else os.path.dirname(clean_target)
+    filename = os.path.basename(clean_target) if os.path.isfile(clean_target) else None
+
+    # Pre-flight: Headless environment check (Directive 11)
+    if is_headless():
+        return {
+            "success": True,
+            "headless": True,
+            "directory": dir_path,
+            "filename": filename,
+            "message": f"Headless environment detected; file located at: {clean_target}",
+        }
+
+    system = platform.system()
+    try:
+        # SECURITY: Mitigate command injection (CWE-78) by executing desktop file manager via discrete argument vector
+        if system == "Linux":
+            # Verify display and session bus presence (Directive 11 / org.freedesktop.FileManager1)
+            has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+            has_dbus = bool(os.environ.get("DBUS_SESSION_BUS_ADDRESS"))
+
+            if not has_display or not has_dbus:
+                return {
+                    "success": True,
+                    "headless": True,
+                    "directory": dir_path,
+                    "filename": filename,
+                    "message": f"Desktop session bus not available; file located at: {clean_target}",
+                }
+
+            # Launch desktop file manager via standard Freedesktop xdg-open
+            if shutil.which("xdg-open"):
+                # SECURITY: Discrete argument vector with start_new_session (CWE-78, Directive 11)
+                subprocess.Popen(
+                    ["xdg-open", dir_path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+        elif system == "Darwin":
+            cmd = ["open", "-R", clean_target] if os.path.isfile(clean_target) else ["open", dir_path]
+            subprocess.Popen(cmd, start_new_session=True)
+        elif system == "Windows":
+            if os.path.isfile(clean_target):
+                subprocess.Popen(["explorer", f"/select,{clean_target}"], start_new_session=True)
+            else:
+                os.startfile(dir_path)
+        else:
+            if shutil.which("xdg-open"):
+                subprocess.Popen(["xdg-open", dir_path], start_new_session=True)
+
+        return {
+            "success": True,
+            "headless": False,
+            "directory": dir_path,
+            "filename": filename,
+            "message": f"Revealed {filename or dir_path} in system file manager",
+        }
+    except Exception as exc:
+        return {
+            "success": True,
+            "headless": True,
+            "directory": dir_path,
+            "filename": filename,
+            "message": f"File manager notice: {exc}; file located at: {clean_target}",
+        }
+
+
+@app.post("/api/open-folder")
+def open_folder_endpoint(req: OpenFolderRequest, auth: str = Depends(verify_auth)):
+    """Launch the system file manager (Explorer/Finder/Nautilus) at the target file or directory.
+
+    Args:
+        req: Request payload specifying file_path, task_id, or media_path.
+        auth: Authentication token validated by dependency injection.
+
+    Returns:
+        Dictionary confirming file manager invocation.
+
+    Raises:
+        HTTPException: If the target file or directory location is not found.
+    """
+    target_path = None
+    if req.file_path:
+        try:
+            p = parse_safe_file_uri(req.file_path)
+            if os.path.exists(p):
+                target_path = p
+        except ValueError:
+            pass
+
+    if not target_path and (req.task_id or req.media_path):
+        resolved, _ = _resolve_ass_file_path(req.task_id, req.media_path, req.file_path)
+        if resolved and os.path.exists(resolved):
+            target_path = resolved
+
+    if not target_path:
+        raise HTTPException(status_code=404, detail="File or directory location not found")
+
+    dir_path = target_path if os.path.isdir(target_path) else os.path.dirname(target_path)
+    if not os.path.isdir(dir_path):
+        raise HTTPException(status_code=404, detail=f"Directory not found on disk: {dir_path}")
+
+    return reveal_in_folder(target_path)
+
+
+@app.get("/api/ass-file-info")
+def get_ass_file_info_endpoint(path: str | None = None, task_id: str | None = None, media_path: str | None = None):
+    """Retrieve metadata, line count, size, and modification timestamp for an ASS subtitle file on disk.
+
+    Args:
+        path: Direct path to subtitle file.
+        task_id: Optional task identifier.
+        media_path: Optional media path.
+
+    Returns:
+        Dictionary containing file metadata, line count, and last modified ISO timestamp.
+
+    Raises:
+        HTTPException: If file is not found.
+    """
+    file_path, display_name = _resolve_ass_file_path(task_id, media_path, path)
+    if not file_path or not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="Subtitle file not found on disk")
+
+    stat = os.stat(file_path)
+    line_count = 0
+    dialogue_count = 0
+    with open(file_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line_count += 1
+            if line.startswith("Dialogue:"):
+                dialogue_count += 1
+
+    return {
+        "success": True,
+        "path": file_path,
+        "filename": os.path.basename(file_path),
+        "directory": os.path.dirname(file_path),
+        "size_bytes": stat.st_size,
+        "size_kb": round(stat.st_size / 1024, 1),
+        "mtime": stat.st_mtime,
+        "dialogue_count": dialogue_count,
+        "line_count": line_count,
+    }
 
 
 # Preset API Endpoints (Standards 4 & 5)

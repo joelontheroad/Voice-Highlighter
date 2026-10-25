@@ -146,3 +146,62 @@ Voice Highlighter uses the Advanced SubStation Alpha (`.ass` v4.00+) format:
    - **Dynamic Time Ratio & Countdown**: Displays live progress (`Burning: 94% • ~24s remaining • 14:06 / 15:00`).
    - **Liveness Shimmer & Elapsed Clock**: An animated wave shimmer and ticking elapsed stopwatch prove the worker process is actively encoding frames even through complex visual scenes.
 
+---
+
+### Q8: How does Voice Highlighter prevent WhisperX from misspelling names, technical jargon, or acronyms?
+
+**Short Answer:** **Voice Highlighter uses pre-inference acoustic and language model conditioning to prevent misspellings at the source, eliminating the need to search-and-replace after subtitles are created.**
+
+**Detailed Explanation:**
+1. **The Core Problem with General ASR**:
+   - Neural speech recognition models like Whisper decode spoken phonemes using prior probabilities learned from massive web datasets. When hearing ambiguous sounds or rare words (e.g. *Katie Kam*, *carburetor*, *PostgreSQL*, *FFmpeg*, *Brembo*), Whisper defaults to generic English words (*"Katie Cam"*, *"car predator"*, *"post grass"*).
+2. **Pre-Transcription Prevention Mechanisms**:
+   - **Autoregressive Decoder Self-Attention Conditioning (`initial_prompt`)**: An intelligent prompt synthesizer compiles target terms into natural conversational context sentences (`"In this video, the discussion covers the following topics and speakers: Katie Kam, PostgreSQL, carburetor..."`), shifting transformer attention weights toward the exact spellings and casing before the first audio frame is processed.
+   - **Beam Search Prefix Logit Boosting (`hotwords`)**: In Faster-Whisper / CTranslate2, the tokens of your target vocabulary are directly boosted during beam search, ensuring candidate hypotheses containing your chosen words survive beam pruning over generic English words.
+3. **User-Friendly Pre-Flight Workflows**:
+   - **Word Spelling List CRUD**: Type any word or phrase (e.g. *Katie Kam*, *carburetor*) and press `Enter` or click `+ Add Word`. Click any word chip or the `✎` icon to edit spellings in place, or click `&times;` to delete words.
+   - **Automatic Metadata Ingestion**: Click `[ 📁 From Filename ]` or `[ 👥 From Speakers ]` to harvest terms with zero duplicate typing.
+   - **Preset Persistence**: Custom vocabulary is stored directly inside your Style Presets (`~/.config/voice-highlighter/presets/*.yaml`), so recurring guest names and channel terms are remembered across every video.
+
+---
+
+### Q9: How can creators verify subtitle placement, contrast, and layout across different points in the video before rendering?
+
+**Short Answer:** **Voice Highlighter includes an interactive timeline scrubber, automated 5-point scene snapshot filmstrip, and dialogue-linked scene jumping that lets creators test subtitle placement across changing video backgrounds in sub-50ms without freezing the UI.**
+
+**Detailed Explanation:**
+1. **The Video Background Challenge**:
+   - Subtitle styling (such as text placement, font size, stroke thickness, and shadow box opacity) might look great against dark clothing at the start of a video, but can become unreadable or clash with lower thirds, white shirts, or camera pans later on.
+2. **Sub-50ms Frame Extraction Architecture**:
+   - Rather than slow output seeking (`ffmpeg -i ... -ss ...`), Voice Highlighter utilizes fast input seeking (`ffmpeg -ss <timestamp> -i <path> -frames:v 1 -q:v 2`).
+   - Frame captures finish in 25–50ms and are cached locally in `$XDG_CACHE_HOME/voice-highlighter/frames/<hash>_<ts>.jpg`.
+3. **Three Interactive Scene Jumping Methods**:
+   - **Timeline Slider & Step Buttons**: Drag the scrubber slider or use step buttons (`-5s`, `-1s`, `+1s`, `+5s`) to scrub through any timestamp in real time.
+   - **5-Point Filmstrip Tray**: Five representative scene checkpoints (`0%`, `25%`, `50%`, `75%`, and `End`) are automatically extracted upon video selection and presented as clickable thumbnails directly beneath the video canvas.
+   - **Dialogue-Linked Preview (`[ 👁️ Preview Scene ]`)**: In the Stage Preview, click `Dialog Transcript` to preview actual spoken phrases against frames.
+   - **5-Point Filmstrip Tray**: Five representative scene checkpoints (`0%`, `25%`, `50%`, `75%`, and `End`) are automatically extracted upon video selection and presented as clickable thumbnails directly beneath the video canvas.
+
+---
+
+### Q10: Why does Voice Highlighter use an External Text Editor and strictly burn subtitles from disk?
+
+**Short Answer:** **Web browsers are clunky for text editing. Creators already have full-featured text editors (VS Code, Sublime, gedit, Notepad) with syntax highlighting, multi-cursor editing, and regex search/replace. Voice Highlighter integrates directly with your system's default text editor and enforces a strict disk-first pipeline where FFmpeg burns directly from disk.**
+
+**Detailed Explanation:**
+1. **The In-App Subtitle Editing Anti-Pattern**:
+   - Complex in-browser subtitle tables and drawers with hundreds of text inputs add unnecessary UI friction, consume heavy DOM memory, and lack standard text editing power tools (e.g. `Ctrl+H` regex find/replace, multi-cursor selection, undo trees, syntax plugins).
+   - Users prefer opening the `.ass` file in the professional code or text editor of their choice.
+2. **Subtitle File & External Editor Hub (Step 2)**:
+   - **Prominent File Identity**: The active `.ass` filename and its full filesystem location are prominently displayed in a highlighted badge on the interface.
+   - **`[ 📝 Open in Text Editor ]`**: Executes the system's default text editor via native discrete argument vectors (`xdg-open` on Linux, `open -t` on macOS, `os.startfile` on Windows), opening the `.ass` file in VS Code, Sublime, gedit, or Notepad in < 100ms.
+   - **`[ 📁 Show in File Manager ]`**: Reveals the subtitle file in your operating system's native file explorer (Nautilus, Finder, Windows Explorer).
+   - **`[ 📋 Copy File Path ]`**: One-click clipboard copy of the full absolute path for terminal or scripts.
+   - **`[ 🔄 Reload from Disk ]`**: Live querying of file stats (size, line count, dialogue count, last modified timestamp).
+3. **Strict Disk-First Burning Guarantee (Zero Stale Buffer Overwrite)**:
+   - In earlier web architectures, browser client memory buffers could accidentally overwrite manual edits made on disk.
+   - Voice Highlighter strictly enforces that **disk is the single source of truth**:
+     - The frontend never transmits in-memory subtitle text during burning (`content: null`).
+     - `backend/app.py` reads the `.ass` file strictly from the filesystem at the moment `POST /api/burn-video` is received.
+     - An isolated immutable snapshot (`.<name>.burn_<task_id>.ass`) is copied directly on disk for FFmpeg encoding, guaranteeing that any spelling corrections, timing adjustments, or custom tags you saved in your external text editor are 100% burned into the resulting MP4 video.
+
+

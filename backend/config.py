@@ -10,6 +10,8 @@ POSIX permission hardening (modes 0700/0600), and path traversal mitigations.
 
 import os
 import sys
+import urllib.parse
+from typing import Any
 from pathlib import Path
 
 import yaml
@@ -33,6 +35,24 @@ class SpeakerChannel(BaseModel):
     box_bg_color: str = Field(default="#000000", description="Background pill/box color (Hex)")
     box_font_color: str = Field(default="#FFFFFF", description="Text color inside box badge (Hex)")
     show_speaker_name: bool = Field(default=False, description="Whether to prefix dialogue with speaker name")
+
+
+class KeyframeConfig(BaseModel):
+    """Timeline keyframe specifying timestamp and custom style overrides.
+
+    Allows subtitle typography, positioning, colors, and badge animations
+    to change dynamically along the media timeline. The styling specified
+    by a keyframe stays in effect to the right of the timeline until another
+    keyframe is encountered.
+    """
+
+    id: str | None = Field(default=None, description="Unique keyframe identifier")
+    time: float = Field(..., ge=0.0, description="Timestamp in seconds where style takes effect")
+    label: str | None = Field(default="", description="Optional human-readable keyframe label")
+    styling: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Styling parameters snapshot in effect to the right of this timestamp",
+    )
 
 
 class StylePreset(BaseModel):
@@ -71,6 +91,14 @@ class StylePreset(BaseModel):
         default="discrete",
         description="Active highlight animation: 'discrete' (instant pop), 'karaoke_wipe' (smooth \\kf fill), or 'anticipation_glow' (pre-vocal cue)",
     )
+    custom_vocabulary: list[str] = Field(
+        default_factory=list,
+        description="List of domain words, proper nouns, and jargon to condition WhisperX ASR",
+    )
+    keyframes: list[KeyframeConfig] = Field(
+        default_factory=list,
+        description="Timeline keyframes where styling changes dynamically across media playback",
+    )
 
 
 class AppConfig(BaseModel):
@@ -101,6 +129,38 @@ def sanitize_log_path(path: str) -> str:
     except (OSError, RuntimeError):
         return path
     return path
+
+
+def parse_safe_file_uri(uri_or_path: str) -> str:
+    """Safely parse and convert a file path or file:// URI into a canonical realpath (RFC 8089).
+
+    Validates that file:// URIs reject remote authorities (host must be empty or localhost),
+    decodes percent-encoding safely, and resolves canonical paths via os.path.realpath
+    to prevent path traversal (CWE-22) and remote SSRF/SMB credential leaks.
+
+    Args:
+        uri_or_path: Path string or RFC 8089 file:// URI.
+
+    Returns:
+        Canonical absolute filesystem path string.
+
+    Raises:
+        ValueError: If a file:// URI contains a remote authority or is malformed.
+    """
+    cleaned = uri_or_path.strip()
+    if cleaned.startswith("file://") or cleaned.startswith("file:"):
+        parsed = urllib.parse.urlparse(cleaned)
+        # SECURITY: Reject remote file URI authorities to prevent SSRF and SMB credential leaks (RFC 8089)
+        if parsed.netloc and parsed.netloc.lower() not in ("", "localhost", "127.0.0.1"):
+            raise ValueError(f"Remote file URI authorities are rejected: {parsed.netloc}")
+        raw_path = urllib.parse.unquote(parsed.path)
+        # On Windows, urlparse('/C:/foo') returns '/C:/foo' -> strip leading slash
+        if sys.platform == "win32" and raw_path.startswith("/") and len(raw_path) > 2 and raw_path[2] == ":":
+            raw_path = raw_path[1:]
+        cleaned = raw_path
+
+    # SECURITY: Resolve canonical target path using realpath to prevent path traversal (CWE-22)
+    return os.path.realpath(os.path.expanduser(cleaned))
 
 
 def get_config_dir() -> Path:
@@ -346,9 +406,15 @@ def delete_preset(preset_name: str) -> bool:
 
 
 def reset_all_configuration() -> None:
-    """Purge all user-saved presets and restore factory defaults."""
+    """Purge all user-saved presets and restore factory defaults.
+
+    Permanently unlinks all configuration and preset files from the local filesystem
+    without moving them to the desktop trash can, ensuring deterministic data erasure
+    per Directive 1.
+    """
     config_dir = get_config_dir()
     if config_dir.exists():
+        # SECURITY: Permanently delete state files via unlink; do not move to Desktop Trash (CWE-459)
         for root, dirs, files in os.walk(config_dir, topdown=False):
             for file in files:
                 (Path(root) / file).unlink(missing_ok=True)

@@ -58,6 +58,94 @@ def format_timestamp(seconds: float) -> str:
     return f"{hours}:{minutes:02d}:{secs:05.2f}"
 
 
+def parse_ass_timestamp(ts_str: str) -> float:
+    """Parse an ASS timestamp string ('H:MM:SS.cs') into seconds.
+
+    Args:
+        ts_str: Formatted ASS timestamp string.
+
+    Returns:
+        Float value in total elapsed seconds.
+    """
+    try:
+        parts = ts_str.strip().split(":")
+        if len(parts) == 3:
+            h = float(parts[0])
+            m = float(parts[1])
+            s = float(parts[2])
+            return h * 3600.0 + m * 60.0 + s
+        elif len(parts) == 2:
+            m = float(parts[0])
+            s = float(parts[1])
+            return m * 60.0 + s
+    except Exception:
+        pass
+    return 0.0
+
+
+def resolve_styling_at_time(
+    t: float,
+    keyframes: list[dict[str, Any]],
+    base_config: dict[str, Any],
+) -> dict[str, Any]:
+    """Resolve the active styling configuration for a given timestamp.
+
+    The style defined by a keyframe stays in effect to the right of the timeline
+    until another keyframe is encountered. If the timestamp is before all keyframes,
+    the base configuration applies.
+
+    Args:
+        t: Media timestamp in seconds.
+        keyframes: Chronologically sorted list of keyframe dictionaries.
+        base_config: Default/base styling configuration dictionary.
+
+    Returns:
+        Merged styling dictionary in effect at timestamp t.
+    """
+    if not keyframes:
+        return base_config
+
+    active_kf = None
+    for kf in keyframes:
+        kf_time = float(kf.get("time", 0.0))
+        if kf_time <= t + 1e-4:
+            active_kf = kf
+        else:
+            break
+
+    if active_kf is None:
+        return base_config
+
+    raw_styling = active_kf.get("styling") or {}
+    merged = dict(base_config)
+    key_aliases = {
+        "posX": "pos_x_pct",
+        "posY": "pos_y_pct",
+        "fontFamily": "font_name",
+        "fontSize": "font_size",
+        "primaryColor": "primary_color",
+        "outlineColor": "outline_color",
+        "outlineWidth": "outline_width",
+        "highlightStyle": "highlight_style",
+        "highlightColor": "highlight_color",
+        "highlightScale": "highlight_scale_pct",
+        "highlightAnimation": "highlight_animation",
+        "boxType": "box_type",
+        "boxOpacity": "box_opacity",
+        "boxBgColor": "box_bg_color",
+        "boxFontColor": "box_font_color",
+        "maxLines": "max_lines",
+        "lineWidthPct": "line_width_pct",
+        "maxChars": "max_chars_per_line",
+    }
+    for k, v in raw_styling.items():
+        merged[k] = v
+        if k in key_aliases:
+            merged[key_aliases[k]] = v
+
+    return merged
+
+
 def chunk_words_into_blocks(
     words: list[dict[str, Any]],
     max_lines: int = 1,
@@ -333,6 +421,21 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     if not slices:
         return header
 
+    # Parse keyframes from config if present
+    keyframes_raw = config.get("keyframes") or []
+    keyframes: list[dict[str, Any]] = []
+    if isinstance(keyframes_raw, list):
+        for kf in keyframes_raw:
+            if hasattr(kf, "model_dump"):
+                kf_data = kf.model_dump()
+            elif isinstance(kf, dict):
+                kf_data = dict(kf)
+            else:
+                continue
+            if "time" in kf_data:
+                keyframes.append(kf_data)
+        keyframes.sort(key=lambda k: float(k.get("time", 0.0)))
+
     event_lines = []
     prev_event_end = 0.0
 
@@ -341,31 +444,55 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         raw_start = float(curr["active_word"]["start"])
         curr_speaker = curr["active_word"].get("speaker", "SPEAKER_00")
 
-        # Resolve speaker channel configuration
-        channel = speaker_channels.get(curr_speaker)
-        if channel:
-            slice_primary = hex_to_ass_color(channel.get("primary_color", primary_color_hex), 1.0)
-            slice_outline = hex_to_ass_color(channel.get("outline_color", outline_color_hex), 1.0)
-            slice_highlight = hex_to_ass_color(channel.get("highlight_color", highlight_color_hex), 1.0)
-            slice_box_bg = hex_to_ass_color(channel.get("box_bg_color", box_bg_color_hex), box_opacity)
-            slice_box_font = hex_to_ass_color(channel.get("box_font_color", box_font_color_hex), 1.0)
-            spk_display_name = channel.get("name", curr_speaker)
-            show_name_prefix = channel.get("show_speaker_name", False)
-            style_name = f"Speaker_{curr_speaker}" if f"Speaker_{curr_speaker}" in registered_styles else "Default"
-        else:
-            slice_primary = ass_primary
-            slice_outline = ass_outline
-            slice_highlight = ass_highlight
-            slice_box_bg = ass_box_bg
-            slice_box_font = ass_box_font
-            spk_display_name = curr_speaker if curr_speaker != "SPEAKER_00" else ""
-            show_name_prefix = False
-            style_name = "Default"
-
         if k == 0:
             start_time = raw_start
         else:
             start_time = max(raw_start, prev_event_end)
+
+        # Resolve active styling for this dialogue event based on start_time.
+        # Keyframe style stays in effect to the right of the timeline until another keyframe is encountered.
+        kf_cfg = resolve_styling_at_time(start_time, keyframes, config) if keyframes else config
+
+        kf_pos_x_pct = kf_cfg.get("pos_x_pct")
+        event_pos_x = int(play_res_x * (float(kf_pos_x_pct) / 100.0)) if kf_pos_x_pct is not None else pos_x
+        kf_pos_y_pct = kf_cfg.get("pos_y_pct")
+        event_pos_y = int(play_res_y * (float(kf_pos_y_pct) / 100.0)) if kf_pos_y_pct is not None else pos_y
+
+        event_hl_anim = str(kf_cfg.get("highlight_animation", highlight_animation)).lower()
+        event_hl_style = str(kf_cfg.get("highlight_style", highlight_style)).lower()
+        event_box_type = str(kf_cfg.get("box_type", box_type)).lower()
+        event_scale_pct = int(kf_cfg.get("highlight_scale_pct", highlight_scale_pct))
+        event_scale_tag = f"\\fscx{event_scale_pct}\\fscy{event_scale_pct}" if event_scale_pct != 100 else ""
+        event_scale_reset = "\\fscx100\\fscy100" if event_scale_pct != 100 else ""
+
+        kf_pri_hex = kf_cfg.get("primary_color", primary_color_hex)
+        kf_out_hex = kf_cfg.get("outline_color", outline_color_hex)
+        kf_hl_hex = kf_cfg.get("highlight_color", highlight_color_hex)
+        kf_box_bg_hex = kf_cfg.get("box_bg_color", box_bg_color_hex)
+        kf_box_font_hex = kf_cfg.get("box_font_color", box_font_color_hex)
+        kf_box_opacity = float(kf_cfg.get("box_opacity", box_opacity))
+        kf_out_w = float(kf_cfg.get("outline_width", outline_width))
+
+        # Resolve speaker channel configuration
+        channel = speaker_channels.get(curr_speaker)
+        if channel:
+            slice_primary = hex_to_ass_color(channel.get("primary_color", kf_pri_hex), 1.0)
+            slice_outline = hex_to_ass_color(channel.get("outline_color", kf_out_hex), 1.0)
+            slice_highlight = hex_to_ass_color(channel.get("highlight_color", kf_hl_hex), 1.0)
+            slice_box_bg = hex_to_ass_color(channel.get("box_bg_color", kf_box_bg_hex), kf_box_opacity)
+            slice_box_font = hex_to_ass_color(channel.get("box_font_color", kf_box_font_hex), 1.0)
+            spk_display_name = channel.get("name", curr_speaker)
+            show_name_prefix = channel.get("show_speaker_name", False)
+            style_name = f"Speaker_{curr_speaker}" if f"Speaker_{curr_speaker}" in registered_styles else "Default"
+        else:
+            slice_primary = hex_to_ass_color(kf_pri_hex, 1.0)
+            slice_outline = hex_to_ass_color(kf_out_hex, 1.0)
+            slice_highlight = hex_to_ass_color(kf_hl_hex, 1.0)
+            slice_box_bg = hex_to_ass_color(kf_box_bg_hex, kf_box_opacity)
+            slice_box_font = hex_to_ass_color(kf_box_font_hex, 1.0)
+            spk_display_name = curr_speaker if curr_speaker != "SPEAKER_00" else ""
+            show_name_prefix = False
+            style_name = "Default"
 
         if k + 1 < len(slices):
             next_slice = slices[k + 1]
@@ -397,29 +524,29 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             for w in line:
                 raw_word = w.get("word", "").strip()
                 if w is curr["active_word"]:
-                    if highlight_animation == "karaoke_wipe":
+                    if event_hl_anim == "karaoke_wipe":
                         # Pioneer LaserKaraoke progressive sweep (US 5,742,569)
                         duration_cs = max(1, int(round((end_time - start_time) * 100)))
                         line_parts.append(
-                            f"{{{scale_tag}\\kf{duration_cs}\\c{slice_highlight}\\3c{slice_outline}}}{raw_word}{{{scale_reset}\\c{slice_primary}\\3c{slice_outline}}}"
+                            f"{{{event_scale_tag}\\kf{duration_cs}\\c{slice_highlight}\\3c{slice_outline}}}{raw_word}{{{event_scale_reset}\\c{slice_primary}\\3c{slice_outline}}}"
                         )
-                    elif highlight_style == "color":
+                    elif event_hl_style == "color":
                         line_parts.append(
-                            f"{{{scale_tag}\\c{slice_highlight}\\3c{slice_outline}}}{raw_word}{{{scale_reset}\\c{slice_primary}\\3c{slice_outline}}}"
+                            f"{{{event_scale_tag}\\c{slice_highlight}\\3c{slice_outline}}}{raw_word}{{{event_scale_reset}\\c{slice_primary}\\3c{slice_outline}}}"
                         )
-                    elif highlight_style == "box":
-                        if box_type == "word":
+                    elif event_hl_style == "box":
+                        if event_box_type == "word":
                             line_parts.append(
-                                f"{{{scale_tag}\\bord8\\3c{slice_box_bg}\\c{slice_box_font}}}{raw_word}{{{scale_reset}\\r{style_name}}}"
+                                f"{{{event_scale_tag}\\bord8\\3c{slice_box_bg}\\c{slice_box_font}}}{raw_word}{{{event_scale_reset}\\r{style_name}}}"
                             )
                         else:
                             line_parts.append(
-                                f"{{{scale_tag}\\c{slice_highlight}}}{raw_word}{{{scale_reset}\\c{slice_primary}}}"
+                                f"{{{event_scale_tag}\\c{slice_highlight}}}{raw_word}{{{event_scale_reset}\\c{slice_primary}}}"
                             )
-                elif highlight_animation == "anticipation_glow" and curr.get("next_word") and w is curr["next_word"]:
+                elif event_hl_anim == "anticipation_glow" and curr.get("next_word") and w is curr["next_word"]:
                     # Sony pre-vocal cadence cue (US 5,684,542)
                     line_parts.append(
-                        f"{{\\3c{slice_highlight}\\bord4}}{raw_word}{{\\3c{slice_outline}\\bord{outline_width}}}"
+                        f"{{\\3c{slice_highlight}\\bord4}}{raw_word}{{\\3c{slice_outline}\\bord{kf_out_w}}}"
                     )
                 else:
                     line_parts.append(raw_word)
@@ -428,7 +555,30 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         dialogue_text = "\\N".join(rendered_lines)
         if show_name_prefix and spk_display_name:
             dialogue_text = f"[{spk_display_name}]: {dialogue_text}"
-        pos_tag = f"{{\\an2\\pos({pos_x},{pos_y})}}"
+
+        font_overrides = ""
+        kf_fn = kf_cfg.get("font_name")
+        if kf_fn and kf_fn != font_name:
+            font_overrides += f"\\fn{kf_fn}"
+        kf_fs = kf_cfg.get("font_size")
+        if kf_fs and int(kf_fs) != font_size:
+            font_overrides += f"\\fs{int(kf_fs)}"
+        kf_b = kf_cfg.get("bold")
+        if kf_b is not None:
+            b_val = 1 if kf_b else 0
+            base_b_val = 1 if bold == -1 else 0
+            if b_val != base_b_val:
+                font_overrides += f"\\b{b_val}"
+        kf_i = kf_cfg.get("italic")
+        if kf_i is not None:
+            i_val = 1 if kf_i else 0
+            base_i_val = 1 if italic == -1 else 0
+            if i_val != base_i_val:
+                font_overrides += f"\\i{i_val}"
+        if kf_out_w != outline_width:
+            font_overrides += f"\\bord{kf_out_w}"
+
+        pos_tag = f"{{\\an2\\pos({event_pos_x},{event_pos_y}){font_overrides}}}"
 
         event_lines.append(f"Dialogue: 0,{start_ts},{end_ts},{style_name},{spk_display_name},0,0,0,,{pos_tag}{dialogue_text}")
 
@@ -457,6 +607,20 @@ def update_ass_formatting(
         Updated ASS script content string with synchronized styles and event tags.
     """
     config = config or {}
+    keyframes_raw = config.get("keyframes") or []
+    keyframes: list[dict[str, Any]] = []
+    if isinstance(keyframes_raw, list):
+        for kf in keyframes_raw:
+            if hasattr(kf, "model_dump"):
+                kf_data = kf.model_dump()
+            elif isinstance(kf, dict):
+                kf_data = dict(kf)
+            else:
+                continue
+            if "time" in kf_data:
+                keyframes.append(kf_data)
+        keyframes.sort(key=lambda k: float(k.get("time", 0.0)))
+
     lines = ass_content.splitlines()
 
     play_res_x = 1920
@@ -641,20 +805,36 @@ def update_ass_formatting(
         if line.startswith("Dialogue:"):
             d_parts = line.split(",", 9)
             if len(d_parts) >= 10:
+                d_start = parse_ass_timestamp(d_parts[1])
+                line_cfg = resolve_styling_at_time(d_start, keyframes, config) if keyframes else config
+
+                line_pos_x = pos_x
+                line_pos_y = pos_y
+                if line_cfg.get("pos_x_pct") is not None:
+                    try:
+                        line_pos_x = int(play_res_x * (float(line_cfg["pos_x_pct"]) / 100.0))
+                    except Exception:
+                        pass
+                if line_cfg.get("pos_y_pct") is not None:
+                    try:
+                        line_pos_y = int(play_res_y * (float(line_cfg["pos_y_pct"]) / 100.0))
+                    except Exception:
+                        pass
+
                 d_style = d_parts[3].strip()
                 st_info = resolved_styles.get(d_style, def_res)
-                target_hl = st_info["hl"]
-                target_pri = st_info["pri"]
-                target_out = st_info["out"]
-                target_box_bg = st_info["box_bg"]
-                target_box_font = st_info["box_font"]
+                target_hl = hex_to_ass_color(line_cfg["highlight_color"], 1.0) if line_cfg.get("highlight_color") else st_info["hl"]
+                target_pri = hex_to_ass_color(line_cfg["primary_color"], 1.0) if line_cfg.get("primary_color") else st_info["pri"]
+                target_out = hex_to_ass_color(line_cfg["outline_color"], 1.0) if line_cfg.get("outline_color") else st_info["out"]
+                target_box_bg = hex_to_ass_color(line_cfg["box_bg_color"], float(line_cfg.get("box_opacity", 0.85))) if line_cfg.get("box_bg_color") else st_info["box_bg"]
+                target_box_font = hex_to_ass_color(line_cfg["box_font_color"], 1.0) if line_cfg.get("box_font_color") else st_info["box_font"]
 
                 d_text = d_parts[9]
 
-                if pos_y is not None:
+                if line_pos_y is not None:
                     d_text = re.sub(
                         r"\\pos\(\s*\d+\s*,\s*\d+\s*\)",
-                        lambda _: f"\\pos({pos_x},{pos_y})",
+                        lambda _: f"\\pos({line_pos_x},{line_pos_y})",
                         d_text,
                     )
 

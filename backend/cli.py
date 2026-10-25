@@ -216,6 +216,11 @@ def main(argv: list[str] | None = None) -> int:
     show_preset = preset_sub.add_parser("show", parents=[common_parser], help="Display preset configuration.")
     show_preset.add_argument("name", nargs="?", default="default", help="Preset name (default: 'default').")
 
+    # 'config' subcommand
+    config_parser = subparsers.add_parser("config", parents=[common_parser], help="Manage local configuration and state.")
+    config_sub = config_parser.add_subparsers(dest="config_action")
+    config_sub.add_parser("reset", parents=[common_parser], help="Permanently unlink all local presets and restore factory defaults.")
+
     # 'run' subcommand with stdin piping support (-)
     run_parser = subparsers.add_parser("run", parents=[common_parser], help="Process subtitle text or run audio transcription.")
     run_parser.add_argument(
@@ -230,11 +235,17 @@ def main(argv: list[str] | None = None) -> int:
         default="default",
         help="Styling preset name to apply.",
     )
+    run_parser.add_argument(
+        "--reveal",
+        action="store_true",
+        help="Reveal processed input file or output directory in native file manager.",
+    )
 
     args = parser.parse_args(argv)
 
-    # Handle global reset
-    if args.reset_config:
+    # Handle global reset or 'config reset' subcommand
+    if args.reset_config or (args.subcommand == "config" and getattr(args, "config_action", None) == "reset"):
+        # SECURITY: Permanently delete state files via unlink without moving to Desktop Trash (CWE-459)
         reset_all_configuration()
         if not args.quiet:
             sys.stderr.write("[voice-highlighter] Local configuration reset to factory defaults.\n")
@@ -242,6 +253,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.subcommand:
         parser.print_help(sys.stderr)
+        return 2
+
+    if args.subcommand == "config":
+        config_parser.print_help(sys.stderr)
         return 2
 
     # Handler: serve (Lazy import to maintain sub-200ms startup for CLI commands)
@@ -313,6 +328,14 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.verbose:
             sys.stderr.write(f"[voice-highlighter] Applied preset '{preset.name}' font={preset.font_name} size={preset.font_size}\n")
+
+        if getattr(args, "reveal", False):
+            from backend.app import reveal_in_folder
+            target_to_reveal = args.input if args.input != "-" and os.path.exists(args.input) else None
+            if target_to_reveal:
+                reveal_in_folder(target_to_reveal)
+            elif not args.quiet:
+                sys.stderr.write("[voice-highlighter] Stdin stream input; no filesystem file to reveal.\n")
 
         return 0
 

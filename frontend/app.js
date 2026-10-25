@@ -21,6 +21,14 @@ document.addEventListener("DOMContentLoaded", () => {
     videoPath: (document.getElementById("videoPathInput") ? document.getElementById("videoPathInput").value.trim() : "") || "",
     videoMeta: null,
     hasLoadedVideo: false,
+    currentSeekTime: 0.0,
+    isPlaying: false,
+    currentDialogueLineText: null,
+    keyframes: [],
+    activeKeyframeId: null,
+    selectedKeyframeId: null,
+    isAtKeyframe: false,
+    basePresetStyling: null,
     lastBurnedVideoPath: null,
     posX: 50,
     posY: 78,
@@ -117,7 +125,8 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     },
     stylingModified: false,
-    showBounds: false
+    showBounds: false,
+    customVocabulary: []
   };
 
   function getCurrentStylingPayload() {
@@ -141,7 +150,9 @@ document.addEventListener("DOMContentLoaded", () => {
       pos_y_pct: state.posY,
       max_lines: state.maxLines,
       max_chars_per_line: state.maxChars,
-      line_width_pct: state.lineWidthPct
+      line_width_pct: state.lineWidthPct,
+      custom_vocabulary: Array.isArray(state.customVocabulary) ? [...state.customVocabulary] : [],
+      keyframes: (state.keyframes && state.keyframes.length > 0) ? JSON.parse(JSON.stringify(state.keyframes)) : []
     };
     if (state.isMultiSpeaker && state.speakerCount >= 2 && state.speakerChannels) {
       const activeChannels = {};
@@ -158,10 +169,14 @@ document.addEventListener("DOMContentLoaded", () => {
   const videoPathInput = document.getElementById("videoPathInput");
   const stagePlaceholder = document.getElementById("stagePlaceholder");
   const stagePoster = document.getElementById("stagePoster");
+  const stageVideo = document.getElementById("stageVideo");
   const videoStage = document.getElementById("videoStage");
   const subtitleDragBox = document.getElementById("subtitleDragBox");
   const subtitleRenderedText = document.getElementById("subtitleRenderedText");
   const safeZoneOverlay = document.getElementById("safeZoneOverlay");
+  const btnPlayPause = document.getElementById("btnPlayPause");
+  const playIcon = document.getElementById("playIcon");
+  const playLabel = document.getElementById("playLabel");
   const btnToggleBounds = document.getElementById("btnToggleBounds");
   const subtitleBoundsEnvelope = document.getElementById("subtitleBoundsEnvelope");
   const boundsBadge = document.getElementById("boundsBadge");
@@ -176,6 +191,32 @@ document.addEventListener("DOMContentLoaded", () => {
   const copyBurnedBtnText = document.getElementById("copyBurnedBtnText");
   const btnOpenVideo = document.getElementById("btnOpenVideo");
 
+  // Timeline Frame Scrubber & Scene Jump Tray Elements
+  const stageTimelineWrap = document.getElementById("stageTimelineWrap");
+  const stageTimelineSlider = document.getElementById("stageTimelineSlider");
+  const timelineCurrentTime = document.getElementById("timelineCurrentTime");
+  const timelineTotalDuration = document.getElementById("timelineTotalDuration");
+  const btnStepBack5 = document.getElementById("btnStepBack5");
+  const btnStepBack1 = document.getElementById("btnStepBack1");
+  const btnStepFwd1 = document.getElementById("btnStepFwd1");
+  const btnStepFwd5 = document.getElementById("btnStepFwd5");
+  const sceneFilmstripWrap = document.getElementById("sceneFilmstripWrap");
+  const sceneFilmstripTray = document.getElementById("sceneFilmstripTray");
+  const timelineEmptyHint = document.getElementById("timelineEmptyHint");
+
+  // Timeline Keyframe Controls & Overlay Elements
+  const timelineKeyframeControls = document.getElementById("timelineKeyframeControls");
+  const btnPrevKeyframe = document.getElementById("btnPrevKeyframe");
+  const btnAddKeyframe = document.getElementById("btnAddKeyframe");
+  const btnDeleteKeyframe = document.getElementById("btnDeleteKeyframe");
+  const btnNextKeyframe = document.getElementById("btnNextKeyframe");
+  const keyframeCountBadge = document.getElementById("keyframeCountBadge");
+  const timelineTrackContainer = document.getElementById("timelineTrackContainer");
+  const timelineKeyframesTrack = document.getElementById("timelineKeyframesTrack");
+  const timelineKeyframeBanner = document.getElementById("timelineKeyframeBanner");
+  const keyframeBannerText = document.getElementById("keyframeBannerText");
+  const keyframeBannerHint = document.getElementById("keyframeBannerHint");
+
   function updateStageVisibility() {
     if (!state.hasLoadedVideo) {
       if (stagePlaceholder) stagePlaceholder.classList.remove("hidden");
@@ -189,6 +230,40 @@ document.addEventListener("DOMContentLoaded", () => {
       if (socialUiLayer) socialUiLayer.classList.add("hidden");
       if (metaRes) metaRes.textContent = "Resolution: --";
       if (metaDuration) metaDuration.textContent = "Duration: --";
+
+      // Reset Playback Controls
+      if (btnPlayPause) {
+        btnPlayPause.disabled = true;
+        updatePlayPauseUI(false);
+      }
+      if (stageVideo) {
+        stageVideo.pause();
+        stageVideo.src = "";
+        stageVideo.classList.add("hidden");
+      }
+
+      // Reset Timeline Scrubber to Idle Disabled State
+      if (stageTimelineSlider) {
+        stageTimelineSlider.disabled = true;
+        stageTimelineSlider.value = "0";
+      }
+      if (timelineCurrentTime) timelineCurrentTime.textContent = "00:00.00";
+      if (timelineTotalDuration) timelineTotalDuration.textContent = "00:00.00";
+      [btnStepBack5, btnStepBack1, btnStepFwd1, btnStepFwd5].forEach(btn => {
+        if (btn) btn.disabled = true;
+      });
+      if (sceneFilmstripTray) {
+        sceneFilmstripTray.innerHTML = '<span class="timeline-empty-hint" id="timelineEmptyHint" style="font-size: 0.74rem; color: var(--text-muted, #94a3b8); font-style: italic; grid-column: span 5; text-align: center; padding: 6px;">Load a video above to scrub scenes and test subtitle placement.</span>';
+      }
+
+      // Reset Keyframe Controls
+      if (btnAddKeyframe) btnAddKeyframe.disabled = true;
+      if (btnDeleteKeyframe) btnDeleteKeyframe.disabled = true;
+      if (btnPrevKeyframe) btnPrevKeyframe.disabled = true;
+      if (btnNextKeyframe) btnNextKeyframe.disabled = true;
+      if (keyframeCountBadge) keyframeCountBadge.style.display = "none";
+      if (timelineKeyframesTrack) timelineKeyframesTrack.innerHTML = "";
+      if (timelineKeyframeBanner) timelineKeyframeBanner.style.display = "none";
     } else {
       if (stagePlaceholder) stagePlaceholder.classList.add("hidden");
       if (stagePoster) stagePoster.classList.remove("hidden");
@@ -201,6 +276,20 @@ document.addEventListener("DOMContentLoaded", () => {
       if (state.socialPlatform !== "none" && socialUiLayer) {
         socialUiLayer.classList.remove("hidden");
       }
+
+      // Enable Scrubber and Playback Controls
+      if (btnPlayPause) btnPlayPause.disabled = false;
+      if (stageTimelineSlider) stageTimelineSlider.disabled = false;
+      [btnStepBack5, btnStepBack1, btnStepFwd1, btnStepFwd5].forEach(btn => {
+        if (btn) btn.disabled = false;
+      });
+
+      // Enable Keyframe Controls
+      if (btnAddKeyframe) btnAddKeyframe.disabled = false;
+      if (typeof renderTimelineKeyframeMarkers === "function") {
+        renderTimelineKeyframeMarkers();
+        updateKeyframeToolbarAndBanner(state.currentSeekTime || 0);
+      }
     }
   }
 
@@ -211,6 +300,19 @@ document.addEventListener("DOMContentLoaded", () => {
   const badgeExistingAssText = document.getElementById("badgeExistingAssText");
   const wrapReuseAssToggle = document.getElementById("wrapReuseAssToggle");
   const chkReuseExistingAss = document.getElementById("chkReuseExistingAss");
+
+  // Word Spelling List (Prevent WhisperX Misspellings)
+  const inputCustomVocab = document.getElementById("inputCustomVocab");
+  const btnAddVocab = document.getElementById("btnAddVocab");
+  const vocabChipsWrap = document.getElementById("vocabChipsWrap");
+  const vocabChipsList = document.getElementById("vocabChipsList");
+  const vocabEmptyHint = document.getElementById("vocabEmptyHint");
+  const vocabCountBadge = document.getElementById("vocabCountBadge");
+  const btnHarvestFile = document.getElementById("btnHarvestFile");
+  const inputVocabFile = document.getElementById("inputVocabFile");
+  const btnSaveVocabFile = document.getElementById("btnSaveVocabFile");
+  const btnHarvestSpeakers = document.getElementById("btnHarvestSpeakers");
+  const btnClearVocab = document.getElementById("btnClearVocab");
 
   // Positioning
   const sliderPosY = document.getElementById("sliderPosY");
@@ -386,9 +488,8 @@ document.addEventListener("DOMContentLoaded", () => {
   // Interactive chip shortcuts
   if (chipActiveAss) {
     chipActiveAss.addEventListener("click", () => {
-      if (state.hasExistingAss && cardSubtitleDrawer) {
-        cardSubtitleDrawer.classList.remove("collapsed");
-        cardSubtitleDrawer.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (state.hasExistingAss && cardAssFileHub) {
+        cardAssFileHub.scrollIntoView({ behavior: "smooth", block: "start" });
       }
     });
   }
@@ -449,22 +550,18 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnBurnOnly = document.getElementById("btnBurnOnly");
   const btnTranscribeAndBurn = document.getElementById("btnTranscribeAndBurn");
 
-  // Subtitle Review & Fast-Edit Drawer Elements
-  const cardSubtitleDrawer = document.getElementById("cardSubtitleDrawer");
-  const drawerHeaderToggle = document.getElementById("drawerHeaderToggle");
-  const drawerChevron = document.getElementById("drawerChevron");
-  const drawerLineCountBadge = document.getElementById("drawerLineCountBadge");
-  const drawerSearchInput = document.getElementById("drawerSearchInput");
-  const btnDrawerOpenModal = document.getElementById("btnDrawerOpenModal");
-  const drawerBody = document.getElementById("drawerBody");
-  const drawerEmptyState = document.getElementById("drawerEmptyState");
-  const drawerDialogueList = document.getElementById("drawerDialogueList");
-  const drawerFooter = document.getElementById("drawerFooter");
-  const drawerStatusDot = document.getElementById("drawerStatusDot");
-  const drawerStatusText = document.getElementById("drawerStatusText");
-  const btnDrawerRevert = document.getElementById("btnDrawerRevert");
-  const btnDrawerBurn = document.getElementById("btnDrawerBurn");
-  const btnModalSaveAndBurn = document.getElementById("btnModalSaveAndBurn");
+  // Step 2: Subtitle File & External Editor Hub Elements
+  const cardAssFileHub = document.getElementById("cardAssFileHub");
+  const assFileStatusBadge = document.getElementById("assFileStatusBadge");
+  const assFilenameDisplay = document.getElementById("assFilenameDisplay");
+  const assFilePathDisplay = document.getElementById("assFilePathDisplay");
+  const assDialogueCountDisplay = document.getElementById("assDialogueCountDisplay");
+  const assFileSizeDisplay = document.getElementById("assFileSizeDisplay");
+  const assMtimeDisplay = document.getElementById("assMtimeDisplay");
+  const btnOpenInTextEditor = document.getElementById("btnOpenInTextEditor");
+  const btnShowInFileManager = document.getElementById("btnShowInFileManager");
+  const btnCopyAssPath = document.getElementById("btnCopyAssPath");
+  const btnRefreshAssFromDisk = document.getElementById("btnRefreshAssFromDisk");
 
   // Stepper Nodes
   const stepNodeExtract = document.getElementById("stepNodeExtract");
@@ -805,6 +902,38 @@ document.addEventListener("DOMContentLoaded", () => {
       metaRes.textContent = `Resolution: ${data.meta.width} × ${data.meta.height} (${data.meta.is_vertical ? '9:16' : '16:9'})`;
       metaDuration.textContent = `Duration: ${Math.round(data.meta.duration)}s`;
 
+      // Configure timeline scrubber and scene snapshots
+      const durationSec = (data.meta && data.meta.duration) ? Number(data.meta.duration) : 0;
+      if (stageTimelineSlider) {
+        stageTimelineSlider.disabled = false;
+        stageTimelineSlider.min = "0";
+        stageTimelineSlider.max = String(durationSec || 100);
+        stageTimelineSlider.value = "0";
+      }
+      state.currentSeekTime = 0.0;
+      if (timelineCurrentTime) timelineCurrentTime.textContent = "00:00.00";
+      if (timelineTotalDuration) timelineTotalDuration.textContent = formatTimestampMMSS(durationSec);
+      [btnStepBack5, btnStepBack1, btnStepFwd1, btnStepFwd5].forEach(btn => {
+        if (btn) btn.disabled = false;
+      });
+      renderSceneFilmstrip(data.scene_snapshots);
+      renderTimelineKeyframeMarkers();
+      updateKeyframeToolbarAndBanner(0.0);
+
+      // Initialize video stream for in-browser playback
+      state.isPlaying = false;
+      if (typeof fallbackPlaybackTimer !== "undefined" && fallbackPlaybackTimer) {
+        clearInterval(fallbackPlaybackTimer);
+        fallbackPlaybackTimer = null;
+      }
+      if (typeof updatePlayPauseUI === "function") updatePlayPauseUI(false);
+      const streamToken = state.authToken || (new URLSearchParams(window.location.search)).get("token") || "";
+      const streamUrl = `/api/video-stream?path=${encodeURIComponent(data.path)}${streamToken ? `&token=${encodeURIComponent(streamToken)}` : ""}`;
+      if (stageVideo) {
+        stageVideo.src = streamUrl;
+        stageVideo.currentTime = 0;
+      }
+
       // Reset burned video deliverable on new source video load
       state.lastBurnedVideoPath = null;
       state.lastBurnedVideoFilename = null;
@@ -849,10 +978,10 @@ document.addEventListener("DOMContentLoaded", () => {
           btnTextDefault.title = "Preview subtitle text from dialogue";
         }
 
-        // Auto-load subtitles into the inline drawer
-        loadDrawerSubtitles({
-          mediaPath: path,
-          assPath: data.existing_ass_path
+        // Auto-load subtitles from disk into the Subtitle File Hub
+        refreshAssFileInfo({
+          filePath: data.existing_ass_path,
+          mediaPath: path
         });
       } else {
         state.hasExistingAss = false;
@@ -864,12 +993,13 @@ document.addEventListener("DOMContentLoaded", () => {
           btnBurnOnly.title = "Generate or load subtitles first";
         }
         if (titleGenerateAss) titleGenerateAss.textContent = "Generate Subtitles (.ass format)";
-        if (descGenerateAss) descGenerateAss.textContent = "Generate text from speech. You can edit the transcription in Step 2.";
+        if (descGenerateAss) descGenerateAss.textContent = "Generate text from speech. Open in editor or file manager in Step 2.";
         updateWorkflowStepper('idle');
       }
 
       syncDeliverableFilenames();
 
+      if (!data.has_existing_ass) {
         // As there is no .ass created from audio yet, display "lorem ipsum" text with animated highlighting
         state.previewText = "Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt.";
         if (previewTextInput) previewTextInput.value = state.previewText;
@@ -883,8 +1013,8 @@ document.addEventListener("DOMContentLoaded", () => {
         state.activeWordIndex = 0;
         renderSubtitlePreview();
 
-        // Reset drawer
-        renderDrawerDialogueItems([]);
+        // Reset Subtitle File Hub
+        updateAssHubUIEmpty();
       }
 
       if (data.has_existing_wav) {
@@ -924,6 +1054,9 @@ document.addEventListener("DOMContentLoaded", () => {
       labelPosY.textContent = `${state.posY}%`;
     }
     updateBoundsEnvelope();
+    if (state.isAtKeyframe) {
+      syncActiveKeyframeFromState();
+    }
   }
 
   function updateBoundsEnvelope() {
@@ -1062,9 +1195,579 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // ----------------------------------------------------
+  // 2b. Timeline Frame Scrubber & Scene Jump Tray
+  // ----------------------------------------------------
+  function formatTimestampMMSS(sec) {
+    if (!sec || isNaN(sec) || sec < 0) return "00:00.00";
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    const ms = Math.floor((sec % 1) * 100);
+    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(ms).padStart(2, "0")}`;
+  }
+
+  function parseAssTimestamp(tsStr) {
+    if (!tsStr || typeof tsStr !== "string") return 0;
+    const parts = tsStr.trim().split(":");
+    if (parts.length === 3) {
+      const h = parseFloat(parts[0]) || 0;
+      const m = parseFloat(parts[1]) || 0;
+      const s = parseFloat(parts[2]) || 0;
+      return h * 3600 + m * 60 + s;
+    } else if (parts.length === 2) {
+      const m = parseFloat(parts[0]) || 0;
+      const s = parseFloat(parts[1]) || 0;
+      return m * 60 + s;
+    }
+    return parseFloat(tsStr) || 0;
+  }
+
+  function updatePlayPauseUI(isPlaying) {
+    if (!btnPlayPause) return;
+    if (isPlaying) {
+      btnPlayPause.classList.add("playing");
+      if (playIcon) playIcon.textContent = "⏸";
+      if (playLabel) playLabel.textContent = "Pause";
+      btnPlayPause.title = "Pause playback (Space)";
+      btnPlayPause.setAttribute("aria-label", "Pause video");
+    } else {
+      btnPlayPause.classList.remove("playing");
+      if (playIcon) playIcon.textContent = "▶";
+      if (playLabel) playLabel.textContent = "Play";
+      btnPlayPause.title = "Play video from current playhead position (Space)";
+      btnPlayPause.setAttribute("aria-label", "Play video");
+    }
+  }
+
+  let fallbackPlaybackTimer = null;
+  function startFallbackPlayback(startT, dur) {
+    state.isPlaying = true;
+    updatePlayPauseUI(true);
+    let t = startT;
+    const step = 0.1;
+    if (fallbackPlaybackTimer) clearInterval(fallbackPlaybackTimer);
+    fallbackPlaybackTimer = setInterval(() => {
+      t += step;
+      if (t >= dur) {
+        t = dur;
+        togglePlayPause(false);
+      }
+      seekVideoStageTo(t, true, true);
+    }, 100);
+  }
+
+  function togglePlayPause(forceState = null) {
+    if (!state.hasLoadedVideo || !state.videoPath) return;
+
+    const shouldPlay = (forceState !== null) ? forceState : !state.isPlaying;
+
+    if (shouldPlay) {
+      const token = state.authToken || (new URLSearchParams(window.location.search)).get("token") || "";
+      const streamUrl = `/api/video-stream?path=${encodeURIComponent(state.videoPath)}${token ? `&token=${encodeURIComponent(token)}` : ""}`;
+
+      if (stageVideo && (!stageVideo.src || !stageVideo.src.includes(encodeURIComponent(state.videoPath)))) {
+        stageVideo.src = streamUrl;
+      }
+
+      const dur = (state.videoMeta && state.videoMeta.duration) ? Number(state.videoMeta.duration) : 100;
+      let startT = state.currentSeekTime || 0;
+      if (startT >= dur - 0.2) {
+        startT = 0; // Loop around if playhead was at the end
+      }
+
+      if (stageVideo) {
+        stageVideo.currentTime = startT;
+        stageVideo.play().then(() => {
+          state.isPlaying = true;
+          if (stagePoster) stagePoster.classList.add("hidden");
+          stageVideo.classList.remove("hidden");
+          updatePlayPauseUI(true);
+        }).catch(err => {
+          console.warn("Direct HTML5 video play failed, falling back to simulated timeline playback:", err);
+          startFallbackPlayback(startT, dur);
+        });
+      } else {
+        startFallbackPlayback(startT, dur);
+      }
+    } else {
+      if (fallbackPlaybackTimer) {
+        clearInterval(fallbackPlaybackTimer);
+        fallbackPlaybackTimer = null;
+      }
+      if (stageVideo) {
+        stageVideo.pause();
+      }
+      state.isPlaying = false;
+      updatePlayPauseUI(false);
+    }
+  }
+
+  // ----------------------------------------------------
+  // 2c. Timeline Keyframe Management & Style Scoping
+  // ----------------------------------------------------
+
+  /**
+   * Find the keyframe that takes effect at timestamp t.
+   * CRITICAL REQUIREMENT: The style defined by a keyframe stays in effect
+   * to the right of the timeline until another keyframe is encountered.
+   * If t is before the first keyframe, returns null (base preset applies).
+   */
+  function findActiveKeyframe(t) {
+    if (!state.keyframes || state.keyframes.length === 0) return null;
+    let active = null;
+    for (const kf of state.keyframes) {
+      if (Number(kf.time) <= t + 0.05) {
+        active = kf;
+      } else {
+        break;
+      }
+    }
+    return active;
+  }
+
+  /**
+   * Check if playhead is snapped on or near an existing keyframe within tolerance.
+   */
+  function findKeyframeAtTime(t, tolerance = 0.25) {
+    if (!state.keyframes || state.keyframes.length === 0) return null;
+    for (const kf of state.keyframes) {
+      if (Math.abs(Number(kf.time) - t) <= tolerance) {
+        return kf;
+      }
+    }
+    return null;
+  }
+
+  function renderTimelineKeyframeMarkers() {
+    if (!timelineKeyframesTrack) return;
+    timelineKeyframesTrack.innerHTML = "";
+    const dur = (state.videoMeta && state.videoMeta.duration) ? Number(state.videoMeta.duration) : 100;
+    if (!dur || dur <= 0 || !Array.isArray(state.keyframes) || state.keyframes.length === 0) {
+      if (keyframeCountBadge) keyframeCountBadge.style.display = "none";
+      if (btnPrevKeyframe) btnPrevKeyframe.disabled = true;
+      if (btnNextKeyframe) btnNextKeyframe.disabled = true;
+      return;
+    }
+
+    if (keyframeCountBadge) {
+      keyframeCountBadge.textContent = `${state.keyframes.length} Keyframe${state.keyframes.length === 1 ? "" : "s"}`;
+      keyframeCountBadge.style.display = "inline-block";
+    }
+
+    const currentT = state.currentSeekTime || 0;
+    const hasPrev = state.keyframes.some(kf => Number(kf.time) < currentT - 0.1);
+    const hasNext = state.keyframes.some(kf => Number(kf.time) > currentT + 0.1);
+    if (btnPrevKeyframe) btnPrevKeyframe.disabled = !hasPrev;
+    if (btnNextKeyframe) btnNextKeyframe.disabled = !hasNext;
+
+    state.keyframes.forEach(kf => {
+      const marker = document.createElement("button");
+      marker.type = "button";
+      marker.className = "keyframe-marker";
+      marker.dataset.keyframeId = String(kf.id);
+      marker.dataset.time = String(kf.time);
+
+      const pct = Math.max(0, Math.min(100, (Number(kf.time) / dur) * 100));
+      marker.style.left = `${pct.toFixed(2)}%`;
+
+      const timeFmt = formatTimestampMMSS(Number(kf.time));
+      const kfFont = (kf.styling && (kf.styling.fontFamily || kf.styling.font_name)) || state.fontFamily || "Montserrat";
+      const kfSize = (kf.styling && (kf.styling.fontSize || kf.styling.font_size)) || state.fontSize || 68;
+      marker.title = `Keyframe at ${timeFmt} (${kfFont}, ${kfSize}px) - Click to jump`;
+      marker.setAttribute("aria-label", `Keyframe at ${timeFmt}`);
+
+      const isActive = (state.activeKeyframeId === kf.id) || (Math.abs(Number(kf.time) - currentT) <= 0.25);
+      if (isActive) {
+        marker.classList.add("active");
+      }
+
+      marker.addEventListener("click", (e) => {
+        e.stopPropagation();
+        seekVideoStageTo(Number(kf.time), true);
+      });
+
+      timelineKeyframesTrack.appendChild(marker);
+    });
+  }
+
+  function updateKeyframeToolbarAndBanner(t) {
+    const dur = (state.videoMeta && state.videoMeta.duration) ? Number(state.videoMeta.duration) : 100;
+    const clamped = Math.max(0, Math.min(Number(t) || 0, dur));
+
+    const snapped = findKeyframeAtTime(clamped, 0.25);
+    state.isAtKeyframe = Boolean(snapped);
+    state.selectedKeyframeId = snapped ? snapped.id : null;
+
+    if (snapped) {
+      if (btnDeleteKeyframe) {
+        btnDeleteKeyframe.disabled = false;
+        btnDeleteKeyframe.title = `Delete keyframe at ${formatTimestampMMSS(snapped.time)}`;
+      }
+      if (btnAddKeyframe) {
+        btnAddKeyframe.textContent = "🔄 Update KF";
+        btnAddKeyframe.title = `Update styling of keyframe at ${formatTimestampMMSS(snapped.time)}`;
+      }
+    } else {
+      if (btnDeleteKeyframe) {
+        btnDeleteKeyframe.disabled = true;
+        btnDeleteKeyframe.title = "No keyframe at current playhead position to delete";
+      }
+      if (btnAddKeyframe) {
+        btnAddKeyframe.textContent = "➕ Keyframe";
+        btnAddKeyframe.title = "Add a new styling keyframe at current playhead position";
+        btnAddKeyframe.disabled = !state.hasLoadedVideo;
+      }
+    }
+
+    const activeKf = findActiveKeyframe(clamped);
+    state.activeKeyframeId = activeKf ? activeKf.id : null;
+
+    if (activeKf) {
+      if (timelineKeyframeBanner) timelineKeyframeBanner.style.display = "flex";
+      if (keyframeBannerText) {
+        const kfIndex = state.keyframes.findIndex(k => k.id === activeKf.id) + 1;
+        const fontName = (activeKf.styling && (activeKf.styling.fontFamily || activeKf.styling.font_name)) || state.fontFamily;
+        const fontSize = (activeKf.styling && (activeKf.styling.fontSize || activeKf.styling.font_size)) || state.fontSize;
+        keyframeBannerText.textContent = `💎 Keyframe ${kfIndex}/${state.keyframes.length} @ ${formatTimestampMMSS(activeKf.time)} (${fontName}, ${fontSize}px)`;
+      }
+      if (keyframeBannerHint) {
+        if (snapped) {
+          keyframeBannerHint.textContent = "Active keyframe playhead. Styling changes directly update this keyframe.";
+        } else {
+          keyframeBannerHint.textContent = "Style stays in effect to the right of the timeline until next keyframe.";
+        }
+      }
+    } else if (state.keyframes && state.keyframes.length > 0) {
+      if (timelineKeyframeBanner) timelineKeyframeBanner.style.display = "flex";
+      if (keyframeBannerText) {
+        keyframeBannerText.textContent = "Base Style (Prior to first keyframe)";
+      }
+      if (keyframeBannerHint) {
+        keyframeBannerHint.textContent = `First keyframe starts at ${formatTimestampMMSS(state.keyframes[0].time)}.`;
+      }
+    } else {
+      if (timelineKeyframeBanner) timelineKeyframeBanner.style.display = "none";
+    }
+
+    // Refresh marker active states
+    if (timelineKeyframesTrack) {
+      const markers = timelineKeyframesTrack.querySelectorAll(".keyframe-marker");
+      markers.forEach(m => {
+        const mTime = Number(m.dataset.time);
+        const isActive = activeKf && (m.dataset.keyframeId === activeKf.id || Math.abs(mTime - clamped) <= 0.25);
+        m.classList.toggle("active", Boolean(isActive));
+      });
+    }
+
+    // Update prev/next jump buttons
+    if (btnPrevKeyframe && btnNextKeyframe && state.keyframes) {
+      btnPrevKeyframe.disabled = !state.keyframes.some(kf => Number(kf.time) < clamped - 0.1);
+      btnNextKeyframe.disabled = !state.keyframes.some(kf => Number(kf.time) > clamped + 0.1);
+    }
+  }
+
+  function syncActiveKeyframeFromState() {
+    if (!state.isAtKeyframe || !state.selectedKeyframeId || !state.keyframes) return;
+    const kf = state.keyframes.find(k => k.id === state.selectedKeyframeId);
+    if (kf) {
+      kf.styling = getCurrentStylingSnapshot(false);
+    }
+  }
+
+  function addOrUpdateKeyframeAtCurrentTime() {
+    if (!state.hasLoadedVideo) return;
+    const t = state.currentSeekTime || 0;
+    const snapshot = getCurrentStylingSnapshot(false);
+    const existing = findKeyframeAtTime(t, 0.25);
+
+    if (existing) {
+      existing.styling = snapshot;
+      existing.label = `Keyframe @ ${formatTimestampMMSS(existing.time)}`;
+      showPresetStatus(`Updated keyframe styling at ${formatTimestampMMSS(existing.time)}`);
+    } else {
+      const newKf = {
+        id: "kf_" + Date.now() + "_" + Math.floor(Math.random() * 1000),
+        time: Number(t.toFixed(2)),
+        label: `Keyframe @ ${formatTimestampMMSS(t)}`,
+        styling: snapshot
+      };
+      state.keyframes.push(newKf);
+      state.keyframes.sort((a, b) => Number(a.time) - Number(b.time));
+      showPresetStatus(`Added keyframe at ${formatTimestampMMSS(t)} (style active to the right)`);
+    }
+
+    updatePresetToolbarState();
+    renderTimelineKeyframeMarkers();
+    updateKeyframeToolbarAndBanner(t);
+  }
+
+  function deleteKeyframeAtCurrentTime() {
+    if (!state.hasLoadedVideo || !state.keyframes || state.keyframes.length === 0) return;
+    const t = state.currentSeekTime || 0;
+    const existing = findKeyframeAtTime(t, 0.25);
+    if (!existing) return;
+
+    state.keyframes = state.keyframes.filter(k => k.id !== existing.id);
+    showPresetStatus(`Deleted keyframe at ${formatTimestampMMSS(existing.time)}`);
+
+    updatePresetToolbarState();
+    renderTimelineKeyframeMarkers();
+    seekVideoStageTo(t, false);
+  }
+
+  function jumpToPrevKeyframe() {
+    if (!state.keyframes || state.keyframes.length === 0) return;
+    const currentT = state.currentSeekTime || 0;
+    const candidates = state.keyframes.filter(kf => Number(kf.time) < currentT - 0.08);
+    if (candidates.length > 0) {
+      const prevKf = candidates[candidates.length - 1];
+      seekVideoStageTo(Number(prevKf.time), true);
+    }
+  }
+
+  function jumpToNextKeyframe() {
+    if (!state.keyframes || state.keyframes.length === 0) return;
+    const currentT = state.currentSeekTime || 0;
+    const candidates = state.keyframes.filter(kf => Number(kf.time) > currentT + 0.08);
+    if (candidates.length > 0) {
+      const nextKf = candidates[0];
+      seekVideoStageTo(Number(nextKf.time), true);
+    }
+  }
+
+  let seekDebounceTimer = null;
+  function seekVideoStageTo(timestampSec, updateSlider = true, fromVideoPlayback = false) {
+    if (!state.hasLoadedVideo || !state.videoPath) return;
+    const dur = (state.videoMeta && state.videoMeta.duration) ? Number(state.videoMeta.duration) : 100;
+    const clamped = Math.max(0, Math.min(Number(timestampSec) || 0, dur));
+    state.currentSeekTime = clamped;
+
+    if (updateSlider && stageTimelineSlider) {
+      stageTimelineSlider.value = String(clamped);
+    }
+    if (timelineCurrentTime) {
+      timelineCurrentTime.textContent = formatTimestampMMSS(clamped);
+    }
+
+    if (!fromVideoPlayback && stageVideo && stageVideo.src) {
+      if (Math.abs(stageVideo.currentTime - clamped) > 0.12) {
+        stageVideo.currentTime = clamped;
+      }
+    }
+
+    // Evaluate active keyframe at this timestamp.
+    // The style stays in effect to the right of the timeline until another keyframe is encountered.
+    const activeKf = findActiveKeyframe(clamped);
+    if (activeKf) {
+      if (activeKf.id !== state.activeKeyframeId) {
+        state.activeKeyframeId = activeKf.id;
+        applyPresetStyling(activeKf.styling, true);
+      }
+    } else if (state.activeKeyframeId !== null) {
+      // Revert to base preset styling when scrubbing prior to the first keyframe
+      state.activeKeyframeId = null;
+      if (state.basePresetStyling) {
+        applyPresetStyling(state.basePresetStyling, true);
+      }
+    }
+
+    updateKeyframeToolbarAndBanner(clamped);
+
+    // If dialogue lines exist, sync dialogue text at current playback timestamp
+    if (state.dialogues && state.dialogues.length > 0) {
+      const activeLine = state.dialogues.find(dl => {
+        const s = parseAssTimestamp(dl.start);
+        const e = parseAssTimestamp(dl.end);
+        return clamped >= s && clamped <= e;
+      });
+      if (activeLine && activeLine.clean_text && activeLine.clean_text !== state.currentDialogueLineText) {
+        state.currentDialogueLineText = activeLine.clean_text;
+        state.previewText = activeLine.clean_text;
+        if (previewTextInput) previewTextInput.value = activeLine.clean_text;
+        renderSubtitlePreview();
+      }
+    }
+
+    // Highlight closest scene card in filmstrip tray
+    if (sceneFilmstripTray) {
+      const cards = sceneFilmstripTray.querySelectorAll(".scene-filmstrip-card");
+      let closestCard = null;
+      let minDiff = 2.0;
+      cards.forEach(card => {
+        card.classList.remove("active");
+        const cardTs = Number(card.dataset.timestamp);
+        const diff = Math.abs(cardTs - clamped);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestCard = card;
+        }
+      });
+      if (closestCard) {
+        closestCard.classList.add("active");
+      }
+    }
+
+    if (!fromVideoPlayback) {
+      if (seekDebounceTimer) clearTimeout(seekDebounceTimer);
+      seekDebounceTimer = setTimeout(() => {
+        if (!state.videoPath || !stagePoster) return;
+        stagePoster.src = `/api/video-frame?path=${encodeURIComponent(state.videoPath)}&t=${clamped.toFixed(2)}`;
+      }, 40);
+    }
+  }
+
+  function renderSceneFilmstrip(snapshots) {
+    if (!sceneFilmstripTray) return;
+    sceneFilmstripTray.innerHTML = "";
+    if (!Array.isArray(snapshots) || !snapshots.length) {
+      sceneFilmstripTray.innerHTML = '<span class="timeline-empty-hint" style="font-size: 0.74rem; color: var(--text-muted, #94a3b8); font-style: italic; grid-column: span 5; text-align: center; padding: 6px;">No scene snapshots available.</span>';
+      return;
+    }
+
+    snapshots.forEach((snap, idx) => {
+      const card = document.createElement("div");
+      card.className = "scene-filmstrip-card";
+      if (idx === 0) card.classList.add("active");
+      card.dataset.timestamp = String(snap.timestamp);
+      card.title = `Jump to ${snap.label} (${formatTimestampMMSS(snap.timestamp)})`;
+
+      const img = document.createElement("img");
+      img.className = "scene-filmstrip-img";
+      img.src = snap.url;
+      img.alt = `Scene at ${snap.label}`;
+      img.loading = "lazy";
+
+      const label = document.createElement("span");
+      label.className = "scene-filmstrip-label";
+      label.textContent = `${snap.label} (${formatTimestampMMSS(snap.timestamp)})`;
+
+      card.appendChild(img);
+      card.appendChild(label);
+
+      card.addEventListener("click", () => {
+        seekVideoStageTo(snap.timestamp, true);
+      });
+
+      sceneFilmstripTray.appendChild(card);
+    });
+  }
+
+  if (stageTimelineSlider) {
+    stageTimelineSlider.addEventListener("input", (e) => {
+      seekVideoStageTo(Number(e.target.value), false, false);
+    });
+    stageTimelineSlider.addEventListener("change", (e) => {
+      seekVideoStageTo(Number(e.target.value), true, false);
+    });
+  }
+
+  // Play / Pause Button Listener
+  if (btnPlayPause) {
+    btnPlayPause.addEventListener("click", () => {
+      togglePlayPause();
+    });
+  }
+
+  // HTML5 Video Playback Events
+  if (stageVideo) {
+    stageVideo.addEventListener("play", () => {
+      state.isPlaying = true;
+      if (stagePoster) stagePoster.classList.add("hidden");
+      stageVideo.classList.remove("hidden");
+      updatePlayPauseUI(true);
+    });
+    stageVideo.addEventListener("pause", () => {
+      state.isPlaying = false;
+      updatePlayPauseUI(false);
+    });
+    stageVideo.addEventListener("ended", () => {
+      state.isPlaying = false;
+      updatePlayPauseUI(false);
+    });
+    stageVideo.addEventListener("timeupdate", () => {
+      if (!state.isPlaying) return;
+      seekVideoStageTo(stageVideo.currentTime, true, true);
+    });
+  }
+
+  // Click on video stage background to toggle play/pause
+  if (videoStage) {
+    videoStage.addEventListener("click", (e) => {
+      if (e.target.closest("#subtitleDragBox") || e.target.closest(".keyframe-marker") || e.target.closest("button")) {
+        return;
+      }
+      if (state.hasLoadedVideo) {
+        togglePlayPause();
+      }
+    });
+  }
+
+  // Keyboard shortcut: Spacebar to toggle Play/Pause when media is loaded
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "Space" || e.key === " ") {
+      const activeTag = document.activeElement ? document.activeElement.tagName.toLowerCase() : "";
+      if (activeTag === "input" || activeTag === "textarea" || activeTag === "select") {
+        return;
+      }
+      if (state.hasLoadedVideo) {
+        e.preventDefault();
+        togglePlayPause();
+      }
+    }
+  });
+
+  if (btnAddKeyframe) {
+    btnAddKeyframe.addEventListener("click", () => {
+      addOrUpdateKeyframeAtCurrentTime();
+    });
+  }
+
+  if (btnDeleteKeyframe) {
+    btnDeleteKeyframe.addEventListener("click", () => {
+      deleteKeyframeAtCurrentTime();
+    });
+  }
+
+  if (btnPrevKeyframe) {
+    btnPrevKeyframe.addEventListener("click", () => {
+      jumpToPrevKeyframe();
+    });
+  }
+
+  if (btnNextKeyframe) {
+    btnNextKeyframe.addEventListener("click", () => {
+      jumpToNextKeyframe();
+    });
+  }
+
+  if (btnStepBack5) {
+    btnStepBack5.addEventListener("click", () => {
+      seekVideoStageTo((state.currentSeekTime || 0) - 5, true);
+    });
+  }
+  if (btnStepBack1) {
+    btnStepBack1.addEventListener("click", () => {
+      seekVideoStageTo((state.currentSeekTime || 0) - 1, true);
+    });
+  }
+  if (btnStepFwd1) {
+    btnStepFwd1.addEventListener("click", () => {
+      seekVideoStageTo((state.currentSeekTime || 0) + 1, true);
+    });
+  }
+  if (btnStepFwd5) {
+    btnStepFwd5.addEventListener("click", () => {
+      seekVideoStageTo((state.currentSeekTime || 0) + 5, true);
+    });
+  }
+
+  // ----------------------------------------------------
   // 3. Styling & Live Preview Rendering
   // ----------------------------------------------------
   function renderSubtitlePreview() {
+    if (state.isAtKeyframe && state.stylingModified) {
+      syncActiveKeyframeFromState();
+    }
+
     // 1. Text styling
     const font = state.fontFamily;
     const weight = state.bold ? "700" : "400";
@@ -1468,8 +2171,358 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // ----------------------------------------------------
-  // 4b. Multi-Speaker Color Channels System
+  // 4a. Word Spelling List Controller (Pre-Transcription Biasing)
   // ----------------------------------------------------
+  function sanitizeVocabTerm(term) {
+    if (!term || typeof term !== "string") return "";
+    return term.replace(/[<>"'`;\\{}[\]^~#$@!%*+=?|]/g, "").replace(/\s+/g, " ").trim();
+  }
+
+  function renderVocabChips() {
+    if (!vocabChipsList) return;
+    vocabChipsList.innerHTML = "";
+
+    const terms = Array.isArray(state.customVocabulary) ? state.customVocabulary : [];
+    const count = terms.length;
+
+    if (vocabCountBadge) {
+      vocabCountBadge.textContent = `${count} ${count === 1 ? "word" : "words"}`;
+    }
+
+    if (vocabEmptyHint) {
+      vocabEmptyHint.style.display = count === 0 ? "" : "none";
+    }
+
+    terms.forEach((term, idx) => {
+      const chip = document.createElement("span");
+      chip.className = "vocab-chip";
+      chip.dataset.index = String(idx);
+      chip.title = "Click pencil or double-click to edit spelling";
+
+      const textSpan = document.createElement("span");
+      textSpan.className = "vocab-chip-text";
+      textSpan.textContent = term;
+
+      const editIcon = document.createElement("span");
+      editIcon.className = "vocab-chip-edit-icon";
+      editIcon.title = "Edit spelling";
+      editIcon.textContent = "✏️";
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "vocab-chip-remove";
+      removeBtn.title = `Remove "${term}"`;
+      removeBtn.innerHTML = "&times;";
+
+      chip.appendChild(textSpan);
+      chip.appendChild(editIcon);
+      chip.appendChild(removeBtn);
+
+      function startInlineEdit() {
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "vocab-chip-inline-input";
+        input.value = term;
+
+        chip.innerHTML = "";
+        chip.appendChild(input);
+        input.focus();
+        input.select();
+
+        let finished = false;
+        function commitEdit(newVal) {
+          if (finished) return;
+          finished = true;
+          const cleaned = sanitizeVocabTerm(newVal);
+          if (!cleaned) {
+            state.customVocabulary.splice(idx, 1);
+          } else {
+            const existingIdx = state.customVocabulary.findIndex((w, i) => i !== idx && w.toLowerCase() === cleaned.toLowerCase());
+            if (existingIdx !== -1) {
+              state.customVocabulary.splice(idx, 1);
+            } else {
+              state.customVocabulary[idx] = cleaned;
+            }
+          }
+          state.stylingModified = true;
+          renderVocabChips();
+        }
+
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commitEdit(input.value);
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            finished = true;
+            renderVocabChips();
+          }
+        });
+
+        input.addEventListener("blur", () => {
+          commitEdit(input.value);
+        });
+      }
+
+      editIcon.addEventListener("click", (e) => {
+        e.stopPropagation();
+        startInlineEdit();
+      });
+
+      chip.addEventListener("dblclick", (e) => {
+        e.stopPropagation();
+        startInlineEdit();
+      });
+
+      removeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        state.customVocabulary.splice(idx, 1);
+        state.stylingModified = true;
+        renderVocabChips();
+      });
+
+      vocabChipsList.appendChild(chip);
+    });
+  }
+
+  function addVocabWords(rawInput) {
+    if (!rawInput || typeof rawInput !== "string") return 0;
+    const tokens = rawInput.split(/[\r\n,]+/).map(t => sanitizeVocabTerm(t)).filter(Boolean);
+    if (!tokens.length) return 0;
+
+    let addedCount = 0;
+    if (!Array.isArray(state.customVocabulary)) {
+      state.customVocabulary = [];
+    }
+
+    tokens.forEach(tok => {
+      const exists = state.customVocabulary.some(w => w.toLowerCase() === tok.toLowerCase());
+      if (!exists) {
+        state.customVocabulary.push(tok);
+        addedCount++;
+      }
+    });
+
+    if (addedCount > 0) {
+      state.stylingModified = true;
+      renderVocabChips();
+    }
+    return addedCount;
+  }
+
+  // Wire Word Spelling List Controls
+  if (btnAddVocab && inputCustomVocab) {
+    btnAddVocab.addEventListener("click", () => {
+      const val = inputCustomVocab.value;
+      if (val && val.trim()) {
+        addVocabWords(val);
+        inputCustomVocab.value = "";
+        inputCustomVocab.focus();
+      }
+    });
+
+    inputCustomVocab.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const val = inputCustomVocab.value;
+        if (val && val.trim()) {
+          addVocabWords(val);
+          inputCustomVocab.value = "";
+        }
+      }
+    });
+  }
+
+  // 📁 From File Import
+  if (btnHarvestFile && inputVocabFile) {
+    btnHarvestFile.addEventListener("click", () => {
+      inputVocabFile.click();
+    });
+
+    inputVocabFile.addEventListener("change", (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const content = event.target.result;
+          let terms = [];
+
+          if (file.name.toLowerCase().endsWith(".json")) {
+            const parsed = JSON.parse(content);
+            if (Array.isArray(parsed)) {
+              terms = parsed.map(String);
+            } else if (parsed && typeof parsed === "object") {
+              const list = parsed.vocabulary || parsed.words || parsed.terms || parsed.custom_vocabulary || [];
+              if (Array.isArray(list)) terms = list.map(String);
+            }
+          } else {
+            // .txt or .csv
+            terms = content.split(/[\r\n,]+/).map(s => s.trim()).filter(Boolean);
+          }
+
+          let added = 0;
+          if (!Array.isArray(state.customVocabulary)) {
+            state.customVocabulary = [];
+          }
+
+          terms.forEach(t => {
+            const sanitized = sanitizeVocabTerm(t);
+            if (sanitized) {
+              const exists = state.customVocabulary.some(w => w.toLowerCase() === sanitized.toLowerCase());
+              if (!exists) {
+                state.customVocabulary.push(sanitized);
+                added++;
+              }
+            }
+          });
+
+          if (added > 0) {
+            state.stylingModified = true;
+            renderVocabChips();
+            showPresetStatus(`Imported ${added} new word(s) from "${file.name}"`);
+          } else {
+            showPresetStatus(`No new words added from "${file.name}" (already in list or empty)`);
+          }
+        } catch (err) {
+          alert(`Could not parse file "${file.name}": ${err.message}`);
+        } finally {
+          inputVocabFile.value = "";
+        }
+      };
+
+      reader.onerror = () => {
+        alert(`Failed to read file "${file.name}".`);
+        inputVocabFile.value = "";
+      };
+
+      reader.readAsText(file, "UTF-8");
+    });
+  }
+
+  // 💾 Save Word Spelling List to File
+  if (btnSaveVocabFile) {
+    btnSaveVocabFile.addEventListener("click", async () => {
+      const words = Array.isArray(state.customVocabulary) ? state.customVocabulary : [];
+      if (!words.length) {
+        showPresetStatus("No words in the spelling list to save. Add words first.");
+        return;
+      }
+
+      // Generate clean default filename derived from current video or fallback
+      let baseName = "word_spelling_list";
+      if (state.videoPath) {
+        const rawFilename = state.videoPath.split(/[/\\]/).pop() || "";
+        const cleanBase = rawFilename.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+        if (cleanBase) {
+          baseName = `${cleanBase}_vocabulary`;
+        }
+      }
+      const defaultFilename = `${baseName}.txt`;
+      const fileText = words.join("\n") + "\n";
+
+      // File System Access API with native 'Save As' dialog when supported
+      if (window.showSaveFilePicker) {
+        try {
+          const handle = await window.showSaveFilePicker({
+            suggestedName: defaultFilename,
+            types: [{
+              description: "Plain Text Vocabulary List (*.txt)",
+              accept: { "text/plain": [".txt"] }
+            }]
+          });
+          const writable = await handle.createWritable();
+          await writable.write(fileText);
+          await writable.close();
+          showPresetStatus(`Saved ${words.length} word(s) to "${handle.name || defaultFilename}"!`);
+          return;
+        } catch (err) {
+          if (err && err.name === "AbortError") {
+            return;
+          }
+        }
+      }
+
+      // Universal cross-browser Blob download fallback
+      try {
+        const blob = new Blob([fileText], { type: "text/plain;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = defaultFilename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showPresetStatus(`Saved ${words.length} word(s) to "${defaultFilename}"!`);
+      } catch (err) {
+        alert(`Could not save file: ${err.message}`);
+      }
+    });
+  }
+
+  // 👥 From Speakers Import
+  if (btnHarvestSpeakers) {
+    btnHarvestSpeakers.addEventListener("click", () => {
+      const channels = state.speakerChannels || {};
+      const activeKeys = Object.keys(channels).slice(0, Math.max(1, state.speakerCount || 1));
+      const genericRegex = /^speaker[\s_]*([0-9]+)?$/i;
+      const candidates = [];
+
+      activeKeys.forEach(k => {
+        const spk = channels[k];
+        if (spk && spk.name) {
+          const trimmed = spk.name.trim();
+          if (trimmed && !genericRegex.test(trimmed)) {
+            candidates.push(trimmed);
+          }
+        }
+      });
+
+      if (!candidates.length) {
+        showPresetStatus("No custom speaker names found. Enter names under 'Highlight Style > Multi-Speaker' first.");
+        return;
+      }
+
+      let added = 0;
+      if (!Array.isArray(state.customVocabulary)) {
+        state.customVocabulary = [];
+      }
+
+      candidates.forEach(name => {
+        const sanitized = sanitizeVocabTerm(name);
+        if (sanitized) {
+          const exists = state.customVocabulary.some(w => w.toLowerCase() === sanitized.toLowerCase());
+          if (!exists) {
+            state.customVocabulary.push(sanitized);
+            added++;
+          }
+        }
+      });
+
+      if (added > 0) {
+        state.stylingModified = true;
+        renderVocabChips();
+        showPresetStatus(`Added ${added} speaker name(s) to spelling list`);
+      } else {
+        showPresetStatus("Speaker names are already in the spelling list");
+      }
+    });
+  }
+
+  // 🗑️ Clear All
+  if (btnClearVocab) {
+    btnClearVocab.addEventListener("click", () => {
+      if (state.customVocabulary && state.customVocabulary.length > 0) {
+        state.customVocabulary = [];
+        state.stylingModified = true;
+        renderVocabChips();
+        showPresetStatus("Word spelling list cleared");
+      }
+    });
+  }
+
   // ----------------------------------------------------
   // 4b. Multi-Speaker Color Channels System (Up to 5 Voices)
   // ----------------------------------------------------
@@ -2356,10 +3409,10 @@ document.addEventListener("DOMContentLoaded", () => {
           if (data.custom_filename) btnDownloadAss.download = `${data.custom_filename}.ass`;
         }
 
-        // Preload drawer subtitle dialogue lines if not loaded yet
-        if (!state.drawerLoadedForTask || state.drawerLoadedForTask !== taskId) {
-          state.drawerLoadedForTask = taskId;
-          loadDrawerSubtitles(taskId);
+        // Refresh Subtitle File Hub details from disk
+        if (!state.hubLoadedForTask || state.hubLoadedForTask !== taskId) {
+          state.hubLoadedForTask = taskId;
+          refreshAssFileInfo({ taskId, mediaPath: state.videoPath });
         }
       }
 
@@ -2388,6 +3441,9 @@ document.addEventListener("DOMContentLoaded", () => {
           if (data.custom_filename) btnDownloadAss.download = `${data.custom_filename}.ass`;
         }
 
+        // Refresh disk info for the newly created .ass file
+        refreshAssFileInfo({ taskId: data.task_id, mediaPath: state.videoPath });
+
         if (data.video_download_url || data.video_file) {
           const finalVideoPath = data.video_file || `${state.videoPath || ''}`;
           state.lastBurnedVideoPath = finalVideoPath;
@@ -2397,10 +3453,9 @@ document.addEventListener("DOMContentLoaded", () => {
         } else {
           if (burnedDeliveryBanner) burnedDeliveryBanner.classList.add("hidden");
           updateWorkflowStepper('subtitles_ready');
-          // Automatically reveal and expand the subtitle verification drawer right below buttons
-          if (cardSubtitleDrawer) {
-            cardSubtitleDrawer.classList.remove('collapsed');
-            cardSubtitleDrawer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          // Automatically bring Subtitle File & External Editor Hub into view
+          if (cardAssFileHub) {
+            cardAssFileHub.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           }
         }
         syncDeliverableFilenames();
@@ -2447,6 +3502,7 @@ document.addEventListener("DOMContentLoaded", () => {
       reuse_existing_ass: false,
       reuse_existing_wav: false,
       enable_diarization: Boolean((checkEnableDiarization && checkEnableDiarization.checked) || state.enableDiarization || state.isMultiSpeaker),
+      custom_vocabulary: Array.isArray(state.customVocabulary) ? [...state.customVocabulary] : [],
       styling: getCurrentStylingPayload()
     };
 
@@ -2522,19 +3578,14 @@ document.addEventListener("DOMContentLoaded", () => {
     state.pollInterval = setInterval(() => pollStatus(burnTaskId), 500);
 
     try {
-      if (editorState.activeTab === "raw" && rawAssTextarea) {
-        if (rawAssTextarea.value !== editorState.initialContent) {
-          editorState.currentContent = rawAssTextarea.value;
-          editorState.isDirty = true;
-        }
-      }
-
+      // Direct disk-first load: Never send in-memory buffer content.
+      // FFmpeg burns directly from the .ass file saved on disk (including external editor edits).
       const payload = {
         video_path: videoPath,
         ass_path: effectiveAss,
         task_id: burnTaskId,
         output_filename: (outputFilenameInput ? outputFilenameInput.value.trim() : null) || state.outputFilename,
-        content: editorState.isDirty ? editorState.currentContent : null,
+        content: null,
         styling: getCurrentStylingPayload(),
         styling_modified: !!state.stylingModified
       };
@@ -2556,21 +3607,14 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const data = await res.json();
-      editorState.isDirty = false;
       state.stylingModified = false;
-      if (btnDrawerRevert) btnDrawerRevert.disabled = true;
 
-      if (data.ass_content) {
-        editorState.currentContent = data.ass_content;
-        editorState.initialContent = data.ass_content;
-        if (rawAssTextarea) rawAssTextarea.value = data.ass_content;
-      }
-      if (data.task_id) {
-        loadDrawerSubtitles(data.task_id);
+      // Refresh .ass metadata & dialogue from disk
+      if (data.task_id || data.ass_filename) {
+        refreshAssFileInfo({ filePath: effectiveAss, taskId: data.task_id, mediaPath: videoPath });
       }
 
       updateWorkflowStepper('burned');
-      updateDrawerStatus(`✓ Video burned successfully: ${data.video_filename}`, 'success');
 
       state.lastBurnedVideoPath = data.video_path || data.video_file;
       state.lastBurnedVideoFilename = data.video_filename || (state.lastBurnedVideoPath ? state.lastBurnedVideoPath.split("/").pop() : null);
@@ -2589,10 +3633,6 @@ document.addEventListener("DOMContentLoaded", () => {
         btnDownloadAss.href = data.download_url;
         if (data.ass_filename) btnDownloadAss.download = data.ass_filename;
       }
-
-      if (modalAssEditor && !modalAssEditor.classList.contains('hidden')) {
-        setTimeout(() => { modalAssEditor.classList.add('hidden'); }, 500);
-      }
     } catch (err) {
       if (state.pollInterval) {
         clearInterval(state.pollInterval);
@@ -2601,24 +3641,9 @@ document.addEventListener("DOMContentLoaded", () => {
       console.error("Burn video error:", err);
       alert(`Error burning video: ${err.message}`);
       updateThermometer(100, `Error: ${err.message}`, 5, "Burn Failed");
-      updateDrawerStatus(`Burn error: ${err.message}`, 'error');
       updateWorkflowStepper('subtitles_ready');
     } finally {
       if (btnBurnOnly) btnBurnOnly.classList.remove('disabled');
-      if (btnDrawerBurn) {
-        btnDrawerBurn.disabled = false;
-        btnDrawerBurn.innerHTML = `
-          <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.2" fill="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-          <span>Burn Video (.mp4)</span>
-        `;
-      }
-      if (btnModalSaveAndBurn) {
-        btnModalSaveAndBurn.disabled = false;
-        btnModalSaveAndBurn.innerHTML = `
-          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-          <span>Save & Burn Video (.mp4)</span>
-        `;
-      }
     }
   }
 
@@ -2917,7 +3942,9 @@ document.addEventListener("DOMContentLoaded", () => {
         max_lines: Number(snapshot.maxLines) || 1,
         max_chars_per_line: Number(snapshot.maxChars) || 28,
         highlight_animation: snapshot.highlightAnimation || "discrete",
-        speaker_channels: snapshot.speaker_channels || {}
+        speaker_channels: snapshot.speaker_channels || {},
+        custom_vocabulary: snapshot.custom_vocabulary || [],
+        keyframes: Array.isArray(snapshot.keyframes) ? snapshot.keyframes : []
       };
 
       const res = await fetch("/api/presets", {
@@ -2986,7 +4013,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 maxLines: pData.max_lines || 1,
                 lineWidthPct: pData.line_width_pct !== undefined ? pData.line_width_pct : 82,
                 maxChars: pData.max_chars_per_line || 28,
-                speaker_channels: pData.speaker_channels || {}
+                speaker_channels: pData.speaker_channels || {},
+                custom_vocabulary: pData.custom_vocabulary || [],
+                keyframes: Array.isArray(pData.keyframes) ? pData.keyframes : []
               }
             };
             updated = true;
@@ -3051,7 +4080,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (btnDeletePreset) btnDeletePreset.disabled = !isCustom;
   }
 
-  function getCurrentStylingSnapshot() {
+  function getCurrentStylingSnapshot(includeKeyframes = true) {
     const snapshot = {
       posX: state.posX,
       posY: state.posY,
@@ -3074,14 +4103,32 @@ document.addEventListener("DOMContentLoaded", () => {
       lineWidthPct: state.lineWidthPct,
       maxChars: state.maxChars
     };
+    if (includeKeyframes && state.keyframes && state.keyframes.length > 0) {
+      snapshot.keyframes = JSON.parse(JSON.stringify(state.keyframes));
+    }
     if (state.isMultiSpeaker && state.speakerCount >= 2 && state.speakerChannels) {
       snapshot.speaker_channels = JSON.parse(JSON.stringify(state.speakerChannels));
+    }
+    if (state.customVocabulary && state.customVocabulary.length > 0) {
+      snapshot.custom_vocabulary = [...state.customVocabulary];
     }
     return snapshot;
   }
 
-  function applyPresetStyling(styling) {
+  function applyPresetStyling(styling, suppressDirty = false) {
     if (!styling) return;
+
+    if (!suppressDirty) {
+      if (Array.isArray(styling.keyframes)) {
+        state.keyframes = JSON.parse(JSON.stringify(styling.keyframes));
+      } else {
+        state.keyframes = [];
+      }
+      state.activeKeyframeId = null;
+      state.selectedKeyframeId = null;
+      renderTimelineKeyframeMarkers();
+      updateKeyframeToolbarAndBanner(state.currentSeekTime || 0);
+    }
 
     // Position
     if (styling.posX !== undefined && styling.posY !== undefined) {
@@ -3244,6 +4291,13 @@ document.addEventListener("DOMContentLoaded", () => {
       updateSpeakerControlsVisibility(1);
     }
 
+    // Word Spelling List Restoration
+    if (styling.custom_vocabulary || styling.customVocabulary) {
+      const vocab = styling.custom_vocabulary || styling.customVocabulary;
+      state.customVocabulary = Array.isArray(vocab) ? [...vocab] : [];
+      renderVocabChips();
+    }
+
     // Refresh live preview canvas
     renderSubtitlePreview();
   }
@@ -3254,6 +4308,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (presetId.startsWith("factory:")) {
       const template = FACTORY_PRESETS[presetId];
       if (template) {
+        state.basePresetStyling = JSON.parse(JSON.stringify(template.styling));
         applyPresetStyling(template.styling);
         showPresetStatus(`Applied template: ${template.name}`);
         localStorage.setItem(PRESET_LAST_ACTIVE_KEY, presetId);
@@ -3262,6 +4317,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const custom = getCustomPresets();
       const p = custom[presetId];
       if (p) {
+        state.basePresetStyling = JSON.parse(JSON.stringify(p.styling));
         applyPresetStyling(p.styling);
         showPresetStatus(`Applied preset: ${p.name}`);
         localStorage.setItem(PRESET_LAST_ACTIVE_KEY, presetId);
@@ -3538,9 +4594,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
           setCustomPresets(custom);
           populatePresetDropdown(id);
+          state.basePresetStyling = JSON.parse(JSON.stringify(parsed.styling));
           applyPresetStyling(parsed.styling);
           localStorage.setItem(PRESET_LAST_ACTIVE_KEY, id);
           showPresetStatus(`Imported & applied preset "${cleanName}"!`);
+          const fileSlug = cleanName.toLowerCase().replace(/[^a-z0-9_-]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "") || ("preset_" + Date.now());
+          persistPresetToBackend(fileSlug, cleanName, parsed.styling);
         } catch (err) {
           alert(`Failed to parse preset JSON file: ${err.message}`);
         }
@@ -3551,297 +4610,96 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // =========================================
-  // SUBTITLE TEXT EDITOR CONTROLLER
+  // SUBTITLE FILE & EXTERNAL EDITOR HUB
   // =========================================
-  const btnOpenAssEditor = document.getElementById("btnOpenAssEditor");
-  const editAssHint = document.getElementById("editAssHint");
   const btnEditAssResults = document.getElementById("btnEditAssResults");
-  const modalAssEditor = document.getElementById("modalAssEditor");
-  const btnCloseAssModal = document.getElementById("btnCloseAssModal");
-  const btnCancelAssEditor = document.getElementById("btnCancelAssEditor");
-  const btnResetAssEditor = document.getElementById("btnResetAssEditor");
-  const btnSaveAssEditor = document.getElementById("btnSaveAssEditor");
-  const editorFilenameBadge = document.getElementById("editorFilenameBadge");
-  const tabDialogueView = document.getElementById("tabDialogueView");
-  const tabRawView = document.getElementById("tabRawView");
-  const paneDialogueView = document.getElementById("paneDialogueView");
-  const paneRawView = document.getElementById("paneRawView");
-  const dialogueListContainer = document.getElementById("dialogueListContainer");
-  const rawAssTextarea = document.getElementById("rawAssTextarea");
-  const editorStatusDot = document.getElementById("editorStatusDot");
-  const editorStatusText = document.getElementById("editorStatusText");
-  const editorTabHint = document.getElementById("editorTabHint");
 
-  let editorState = {
-    taskId: null,
-    mediaPath: "",
-    assPath: "",
-    filePath: "",
-    initialContent: "",
-    currentContent: "",
-    dialogues: [],
-    activeTab: "dialogue",
-    isDirty: false
-  };
+  // Synchronize and display the active .ass file info directly from disk
+  async function refreshAssFileInfo(options = {}) {
+    let filePath = options.filePath || state.existingAssPath;
+    let taskId = options.taskId || state.currentTaskId;
+    let mediaPath = options.mediaPath || state.videoPath;
 
-  function updateEditorStatus(text, type = "normal") {
-    if (!editorStatusText) return;
-    editorStatusText.textContent = text;
-    if (editorStatusDot) {
-      if (type === "success") {
-        editorStatusDot.style.background = "#10b981";
-        editorStatusDot.style.boxShadow = "0 0 6px #10b981";
-      } else if (type === "warning") {
-        editorStatusDot.style.background = "#f59e0b";
-        editorStatusDot.style.boxShadow = "0 0 6px #f59e0b";
-      } else if (type === "error") {
-        editorStatusDot.style.background = "#ef4444";
-        editorStatusDot.style.boxShadow = "0 0 6px #ef4444";
-      } else {
-        editorStatusDot.style.background = "#00e5ff";
-        editorStatusDot.style.boxShadow = "0 0 6px #00e5ff";
-      }
-    }
-  }
-
-  function replaceDialogueTextPreservingTags(rawLineText, newCleanText) {
-    const posMatch = rawLineText.match(/^(\{\\an\d\\pos\([^)]+\)\})/);
-    const posTag = posMatch ? posMatch[1] : "";
-    const afterPos = posMatch ? rawLineText.slice(posMatch[1].length) : rawLineText;
-
-    const tagPattern = /(\{[^}]*?\\c&H[0-9a-fA-F]{8}&[^}]*?\})([^{]+)(\{[^}]*?\\c&H[0-9a-fA-F]{8}&[^}]*?\})/;
-    const match = afterPos.match(tagPattern);
-    if (!match) {
-      const boxPattern = /(\{[^}]*?\\bord\d+[^}]*?\})([^{]+)(\{\\r[^}]*?\})/;
-      const boxMatch = afterPos.match(boxPattern);
-      if (!boxMatch) {
-        return posTag + newCleanText;
-      }
-      const tag1 = boxMatch[1];
-      const tag2 = boxMatch[3];
-      const preText = afterPos.slice(0, boxMatch.index);
-      const preClean = preText.replace(/\{[^}]*\}/g, "").replace(/\\N/g, " ").trim();
-      const preWordCount = preClean ? preClean.split(/\s+/).length : 0;
-      const newWords = newCleanText.trim().split(/\s+/);
-      if (newWords.length === 0 || !newCleanText.trim()) return posTag + newCleanText;
-      const activeIdx = Math.min(preWordCount, newWords.length - 1);
-      const newPre = newWords.slice(0, activeIdx).join(" ");
-      const newActive = newWords[activeIdx];
-      const newPost = newWords.slice(activeIdx + 1).join(" ");
-      return posTag + (newPre ? newPre + " " : "") + `${tag1}${newActive}${tag2}` + (newPost ? " " + newPost : "");
-    }
-
-    const tag1 = match[1];
-    const tag2 = match[3];
-    const preText = afterPos.slice(0, match.index);
-    const preClean = preText.replace(/\{[^}]*\}/g, "").replace(/\\N/g, " ").trim();
-    const preWordCount = preClean ? preClean.split(/\s+/).length : 0;
-
-    const newWords = newCleanText.trim().split(/\s+/);
-    if (newWords.length === 0 || !newCleanText.trim()) {
-      return posTag + newCleanText;
-    }
-    const activeIdx = Math.min(preWordCount, newWords.length - 1);
-    const newPre = newWords.slice(0, activeIdx).join(" ");
-    const newActive = newWords[activeIdx];
-    const newPost = newWords.slice(activeIdx + 1).join(" ");
-
-    return posTag + (newPre ? newPre + " " : "") + `${tag1}${newActive}${tag2}` + (newPost ? " " + newPost : "");
-  }
-
-  function switchEditorTab(tabName) {
-    if (editorState.activeTab === "raw" && rawAssTextarea) {
-      if (rawAssTextarea.value !== editorState.initialContent) {
-        editorState.isDirty = true;
-      }
-      editorState.currentContent = rawAssTextarea.value;
-      const rawLines = editorState.currentContent.split("\n");
-      const updatedDialogues = [];
-      rawLines.forEach((line, idx) => {
-        if (line.startsWith("Dialogue:")) {
-          const parts = line.split(",", 9);
-          if (parts.length >= 10) {
-            const rawText = parts[9];
-            const cleanText = rawText.replace(/\{[^}]*\}/g, "").replace(/\\N/gi, " ").replace(/\\h/gi, " ").replace(/\s+/g, " ").trim();
-            updatedDialogues.push({
-              line_index: idx,
-              layer: parts[0].replace("Dialogue:", "").trim(),
-              start: parts[1].trim(),
-              end: parts[2].trim(),
-              style: parts[3].trim(),
-              speaker: parts[4].trim() || "Speaker 1",
-              raw_text: rawText,
-              clean_text: cleanText
-            });
-          }
-        }
-      });
-      if (updatedDialogues.length > 0) {
-        editorState.dialogues = updatedDialogues;
-        renderDialogueEditorItems(updatedDialogues);
-      }
-    }
-    editorState.activeTab = tabName;
-    if (tabName === "dialogue") {
-      if (tabDialogueView) tabDialogueView.classList.add("active");
-      if (tabRawView) tabRawView.classList.remove("active");
-      if (paneDialogueView) paneDialogueView.classList.remove("hidden");
-      if (paneRawView) paneRawView.classList.add("hidden");
-      if (editorTabHint) editorTabHint.textContent = "Edit spoken words directly per sentence line";
-    } else {
-      if (tabRawView) tabRawView.classList.add("active");
-      if (tabDialogueView) tabDialogueView.classList.remove("active");
-      if (paneRawView) paneRawView.classList.remove("hidden");
-      if (paneDialogueView) paneDialogueView.classList.add("hidden");
-      if (editorTabHint) editorTabHint.textContent = "Full raw ASS v4.00+ script editor (supports manual tags)";
-      if (rawAssTextarea) rawAssTextarea.value = editorState.currentContent;
-    }
-  }
-
-  if (rawAssTextarea) {
-    rawAssTextarea.addEventListener("input", () => {
-      editorState.currentContent = rawAssTextarea.value;
-      editorState.isDirty = true;
-      if (btnDrawerRevert) btnDrawerRevert.disabled = false;
-      if (btnSaveAssDrawer) btnSaveAssDrawer.disabled = false;
-      if (btnSaveAssEditor) btnSaveAssEditor.disabled = false;
-      updateDrawerStatus("Modified (unsaved)", "modified");
-      updateEditorStatus("Unsaved changes in raw ASS script", "modified");
-    });
-  }
-
-  if (tabDialogueView && tabRawView) {
-    tabDialogueView.addEventListener("click", () => switchEditorTab("dialogue"));
-    tabRawView.addEventListener("click", () => switchEditorTab("raw"));
-  }
-
-  function renderDialogueEditorItems(dialogues) {
-    if (!dialogueListContainer) return;
-    dialogueListContainer.innerHTML = "";
-
-    if (!dialogues || dialogues.length === 0) {
-      dialogueListContainer.innerHTML = `
-        <div style="text-align: center; padding: 40px; color: var(--text-muted);">
-          <p>No standard dialogue lines detected. Switch to the <strong>Raw .ASS Script</strong> tab to edit the file directly.</p>
-        </div>
-      `;
+    if (!filePath && !taskId && !mediaPath) {
+      updateAssHubUIEmpty();
       return;
     }
 
-    dialogues.forEach((item, index) => {
-      const row = document.createElement("div");
-      row.className = "dialogue-item-row";
-      row.dataset.lineIndex = item.line_index;
+    try {
+      const queryParams = [];
+      if (filePath) queryParams.push(`path=${encodeURIComponent(filePath)}`);
+      if (taskId) queryParams.push(`task_id=${encodeURIComponent(taskId)}`);
+      if (mediaPath) queryParams.push(`media_path=${encodeURIComponent(mediaPath)}`);
 
-      // Speaker badge for multi-speaker mode
-      let speakerBadgeHtml = "";
-      if (state.isMultiSpeaker && state.speakerCount >= 2 && state.speakerChannels) {
-        const spkKeys = Object.keys(state.speakerChannels);
-        const curSpkId = item.speaker || spkKeys[0];
-        const spkChan = state.speakerChannels[curSpkId] || state.speakerChannels[spkKeys[0]];
-        const spkColor = (spkChan && spkChan.highlight_color) || "#FFDF00";
-        const spkName = (spkChan && spkChan.name) || curSpkId;
-        speakerBadgeHtml = `
-          <button type="button" class="drawer-speaker-badge modal-speaker-badge" title="Click to cycle speaker channel for Line ${index + 1}">
-            <span class="drawer-speaker-dot" style="background:${spkColor};"></span>
-            <span>${spkName}</span>
-          </button>
-        `;
+      const res = await fetch(`/api/ass-file-info?${queryParams.join('&')}`);
+      if (!res.ok) {
+        if (!options.silent) updateAssHubUIEmpty();
+        return;
       }
+      const data = await res.json();
+      state.existingAssPath = data.path;
+      state.hasExistingAss = true;
+      state.existingAssName = data.filename;
 
-      row.innerHTML = `
-        <div class="dialogue-meta-row">
-          <span class="dialogue-time-badge">⏱ ${item.start} → ${item.end}</span>
-          <span class="dialogue-line-num">Line ${index + 1} (${item.style || 'Default'})</span>
-          ${speakerBadgeHtml}
-        </div>
-        <input type="text" class="dialogue-input" value="${item.clean_text.replace(/"/g, '&quot;')}" placeholder="Enter corrected spoken text...">
-      `;
+      updateAssHubUIPopulated(data);
 
-      const modalBadgeBtn = row.querySelector(".modal-speaker-badge");
-      if (modalBadgeBtn) {
-        modalBadgeBtn.addEventListener("click", () => {
-          const spkKeys = Object.keys(state.speakerChannels);
-          if (spkKeys.length < 2) return;
-          const currentSpk = item.speaker || spkKeys[0];
-          const curIdx = spkKeys.indexOf(currentSpk);
-          const nextSpkId = spkKeys[(curIdx + 1) % spkKeys.length];
-          const nextChan = state.speakerChannels[nextSpkId];
-
-          item.speaker = nextSpkId;
-          item.style = `Speaker_${nextSpkId}`;
-
-          const dot = modalBadgeBtn.querySelector(".drawer-speaker-dot");
-          if (dot) dot.style.background = nextChan.highlight_color || "#FFDF00";
-          const label = modalBadgeBtn.querySelector("span:last-child");
-          if (label) label.textContent = nextChan.name || nextSpkId;
-
-          const numSpan = row.querySelector(".dialogue-line-num");
-          if (numSpan) numSpan.textContent = `Line ${index + 1} (${item.style})`;
-
-          editorState.isDirty = true;
-          updateEditorStatus(`Reassigned Line ${index + 1} to ${nextChan.name || nextSpkId}`, "warning");
-
-          const allLines = editorState.currentContent.split("\n");
-          const targetLine = allLines[item.line_index];
-          if (targetLine && targetLine.startsWith("Dialogue:")) {
-            const parts = targetLine.split(",", 9);
-            if (parts.length >= 9) {
-              const rawTextAfter = targetLine.slice(parts.join(",").length + 1);
-              parts[3] = `Speaker_${nextSpkId}`;
-              parts[4] = nextChan.name || nextSpkId;
-              allLines[item.line_index] = parts.join(",") + "," + rawTextAfter;
-              editorState.currentContent = allLines.join("\n");
-              if (rawAssTextarea) rawAssTextarea.value = editorState.currentContent;
-            }
-          }
-        });
-      }
-
-      const input = row.querySelector(".dialogue-input");
-      input.addEventListener("input", (e) => {
-        item.clean_text = e.target.value;
-        editorState.isDirty = true;
-        updateEditorStatus("Unsaved edits in dialogue lines", "warning");
-
-        const allLines = editorState.currentContent.split("\n");
-        const targetLine = allLines[item.line_index];
-        if (targetLine && targetLine.startsWith("Dialogue:")) {
-          const parts = targetLine.split(",", 9);
-          if (parts.length >= 9) {
-            const rawTextAfter = targetLine.slice(parts.join(",").length + 1);
-            allLines[item.line_index] = parts.join(",") + "," + replaceDialogueTextPreservingTags(rawTextAfter, e.target.value);
-            editorState.currentContent = allLines.join("\n");
-            if (rawAssTextarea) rawAssTextarea.value = editorState.currentContent;
-          }
-        }
-      });
-
-      dialogueListContainer.appendChild(row);
-    });
+      // Also refresh stage preview dialogue so interactive canvas is updated
+      loadDialogueTranscriptForStage({ taskId, mediaPath, assPath: data.path });
+    } catch (err) {
+      console.warn("Could not refresh ASS file info from disk:", err);
+      if (!options.silent) updateAssHubUIEmpty();
+    }
   }
 
-  async function openAssEditorModal(target) {
-    let taskId = null;
-    let mediaPath = state.videoPath || "";
-    let assPath = state.existingAssPath || "";
+  function updateAssHubUIEmpty() {
+    if (assFileStatusBadge) {
+      assFileStatusBadge.textContent = "No .ass file loaded";
+      assFileStatusBadge.className = "ass-file-status-badge";
+    }
+    if (assFilenameDisplay) assFilenameDisplay.textContent = "No subtitle file generated";
+    if (assFilePathDisplay) assFilePathDisplay.textContent = 'Load a video or click "Generate Subtitles" to create .ass file';
+    if (assDialogueCountDisplay) assDialogueCountDisplay.textContent = "—";
+    if (assFileSizeDisplay) assFileSizeDisplay.textContent = "—";
+    if (assMtimeDisplay) assMtimeDisplay.textContent = "—";
+    if (chipStep2Count) chipStep2Count.textContent = "0 lines";
 
-    if (typeof target === "string") {
-      taskId = target;
-    } else if (target && typeof target === "object") {
-      taskId = target.taskId || null;
-      mediaPath = target.mediaPath || mediaPath;
-      assPath = target.assPath || assPath;
-    } else {
-      taskId = state.currentTaskId || null;
+    if (btnOpenInTextEditor) btnOpenInTextEditor.disabled = true;
+    if (btnShowInFileManager) btnShowInFileManager.disabled = true;
+    if (btnCopyAssPath) btnCopyAssPath.disabled = true;
+    if (btnRefreshAssFromDisk) btnRefreshAssFromDisk.disabled = true;
+  }
+
+  function updateAssHubUIPopulated(info) {
+    if (assFileStatusBadge) {
+      assFileStatusBadge.textContent = "Ready on Disk";
+      assFileStatusBadge.className = "ass-file-status-badge badge-ready";
+    }
+    if (assFilenameDisplay) assFilenameDisplay.textContent = info.filename || "subtitles.ass";
+    if (assFilePathDisplay) assFilePathDisplay.textContent = info.path || "";
+    if (assDialogueCountDisplay) assDialogueCountDisplay.textContent = `${info.dialogue_count || 0} lines`;
+    if (assFileSizeDisplay) assFileSizeDisplay.textContent = `${info.size_kb || 0} KB`;
+
+    if (info.mtime && assMtimeDisplay) {
+      const date = new Date(info.mtime * 1000);
+      assMtimeDisplay.textContent = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+    if (chipStep2Count) {
+      chipStep2Count.textContent = `${info.dialogue_count || 0} lines`;
     }
 
-    editorState.taskId = taskId;
-    editorState.mediaPath = mediaPath;
-    editorState.assPath = assPath;
+    if (btnOpenInTextEditor) btnOpenInTextEditor.disabled = false;
+    if (btnShowInFileManager) btnShowInFileManager.disabled = false;
+    if (btnCopyAssPath) btnCopyAssPath.disabled = false;
+    if (btnRefreshAssFromDisk) btnRefreshAssFromDisk.disabled = false;
 
-    if (modalAssEditor) modalAssEditor.classList.remove("hidden");
-    updateEditorStatus("Loading subtitles from server...", "normal");
+    updateWorkflowStepper('subtitles_ready');
+    if (btnBurnOnly) btnBurnOnly.classList.remove('disabled');
+  }
+
+  async function loadDialogueTranscriptForStage(options = {}) {
+    let taskId = options.taskId || state.currentTaskId;
+    let mediaPath = options.mediaPath || state.videoPath || "";
+    let assPath = options.assPath || state.existingAssPath || "";
 
     try {
       let url = "";
@@ -3854,19 +4712,15 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const res = await fetch(url);
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.detail || "Could not load subtitle file");
-      }
+      if (!res.ok) return;
       const data = await res.json();
+      state.dialogues = data.dialogues || [];
 
-      editorState.initialContent = data.content;
-      editorState.currentContent = data.content;
-      editorState.dialogues = data.dialogues || [];
-      editorState.isDirty = false;
-      editorState.filePath = data.file_path;
+      if (data.speaker_samples) {
+        state.speakerSamples = data.speaker_samples;
+        updateSpeakerSampleUI();
+      }
 
-      // Update speaker channels based on detected speakers
       const spkCount = data.speaker_count || (data.detected_speakers ? data.detected_speakers.length : 1);
       const isMulti = Boolean(data.is_multi_speaker || spkCount > 1);
       if (isMulti) {
@@ -3877,42 +4731,32 @@ document.addEventListener("DOMContentLoaded", () => {
         updateSpeakerControlsVisibility(1);
       }
 
-      if (editorFilenameBadge) editorFilenameBadge.textContent = data.filename || "subtitles.ass";
-      if (rawAssTextarea) rawAssTextarea.value = data.content;
-      renderDialogueEditorItems(editorState.dialogues);
-      switchEditorTab("dialogue");
-      updateEditorStatus("Ready to edit • Click Save when done", "normal");
-    } catch (err) {
-      console.error("Failed to load ASS content:", err);
-      updateEditorStatus(`Error: ${err.message}`, "error");
-    }
-  }
-
-  function closeAssEditorModal() {
-    if (editorState.isDirty) {
-      if (!confirm("You have unsaved changes. Discard and close editor?")) {
-        return;
+      if (state.dialogues && state.dialogues.length > 0) {
+        if (btnTextDefault) {
+          btnTextDefault.disabled = false;
+          btnTextDefault.classList.remove("disabled");
+          btnTextDefault.title = "Preview subtitle text from dialogue";
+        }
+        if (state.dialogues[0].clean_text && (!state.previewText || state.previewText.startsWith("Lorem ipsum"))) {
+          const cleanPhrase = state.dialogues[0].clean_text.replace(/\\N/gi, " ").replace(/\\h/gi, " ").replace(/\s+/g, " ").trim();
+          state.previewText = cleanPhrase;
+          if (previewTextInput) previewTextInput.value = cleanPhrase;
+          if (btnTextDefault) {
+            btnTextDefault.textContent = "Dialog Transcript";
+            btnTextDefault.classList.add("active");
+          }
+          if (btnTextLorem) btnTextLorem.classList.remove("active");
+          state.activeWordIndex = 0;
+          renderSubtitlePreview();
+        }
       }
+    } catch (err) {
+      console.warn("Could not load dialogue transcript for stage:", err);
     }
-    if (modalAssEditor) modalAssEditor.classList.add("hidden");
-  }
-
-  if (btnCloseAssModal) btnCloseAssModal.addEventListener("click", closeAssEditorModal);
-  if (btnCancelAssEditor) btnCancelAssEditor.addEventListener("click", closeAssEditorModal);
-
-  if (btnResetAssEditor) {
-    btnResetAssEditor.addEventListener("click", () => {
-      if (!confirm("Revert all edits back to initially loaded subtitles?")) return;
-      openAssEditorModal({
-        taskId: editorState.taskId,
-        assPath: editorState.assPath,
-        mediaPath: editorState.mediaPath
-      });
-    });
   }
 
   // ----------------------------------------------------
-  // Studio Stepper & Subtitle Review Drawer Controllers
+  // Studio Stepper Controller
   // ----------------------------------------------------
   function updateWorkflowStepper(stage) {
     if (!wfStep1 || !wfStep2 || !wfStep3) return;
@@ -3937,8 +4781,9 @@ document.addEventListener("DOMContentLoaded", () => {
       wfStep1.className = 'wf-step completed';
       wfStep2.className = 'wf-step active';
       wfStep3.className = 'wf-step';
+      const count = (state.dialogues ? state.dialogues.length : 0);
       if (chipPipelineStatus) {
-        chipPipelineStatus.textContent = `Subtitles Ready (${editorState.dialogues.length} lines)`;
+        chipPipelineStatus.textContent = count > 0 ? `Subtitles Ready (${count} lines)` : 'Subtitles Ready';
         chipPipelineStatus.className = 'pipeline-chip chip-success';
       }
       if (btnBurnOnly) {
@@ -3946,7 +4791,7 @@ document.addEventListener("DOMContentLoaded", () => {
         btnBurnOnly.title = 'Click to burn subtitles into video with GPU NVENC';
       }
       if (titleGenerateAss) titleGenerateAss.textContent = 'Re-Transcribe Subtitles (.ass format)';
-      if (descGenerateAss) descGenerateAss.textContent = 'Generate text from speech. You can edit the transcription in Step 2.';
+      if (descGenerateAss) descGenerateAss.textContent = 'Generate text from speech. Open in editor or file manager in Step 2.';
     } else if (stage === 'burning') {
       wfStep1.className = 'wf-step completed';
       wfStep2.className = 'wf-step completed';
@@ -3969,395 +4814,116 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  function updateDrawerStatus(text, type = "normal") {
-    if (!drawerStatusText) return;
-    drawerStatusText.textContent = text;
-    if (drawerStatusDot) {
-      drawerStatusDot.className = "drawer-status-dot";
-      if (type === "warning") drawerStatusDot.classList.add("dot-warning");
-      else if (type === "error") drawerStatusDot.classList.add("dot-error");
-    }
-  }
-
-  function renderDrawerDialogueItems(dialogues) {
-    if (!drawerDialogueList) return;
-    drawerDialogueList.innerHTML = "";
-
-    if (!dialogues || dialogues.length === 0) {
-      if (drawerEmptyState) drawerEmptyState.classList.remove("hidden");
-      if (drawerDialogueList) drawerDialogueList.classList.add("hidden");
-      if (drawerFooter) drawerFooter.classList.add("hidden");
-      if (drawerLineCountBadge) {
-        drawerLineCountBadge.textContent = "0 lines";
-        drawerLineCountBadge.classList.remove("has-lines");
+  // ----------------------------------------------------
+  // External Text Editor & File Manager Actions
+  // ----------------------------------------------------
+  if (btnOpenInTextEditor) {
+    btnOpenInTextEditor.addEventListener("click", async () => {
+      const target = state.existingAssPath;
+      if (!target) {
+        alert("No .ass subtitle file available on disk yet.\n\nPlease generate subtitles first in Step 1.");
+        return;
       }
-      if (chipStep2Count) {
-        chipStep2Count.textContent = "0 lines";
-      }
-      return;
-    }
+      try {
+        btnOpenInTextEditor.disabled = true;
+        const origHtml = btnOpenInTextEditor.innerHTML;
+        btnOpenInTextEditor.innerHTML = `<svg class="spin-icon" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="10"></circle></svg> Opening editor...`;
 
-    if (drawerEmptyState) drawerEmptyState.classList.add("hidden");
-    if (drawerDialogueList) drawerDialogueList.classList.remove("hidden");
-    if (drawerFooter) drawerFooter.classList.remove("hidden");
-    if (drawerLineCountBadge) {
-      drawerLineCountBadge.textContent = `${dialogues.length} lines`;
-      drawerLineCountBadge.classList.add("has-lines");
-    }
-    if (chipStep2Count) {
-      chipStep2Count.textContent = `${dialogues.length} lines`;
-    }
-
-    const query = (drawerSearchInput ? drawerSearchInput.value.toLowerCase().trim() : "");
-
-    dialogues.forEach((item, index) => {
-      const row = document.createElement("div");
-      row.className = "drawer-line-row";
-      row.dataset.lineIndex = item.line_index;
-
-      if (query && !item.clean_text.toLowerCase().includes(query)) {
-        row.style.display = "none";
-      }
-
-      // Speaker badge for multi-speaker mode
-      let speakerBadgeHtml = "";
-      if (state.isMultiSpeaker && state.speakerCount >= 2 && state.speakerChannels) {
-        const spkKeys = Object.keys(state.speakerChannels);
-        const curSpkId = item.speaker || spkKeys[0];
-        const spkChan = state.speakerChannels[curSpkId] || state.speakerChannels[spkKeys[0]];
-        const spkColor = (spkChan && spkChan.highlight_color) || "#FFDF00";
-        const spkName = (spkChan && spkChan.name) || curSpkId;
-        speakerBadgeHtml = `
-          <button type="button" class="drawer-speaker-badge" title="Click to cycle speaker channel for Line ${index + 1}">
-            <span class="drawer-speaker-dot" style="background:${spkColor};"></span>
-            <span>${spkName}</span>
-          </button>
-        `;
-      }
-
-      row.innerHTML = `
-        <div class="drawer-line-meta">
-          <span class="drawer-time-badge">⏱ ${item.start} → ${item.end}</span>
-          <span class="drawer-line-number">Line ${index + 1} (${item.style || 'Default'})</span>
-          ${speakerBadgeHtml}
-        </div>
-        <input type="text" class="drawer-line-input" value="${item.clean_text.replace(/"/g, '&quot;')}" placeholder="Edit spoken phrase...">
-      `;
-
-      // Cycle speaker on badge click
-      const badgeBtn = row.querySelector(".drawer-speaker-badge");
-      if (badgeBtn) {
-        badgeBtn.addEventListener("click", () => {
-          const spkKeys = Object.keys(state.speakerChannels);
-          if (spkKeys.length < 2) return;
-          const currentSpk = item.speaker || spkKeys[0];
-          const curIdx = spkKeys.indexOf(currentSpk);
-          const nextSpkId = spkKeys[(curIdx + 1) % spkKeys.length];
-          const nextChan = state.speakerChannels[nextSpkId];
-
-          item.speaker = nextSpkId;
-          item.style = `Speaker_${nextSpkId}`;
-
-          const dot = badgeBtn.querySelector(".drawer-speaker-dot");
-          if (dot) dot.style.background = nextChan.highlight_color || "#FFDF00";
-          const label = badgeBtn.querySelector("span:last-child");
-          if (label) label.textContent = nextChan.name || nextSpkId;
-
-          const numSpan = row.querySelector(".drawer-line-number");
-          if (numSpan) numSpan.textContent = `Line ${index + 1} (${item.style})`;
-
-          editorState.isDirty = true;
-          updateDrawerStatus(`Reassigned Line ${index + 1} to ${nextChan.name || nextSpkId}`, "warning");
-          if (btnDrawerRevert) btnDrawerRevert.disabled = false;
-
-          // Sync raw ASS script content
-          const allLines = editorState.currentContent.split("\n");
-          const targetLine = allLines[item.line_index];
-          if (targetLine && targetLine.startsWith("Dialogue:")) {
-            const parts = targetLine.split(",", 9);
-            if (parts.length >= 9) {
-              const rawTextAfter = targetLine.slice(parts.join(",").length + 1);
-              parts[3] = `Speaker_${nextSpkId}`;
-              parts[4] = nextChan.name || nextSpkId;
-              allLines[item.line_index] = parts.join(",") + "," + rawTextAfter;
-              editorState.currentContent = allLines.join("\n");
-              if (rawAssTextarea) rawAssTextarea.value = editorState.currentContent;
-              if (codeBodyPreview) codeBodyPreview.textContent = editorState.currentContent.split("\n").slice(0, 60).join("\n");
-            }
-          }
+        const res = await fetch("/api/open-file", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ file_path: target, task_id: state.currentTaskId, media_path: state.videoPath })
         });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed to launch text editor");
+
+        btnOpenInTextEditor.innerHTML = `✓ Opened in Text Editor!`;
+        setTimeout(() => {
+          btnOpenInTextEditor.innerHTML = origHtml;
+          btnOpenInTextEditor.disabled = false;
+        }, 2200);
+      } catch (err) {
+        alert(`Could not launch default text editor:\n${err.message}`);
+        btnOpenInTextEditor.disabled = false;
+        btnOpenInTextEditor.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg> <span>Open in Text Editor</span>`;
       }
-
-      const input = row.querySelector(".drawer-line-input");
-      input.addEventListener("input", (e) => {
-        item.clean_text = e.target.value;
-        editorState.isDirty = true;
-        updateDrawerStatus("Unsaved edits in subtitle lines", "warning");
-        if (btnDrawerRevert) btnDrawerRevert.disabled = false;
-
-        // Keep raw ASS script content in sync
-        const allLines = editorState.currentContent.split("\n");
-        const targetLine = allLines[item.line_index];
-        if (targetLine && targetLine.startsWith("Dialogue:")) {
-          const parts = targetLine.split(",", 9);
-          if (parts.length >= 9) {
-            const rawTextAfter = targetLine.slice(parts.join(",").length + 1);
-            allLines[item.line_index] = parts.join(",") + "," + replaceDialogueTextPreservingTags(rawTextAfter, e.target.value);
-            editorState.currentContent = allLines.join("\n");
-            if (rawAssTextarea) rawAssTextarea.value = editorState.currentContent;
-            if (codeBodyPreview) codeBodyPreview.textContent = editorState.currentContent.split("\n").slice(0, 60).join("\n");
-          }
-        }
-      });
-
-      drawerDialogueList.appendChild(row);
     });
   }
 
-  async function loadDrawerSubtitles(target) {
-    let taskId = null;
-    let mediaPath = state.videoPath || "";
-    let assPath = state.existingAssPath || "";
-
-    if (typeof target === "string") {
-      if (target.endsWith(".ass") || target.includes("/")) {
-        mediaPath = target;
-      } else {
-        taskId = target;
+  if (btnShowInFileManager) {
+    btnShowInFileManager.addEventListener("click", async () => {
+      const target = state.existingAssPath;
+      if (!target) {
+        alert("No .ass subtitle file available on disk yet.\n\nPlease generate subtitles first in Step 1.");
+        return;
       }
-    } else if (target && typeof target === "object") {
-      taskId = target.taskId || null;
-      mediaPath = target.mediaPath || mediaPath;
-      assPath = target.assPath || assPath;
-    }
+      try {
+        btnShowInFileManager.disabled = true;
+        const origHtml = btnShowInFileManager.innerHTML;
+        btnShowInFileManager.innerHTML = `<svg class="spin-icon" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="10"></circle></svg> Opening folder...`;
 
-    try {
-      let url = "";
-      if (taskId) {
-        url = `/api/ass-content/${encodeURIComponent(taskId)}`;
-        if (mediaPath) url += `?media_path=${encodeURIComponent(mediaPath)}`;
-      } else {
-        url = `/api/ass-content?media_path=${encodeURIComponent(mediaPath)}`;
-        if (assPath) url += `&ass_path=${encodeURIComponent(assPath)}`;
+        const res = await fetch("/api/open-folder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ file_path: target, task_id: state.currentTaskId, media_path: state.videoPath })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed to launch file manager");
+
+        btnShowInFileManager.innerHTML = `✓ Opened in File Manager!`;
+        setTimeout(() => {
+          btnShowInFileManager.innerHTML = origHtml;
+          btnShowInFileManager.disabled = false;
+        }, 2200);
+      } catch (err) {
+        alert(`Could not launch file manager:\n${err.message}`);
+        btnShowInFileManager.disabled = false;
+        btnShowInFileManager.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg> <span>Show in File Manager</span>`;
       }
-
-      const res = await fetch(url);
-      if (!res.ok) return;
-      const data = await res.json();
-
-      editorState.taskId = taskId;
-      editorState.mediaPath = mediaPath;
-      editorState.assPath = data.file_path;
-      editorState.filePath = data.file_path;
-      editorState.initialContent = data.content;
-      editorState.currentContent = data.content;
-      editorState.dialogues = data.dialogues || [];
-      editorState.isDirty = false;
-
-      state.existingAssPath = data.file_path;
-      state.hasExistingAss = true;
-
-      if (data.speaker_samples) {
-        state.speakerSamples = data.speaker_samples;
-        updateSpeakerSampleUI();
-      }
-
-      // Update speaker channels based on detected speakers
-      const spkCount = data.speaker_count || (data.detected_speakers ? data.detected_speakers.length : 1);
-      const isMulti = Boolean(data.is_multi_speaker || spkCount > 1);
-      if (isMulti) {
-        state.isMultiSpeaker = true;
-        updateSpeakerControlsVisibility(spkCount, data.detected_speakers);
-      } else {
-        state.isMultiSpeaker = false;
-        updateSpeakerControlsVisibility(1);
-      }
-
-      state.hasExistingAss = true;
-      state.existingAssName = data.filename || (data.file_path ? data.file_path.split("/").pop() : null);
-      if (data.has_burned_video && (data.video_filename || data.video_file)) {
-        state.lastBurnedVideoPath = data.video_file;
-        state.lastBurnedVideoFilename = data.video_filename || (data.video_file ? data.video_file.split("/").pop() : null);
-      }
-      syncDeliverableFilenames();
-
-      renderDrawerDialogueItems(editorState.dialogues);
-      updateDrawerStatus('Subtitles ready • Click any row to edit', 'normal');
-      updateWorkflowStepper(data.has_burned_video ? 'burned' : 'subtitles_ready');
-
-      // Update preview text to dialogue line 1 if available
-      if (editorState.dialogues && editorState.dialogues.length > 0) {
-        if (btnTextDefault) {
-          btnTextDefault.disabled = false;
-          btnTextDefault.classList.remove("disabled");
-          btnTextDefault.title = "Preview subtitle text from dialogue";
-        }
-        if (editorState.dialogues[0].clean_text) {
-          const cleanPhrase = editorState.dialogues[0].clean_text.replace(/\\N/gi, " ").replace(/\\h/gi, " ").replace(/\s+/g, " ").trim();
-          state.previewText = cleanPhrase;
-          if (previewTextInput) previewTextInput.value = cleanPhrase;
-          if (btnTextDefault) {
-            btnTextDefault.textContent = "Dialog Transcript";
-            btnTextDefault.classList.add("active");
-          }
-          if (btnTextLorem) btnTextLorem.classList.remove("active");
-          state.activeWordIndex = 0;
-          renderSubtitlePreview();
-        }
-      }
-
-      if (cardSubtitleDrawer && cardSubtitleDrawer.classList.contains("collapsed")) {
-        cardSubtitleDrawer.classList.remove("collapsed");
-      }
-    } catch (err) {
-      console.error("Could not load subtitles into drawer:", err);
-    }
+    });
   }
 
-  async function saveAssSubtitles() {
-    if (editorState.activeTab === "raw" && rawAssTextarea) {
-      editorState.currentContent = rawAssTextarea.value;
-    }
-
-    updateDrawerStatus("Saving subtitles to disk...", "normal");
-    updateEditorStatus("Saving subtitles to server...", "normal");
-    if (btnSaveAssEditor) btnSaveAssEditor.disabled = true;
-
-    try {
-      const payload = {
-        content: editorState.currentContent,
-        reburn_video: false,
-        media_path: editorState.mediaPath || state.videoPath,
-        ass_path: editorState.assPath || state.existingAssPath,
-        output_filename: state.outputFilename,
-        styling: getCurrentStylingPayload(),
-        styling_modified: !!state.stylingModified
-      };
-
-      const saveUrl = editorState.taskId
-        ? `/api/ass-content/${encodeURIComponent(editorState.taskId)}`
-        : `/api/ass-content`;
-
-      const res = await fetch(saveUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+  if (btnCopyAssPath) {
+    btnCopyAssPath.addEventListener("click", () => {
+      const target = state.existingAssPath;
+      if (!target) return;
+      navigator.clipboard.writeText(target).then(() => {
+        const origHtml = btnCopyAssPath.innerHTML;
+        btnCopyAssPath.innerHTML = `✓ Path Copied!`;
+        setTimeout(() => {
+          btnCopyAssPath.innerHTML = origHtml;
+        }, 2000);
       });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || "Failed to save subtitles");
-      }
-      const data = await res.json();
-
-      editorState.initialContent = editorState.currentContent;
-      editorState.isDirty = false;
-      state.stylingModified = false;
-      if (data.file_path) {
-        state.existingAssPath = data.file_path;
-        state.hasExistingAss = true;
-      }
-      updateDrawerStatus(`✓ Subtitles saved to ${data.filename || 'file'}!`, "normal");
-      updateEditorStatus("Saved successfully!", "success");
-
-      if (btnDrawerRevert) btnDrawerRevert.disabled = true;
-      if (codeBodyPreview && data.preview) {
-        codeBodyPreview.textContent = data.preview;
-      }
-      if (data.filename) {
-        state.existingAssName = data.filename;
-        state.hasExistingAss = true;
-      }
-      syncDeliverableFilenames();
-      renderDrawerDialogueItems(editorState.dialogues);
-
-      if (modalAssEditor && !modalAssEditor.classList.contains("hidden")) {
-        setTimeout(() => { modalAssEditor.classList.add("hidden"); }, 500);
-      }
-    } catch (err) {
-      console.error("Save error:", err);
-      updateDrawerStatus(`Save failed: ${err.message}`, "error");
-      updateEditorStatus(`Save failed: ${err.message}`, "error");
-    } finally {
-      if (btnSaveAssEditor) btnSaveAssEditor.disabled = false;
-    }
+    });
   }
 
-  // Drawer event bindings
+  if (btnRefreshAssFromDisk) {
+    btnRefreshAssFromDisk.addEventListener("click", async () => {
+      const origHtml = btnRefreshAssFromDisk.innerHTML;
+      btnRefreshAssFromDisk.innerHTML = `<svg class="spin-icon" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="10"></circle></svg> Checking disk...`;
+      await refreshAssFileInfo({ filePath: state.existingAssPath, taskId: state.currentTaskId, mediaPath: state.videoPath });
+      btnRefreshAssFromDisk.innerHTML = `✓ Reloaded from Disk!`;
+      setTimeout(() => {
+        btnRefreshAssFromDisk.innerHTML = origHtml;
+      }, 1800);
+    });
+  }
+
   if (btnFocusStep2) {
     btnFocusStep2.addEventListener("click", () => {
-      if (cardSubtitleDrawer) {
-        cardSubtitleDrawer.classList.remove("collapsed");
-        cardSubtitleDrawer.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      }
-      if (drawerSearchInput) {
-        drawerSearchInput.focus();
-      }
-    });
-  }
-
-  if (drawerHeaderToggle) {
-    drawerHeaderToggle.addEventListener("click", () => {
-      cardSubtitleDrawer.classList.toggle("collapsed");
-    });
-  }
-
-  if (drawerSearchInput) {
-    drawerSearchInput.addEventListener("input", () => {
-      renderDrawerDialogueItems(editorState.dialogues);
-    });
-  }
-
-  if (btnDrawerOpenModal) {
-    btnDrawerOpenModal.addEventListener("click", () => {
-      openAssEditorModal({
-        taskId: editorState.taskId,
-        assPath: editorState.assPath,
-        mediaPath: editorState.mediaPath
-      });
-    });
-  }
-
-  if (btnDrawerRevert) {
-    btnDrawerRevert.addEventListener("click", () => {
-      if (!confirm("Revert all edits back to initially loaded subtitles?")) return;
-      loadDrawerSubtitles(editorState.assPath || state.existingAssPath);
-    });
-  }
-
-  if (btnDrawerBurn) {
-    btnDrawerBurn.addEventListener("click", () => executeBurnVideo());
-  }
-
-  if (btnModalSaveAndBurn) {
-    btnModalSaveAndBurn.addEventListener("click", () => executeBurnVideo());
-  }
-
-  if (btnSaveAssEditor) {
-    btnSaveAssEditor.addEventListener("click", () => saveAssSubtitles());
-  }
-
-  if (btnOpenAssEditor) {
-    btnOpenAssEditor.addEventListener("click", () => {
-      if (state.hasExistingAss || state.currentTaskId) {
-        openAssEditorModal({
-          taskId: state.currentTaskId,
-          assPath: state.existingAssPath,
-          mediaPath: state.videoPath
-        });
-      } else {
-        alert("No .ass subtitle file found yet for this media.\n\nPlease click 'Generate Subtitles (.ass)' to create subtitles first.");
+      if (cardAssFileHub) {
+        cardAssFileHub.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }
     });
   }
 
   if (btnEditAssResults) {
     btnEditAssResults.addEventListener("click", () => {
-      openAssEditorModal({
-        taskId: state.currentTaskId,
-        assPath: state.existingAssPath,
-        mediaPath: state.videoPath
-      });
+      if (btnOpenInTextEditor && !btnOpenInTextEditor.disabled) {
+        btnOpenInTextEditor.click();
+      } else if (cardAssFileHub) {
+        cardAssFileHub.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
     });
   }
 
@@ -4417,6 +4983,7 @@ document.addEventListener("DOMContentLoaded", () => {
   updateStageVisibility();
   renderSubtitlePreview();
   renderSocialOverlay();
+  renderVocabChips();
   syncDeliverableFilenames();
   if (state.videoPath) {
     loadVideoInfo(state.videoPath);

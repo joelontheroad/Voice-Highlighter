@@ -218,6 +218,83 @@ def get_video_metadata(video_path: str) -> dict[str, Any]:
     }
 
 
+def extract_video_frame_at_timestamp(
+    video_path: str,
+    output_image_path: str,
+    timestamp_sec: float = 0.0,
+    scale_width: int | None = None,
+) -> str:
+    """Extract a single video frame at an exact timestamp offset.
+
+    Uses input seeking (-ss before -i) for ultra-fast sub-50ms keyframe seeking.
+
+    Args:
+        video_path: Path to the input video or audio file.
+        output_image_path: Destination path for the extracted JPEG image.
+        timestamp_sec: Offset in seconds from video start.
+        scale_width: Optional target width in pixels for thumbnail generation.
+
+    Returns:
+        The output image path on success.
+    """
+    # SECURITY: Canonicalize output path and verify directory existence
+    os.makedirs(os.path.dirname(os.path.abspath(output_image_path)), exist_ok=True)
+    meta = get_video_metadata(video_path)
+
+    if not meta.get("has_video", True):
+        from PIL import Image, ImageDraw
+
+        target_w = scale_width if scale_width and scale_width > 0 else 1080
+        target_h = int(target_w * 16 / 9) if not scale_width else int(target_w * 9 / 16)
+        img = Image.new("RGB", (target_w, target_h), color=(11, 15, 25))
+        draw = ImageDraw.Draw(img)
+        w, h = img.size
+        draw.rounded_rectangle(
+            [int(w * 0.1), int(h * 0.35), int(w * 0.9), int(h * 0.65)],
+            radius=16,
+            fill=(18, 24, 38),
+            outline=(30, 41, 59),
+            width=2,
+        )
+        img.save(output_image_path, "JPEG", quality=85)
+        return output_image_path
+
+    duration = meta.get("duration", 0.0)
+    if duration > 0:
+        safe_ts = max(0.0, min(float(timestamp_sec), max(0.0, duration - 0.1)))
+    else:
+        safe_ts = max(0.0, float(timestamp_sec))
+
+    ffmpeg = get_ffmpeg_binary()
+    # SECURITY: Execute ffmpeg with discrete argument vector (CWE-78)
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-ss",
+        f"{safe_ts:.3f}",
+        "-i",
+        os.path.abspath(video_path),
+        "-frames:v",
+        "1",
+    ]
+    if scale_width and scale_width > 0:
+        cmd.extend(["-vf", f"scale={int(scale_width)}:-1"])
+
+    cmd.extend(["-q:v", "2", os.path.abspath(output_image_path)])
+
+    try:
+        subprocess.run(cmd, capture_output=True, check=True)
+    except Exception:
+        from PIL import Image
+
+        w = scale_width or 1080
+        h = int(w * 9 / 16)
+        img = Image.new("RGB", (w, h), color=(11, 15, 25))
+        img.save(output_image_path, "JPEG", quality=85)
+
+    return output_image_path
+
+
 def extract_poster_frame(video_path: str, output_image_path: str, timestamp_sec: float = 2.0) -> str:
     """Extract a representative still image or generate an audio placeholder card.
 
@@ -229,40 +306,11 @@ def extract_poster_frame(video_path: str, output_image_path: str, timestamp_sec:
     Returns:
         The output image path on success.
     """
-    # SECURITY: Canonicalize output path and verify directory existence
-    os.makedirs(os.path.dirname(os.path.abspath(output_image_path)), exist_ok=True)
-    meta = get_video_metadata(video_path)
-
-    if not meta.get("has_video", True):
-        from PIL import Image, ImageDraw
-        img = Image.new("RGB", (1080, 1920), color=(11, 15, 25))
-        draw = ImageDraw.Draw(img)
-        draw.rounded_rectangle([140, 700, 940, 1220], radius=40, fill=(18, 24, 38), outline=(30, 41, 59), width=2)
-        img.save(output_image_path, "JPEG", quality=85)
-        return output_image_path
-
-    if meta["duration"] > 0 and timestamp_sec >= meta["duration"]:
-        timestamp_sec = max(0.5, meta["duration"] * 0.1)
-
-    ffmpeg = get_ffmpeg_binary()
-    # SECURITY: Execute ffmpeg with discrete argument vector (CWE-78)
-    cmd = [
-        ffmpeg,
-        "-y",
-        "-ss", str(timestamp_sec),
-        "-i", os.path.abspath(video_path),
-        "-frames:v", "1",
-        "-q:v", "2",
-        os.path.abspath(output_image_path),
-    ]
-    try:
-        subprocess.run(cmd, capture_output=True, check=True)
-    except Exception:
-        from PIL import Image
-        img = Image.new("RGB", (1080, 1920), color=(11, 15, 25))
-        img.save(output_image_path, "JPEG", quality=85)
-
-    return output_image_path
+    return extract_video_frame_at_timestamp(
+        video_path=video_path,
+        output_image_path=output_image_path,
+        timestamp_sec=timestamp_sec,
+    )
 
 
 def extract_audio(video_path: str, output_wav_path: str) -> str:

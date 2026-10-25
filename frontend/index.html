@@ -34,7 +34,6 @@
         </div>
       </div>
       <div class="header-right" style="display: flex; align-items: center; gap: 14px;">
-        <a href="https://github.com/joelontheroad/Voice-Highlighter" target="_blank" rel="noopener noreferrer" class="source-code-link" title="Source Code under GNU AGPLv3">Source Code (GNU AGPLv3)</a>
         <div class="hardware-badge" id="hardwareBadge" title="Detecting rendering engine...">
           <span class="gpu-indicator" id="hardwareIndicator"></span>
           <span id="hardwareBadgeText">Detecting engine...</span>
@@ -52,7 +51,13 @@
         <div class="card-header card-header-start">
           <div class="card-title-row">
             <h2>Video Source</h2>
-            <span class="start-here-badge" id="badgeStartHere">Start Here 📍</span>
+            <span class="start-here-badge" id="badgeStartHere">
+              <span>Start Here</span>
+              <svg class="start-here-arrow" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="12" y1="3" x2="12" y2="19"></line>
+                <polyline points="19 12 12 19 5 12"></polyline>
+              </svg>
+            </span>
           </div>
         </div>
         <div class="card-body">
@@ -113,14 +118,39 @@
             </select>
           </div>
           <p class="model-description-hint">Higher-tier models offer maximum word-level alignment precision for challenging acoustic environments.</p>
-          <div class="form-group-toggle" id="wrapEnableDiarization" style="margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border-subtle, rgba(255,255,255,0.08));">
-            <label class="toggle-checkbox" id="toggleDiarizationWrap" for="checkEnableDiarization" style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
-              <input type="checkbox" id="checkEnableDiarization" style="width: 16px; height: 16px; accent-color: var(--accent, #6366f1); cursor: pointer;">
-              <span style="font-weight: 500; font-size: 0.88rem; color: var(--text-primary, #f8fafc);">👥 Multi-Speaker Voice Separation (Diarization)</span>
-            </label>
-            <p class="model-description-hint" style="margin-top: 4px; margin-left: 26px;">
-              Automatically clusters distinct speakers (1–5 voices) and assigns individual highlight colors offline without cloud tokens.
+          <!-- Word Spelling List (Prevent WhisperX Misspellings) -->
+          <div class="form-group-vocab" id="wrapCustomVocab" style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-subtle, rgba(255,255,255,0.08));">
+            <div class="vocab-header-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <label for="inputCustomVocab" style="font-weight: 600; font-size: 0.88rem; color: var(--text-primary, #f8fafc); display: flex; align-items: center; gap: 6px;">
+                <span>🏷️ Word Spelling List</span>
+              </label>
+              <span class="vocab-count-badge" id="vocabCountBadge" style="font-size: 0.72rem; color: var(--text-muted, #94a3b8);">0 words</span>
+            </div>
+            <p class="model-description-hint" style="margin-bottom: 8px;">
+              Specify correct spellings for names, brands, or specialized terms before creating subtitles.
             </p>
+
+            <!-- Word Entry Row -->
+            <div class="vocab-input-row" style="display: flex; gap: 6px; margin-bottom: 8px;">
+              <input type="text" id="inputCustomVocab" class="text-input" placeholder="Type word/name (e.g. Katie Kam, carburetor)..." style="flex: 1; height: 32px; padding: 4px 10px; font-size: 0.84rem;">
+              <button type="button" class="btn btn-secondary" id="btnAddVocab" style="height: 32px; padding: 0 12px; font-size: 0.82rem; white-space: nowrap;">+ Add Word</button>
+            </div>
+
+            <!-- Active Word Chips List (With In-Place Edit & Delete) -->
+            <div class="vocab-chips-wrap" id="vocabChipsWrap" style="display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; background: rgba(0, 0, 0, 0.25); border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1)); border-radius: 6px; min-height: 44px; align-items: center; margin-bottom: 8px;">
+              <div id="vocabChipsList" style="display: contents;"></div>
+              <span class="vocab-empty-hint" id="vocabEmptyHint" style="font-size: 0.78rem; color: var(--text-muted, #94a3b8); font-style: italic;">No words added yet. Type a word above and click + Add Word.</span>
+            </div>
+
+            <!-- Optional Helpers (No Packs) -->
+            <div class="vocab-helpers-row" style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+              <span style="font-size: 0.72rem; color: var(--text-muted, #94a3b8);">Quick Tools:</span>
+              <button type="button" class="mini-btn" id="btnHarvestFile" title="Import word list from a .txt, .csv, or .json file">📁 From File</button>
+              <input type="file" id="inputVocabFile" accept=".txt,.csv,.json,text/plain,text/csv,application/json" style="display: none;" aria-label="Upload vocabulary word list file">
+              <button type="button" class="mini-btn" id="btnSaveVocabFile" title="Save current word spelling list to a text file (.txt)">💾 Save to File</button>
+              <button type="button" class="mini-btn" id="btnHarvestSpeakers" title="Pull custom speaker names from Multi-Speaker studio">👥 From Speakers</button>
+              <button type="button" class="mini-btn" id="btnClearVocab" title="Clear all words from list" style="margin-left: auto;">🗑️ Clear All</button>
+            </div>
           </div>
         </div>
       </div>
@@ -308,6 +338,9 @@
             <!-- Background Image / Frame -->
             <img id="stagePoster" class="stage-poster hidden" alt="Video frame preview" src="" />
             
+            <!-- HTML5 Video Player Element (for in-browser preview and playback) -->
+            <video id="stageVideo" class="stage-video hidden" playsinline preload="auto"></video>
+            
             <!-- Safe Zone Guide Overlay -->
             <div class="safe-zone-overlay hidden" id="safeZoneOverlay"></div>
 
@@ -326,6 +359,67 @@
               <div class="subtitle-rendered-text" id="subtitleRenderedText">
                 <!-- Word spans populated dynamically by app.js -->
               </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Timeline Frame Scrubber & Scene Jump Tray (Always visible below video canvas) -->
+        <div class="stage-timeline-wrap" id="stageTimelineWrap">
+          <div class="stage-timeline-header">
+            <div class="timeline-playback-controls">
+              <button type="button" class="btn-play-pause" id="btnPlayPause" title="Play video from current playhead position (Space)" disabled aria-label="Play video">
+                <span class="play-icon" id="playIcon">▶</span>
+                <span class="play-label" id="playLabel">Play</span>
+              </button>
+            </div>
+            <div class="timeline-time-readout">
+              <span>⏱️ Scene Time:</span>
+              <span id="timelineCurrentTime">00:00.00</span>
+              <span style="color: var(--text-muted, #94a3b8); font-weight: normal;">/ <span id="timelineTotalDuration">00:00.00</span></span>
+            </div>
+            <div class="timeline-keyframe-controls" id="timelineKeyframeControls">
+              <button type="button" class="mini-btn keyframe-nav-btn" id="btnPrevKeyframe" title="Jump to previous styling keyframe" disabled aria-label="Jump to previous keyframe">⏮️</button>
+              <button type="button" class="mini-btn keyframe-action-btn" id="btnAddKeyframe" title="Add a new styling keyframe at current playhead position" disabled aria-label="Add keyframe at current time">➕ Keyframe</button>
+              <button type="button" class="mini-btn keyframe-action-btn btn-danger-subtle" id="btnDeleteKeyframe" title="Delete keyframe at current playhead position" disabled aria-label="Delete keyframe at current time">🗑️</button>
+              <button type="button" class="mini-btn keyframe-nav-btn" id="btnNextKeyframe" title="Jump to next styling keyframe" disabled aria-label="Jump to next keyframe">⏭️</button>
+              <span class="keyframe-count-badge" id="keyframeCountBadge" style="display: none;">0 Keyframes</span>
+            </div>
+            <div class="timeline-step-btns">
+              <button type="button" class="mini-btn" id="btnStepBack5" title="Step backward 5 seconds" disabled>-5s</button>
+              <button type="button" class="mini-btn" id="btnStepBack1" title="Step backward 1 second" disabled>-1s</button>
+              <button type="button" class="mini-btn" id="btnStepFwd1" title="Step forward 1 second" disabled>+1s</button>
+              <button type="button" class="mini-btn" id="btnStepFwd5" title="Step forward 5 seconds" disabled>+5s</button>
+            </div>
+          </div>
+          <div class="timeline-slider-row">
+            <div class="timeline-track-container" id="timelineTrackContainer">
+              <label for="stageTimelineSlider" class="sr-only">Video Timeline Position</label>
+              <input type="range" id="stageTimelineSlider" class="timeline-slider" min="0" max="100" step="0.1" value="0" aria-label="Video Seek Scrubber" disabled />
+              <div class="timeline-keyframes-track" id="timelineKeyframesTrack" aria-label="Keyframe Markers Track">
+                <!-- Rendered Keyframe Markers Placed Dynamically -->
+              </div>
+            </div>
+          </div>
+
+          <!-- Keyframe Context Indicator Banner -->
+          <div class="timeline-keyframe-banner" id="timelineKeyframeBanner" style="display: none;">
+            <div class="keyframe-banner-info">
+              <span class="keyframe-banner-icon">💎</span>
+              <span class="keyframe-banner-text" id="keyframeBannerText">Keyframe 1 @ 00:00.00: Base Style</span>
+            </div>
+            <div class="keyframe-banner-hint" id="keyframeBannerHint">
+              Styles stay in effect to the right of the timeline until next keyframe
+            </div>
+          </div>
+
+          <!-- 5-Point Scene Snapshot Filmstrip -->
+          <div class="scene-filmstrip-wrap" id="sceneFilmstripWrap">
+            <div class="scene-filmstrip-header">
+              <span style="font-size: 0.72rem; font-weight: 600; color: var(--text-muted, #94a3b8); text-transform: uppercase; letter-spacing: 0.05em;">Quick Scene Checkpoints</span>
+              <span style="font-size: 0.70rem; color: var(--text-muted, #94a3b8);">Click thumbnail to jump stage</span>
+            </div>
+            <div class="scene-filmstrip-tray" id="sceneFilmstripTray">
+              <span class="timeline-empty-hint" id="timelineEmptyHint" style="font-size: 0.74rem; color: var(--text-muted, #94a3b8); font-style: italic; grid-column: span 5; text-align: center; padding: 6px;">Load a video above to scrub scenes and test subtitle placement.</span>
             </div>
           </div>
         </div>
@@ -448,16 +542,16 @@
               </div>
             </button>
 
-            <!-- Step 2: Verify & Edit Jump/Focus Card -->
-            <button type="button" id="btnFocusStep2" class="studio-action-card card-action-step2" title="Inspect & correct dialogue words below before burning">
+            <!-- Step 2: External Editor Hub Jump Card -->
+            <button type="button" id="btnFocusStep2" class="studio-action-card card-action-step2" title="Inspect & edit dialogue in your external text editor before burning">
               <div class="action-card-header">
-                <span class="action-card-icon">✏️</span>
+                <span class="action-card-icon">📝</span>
                 <span class="action-card-badge badge-step2">Step 2</span>
                 <span class="action-card-mini-chip" id="chipStep2Count">0 lines</span>
               </div>
               <div class="action-card-body">
-                <span class="action-card-title" id="titleStep2Overview">Verify & Edit Text</span>
-                <span class="action-card-desc" id="descStep2Overview">Inspect words below. Fix misheard words & spelling before burning.</span>
+                <span class="action-card-title" id="titleStep2Overview">External Editor Hub</span>
+                <span class="action-card-desc" id="descStep2Overview">Open in your favorite text editor (VS Code, Notepad, etc.) or file manager.</span>
               </div>
             </button>
 
@@ -474,59 +568,70 @@
             </button>
           </div>
 
-          <!-- Step 2: Inline Subtitle Review & Fast-Edit Drawer (Integrated Below Steps 1-3) -->
-          <div class="drawer-card integrated-drawer" id="cardSubtitleDrawer">
-            <div class="drawer-header" id="drawerHeaderToggle">
-              <div class="drawer-header-left">
-                <span class="drawer-chevron" id="drawerChevron">▼</span>
-                <div class="drawer-title-group">
-                  <div class="drawer-title-row">
-                    <span class="drawer-step-badge">Step 2</span>
-                    <h2>Subtitle Text Verification & Fast-Edit</h2>
-                    <span class="drawer-count-badge" id="drawerLineCountBadge">0 lines</span>
+          <!-- Step 2: Subtitle File & External Editor Hub -->
+          <div class="card glass-card ass-file-hub-card" id="cardAssFileHub">
+            <div class="ass-file-hub-header">
+              <div class="ass-file-hub-title-row">
+                <span class="drawer-step-badge">Step 2</span>
+                <h3 class="ass-file-hub-title">Subtitle File &amp; External Editor Hub</h3>
+                <span class="ass-file-status-badge" id="assFileStatusBadge">No .ass file loaded</span>
+              </div>
+              <p class="ass-file-hub-desc">
+                Review or correct transcribed dialogue in your favorite text editor (VS Code, Sublime, gedit, Notepad). Subtitle burning loads directly from disk.
+              </p>
+            </div>
+
+            <!-- Prominent File Details Box -->
+            <div class="ass-file-details-box" id="assFileDetailsBox">
+              <div class="ass-file-primary-meta">
+                <div class="ass-file-icon-wrap">
+                  <span class="ass-file-icon">📝</span>
+                </div>
+                <div class="ass-file-identity">
+                  <div class="ass-filename-row">
+                    <span class="ass-filename-label">Active Subtitles:</span>
+                    <span class="ass-filename-badge" id="assFilenameDisplay">No subtitle file generated</span>
                   </div>
-                  <span class="drawer-subhint" id="drawerSubhint">Correct misheard words, proper nouns, or punctuation directly below.</span>
+                  <div class="ass-path-row">
+                    <span class="ass-path-label">Location:</span>
+                    <code class="ass-path-text" id="assFilePathDisplay">Load a video or click "Generate Subtitles" to create .ass file</code>
+                  </div>
                 </div>
               </div>
-              <div class="drawer-header-actions" onclick="event.stopPropagation()">
-                <div class="drawer-search-wrap">
-                  <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                  <input type="text" id="drawerSearchInput" placeholder="Filter dialogue lines..." class="drawer-search-input">
+
+              <!-- Quick File Stats -->
+              <div class="ass-file-stats-strip" id="assFileStatsStrip">
+                <div class="ass-stat-item">
+                  <span class="ass-stat-label">Dialogue Lines:</span>
+                  <strong class="ass-stat-val" id="assDialogueCountDisplay">—</strong>
                 </div>
-                <button type="button" id="btnDrawerOpenModal" class="btn-tool-mini" title="Open large full-screen modal editor">
-                  <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2.2" fill="none"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>
-                  <span>Full Editor</span>
+                <div class="ass-stat-item">
+                  <span class="ass-stat-label">File Size:</span>
+                  <strong class="ass-stat-val" id="assFileSizeDisplay">—</strong>
+                </div>
+                <div class="ass-stat-item">
+                  <span class="ass-stat-label">Last Modified:</span>
+                  <strong class="ass-stat-val" id="assMtimeDisplay">—</strong>
+                </div>
+              </div>
+
+              <!-- Action Buttons Bar -->
+              <div class="ass-file-actions-bar">
+                <button type="button" class="btn btn-primary-gradient btn-action-glow" id="btnOpenInTextEditor" disabled title="Open this .ass file directly in your system default text editor">
+                  <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+                  <span>Open in Text Editor</span>
                 </button>
-              </div>
-            </div>
-
-            <div class="drawer-body" id="drawerBody">
-              <!-- Empty State (Shown when no .ass subtitles loaded yet) -->
-              <div class="drawer-empty-state" id="drawerEmptyState">
-                <div class="empty-state-icon">📄</div>
-                <h3>No Subtitle Transcript Loaded Yet</h3>
-                <p>Click <strong>"Generate Subtitles (.ass format)"</strong> above to run WhisperX, or load a video with an existing .ass file.</p>
-              </div>
-
-              <!-- Populated Dialogue Lines Container -->
-              <div class="drawer-dialogue-list hidden" id="drawerDialogueList">
-                <!-- Dynamically populated dialogue lines -->
-              </div>
-            </div>
-
-            <!-- Drawer Footer Action Bar -->
-            <div class="drawer-footer hidden" id="drawerFooter">
-              <div class="drawer-footer-status">
-                <span class="drawer-status-dot" id="drawerStatusDot"></span>
-                <span id="drawerStatusText">Subtitles ready • Click any row to edit</span>
-              </div>
-              <div class="drawer-footer-actions">
-                <button type="button" id="btnDrawerRevert" class="btn btn-secondary btn-sm" disabled title="Revert edits to disk content">
-                  Revert
+                <button type="button" class="btn btn-secondary" id="btnShowInFileManager" disabled title="Open the folder containing this .ass file in your file manager">
+                  <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                  <span>Show in File Manager</span>
                 </button>
-                <button type="button" id="btnDrawerBurn" class="btn btn-primary-gradient btn-sm btn-drawer-burn" title="Burn current subtitles into video">
-                  <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.2" fill="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                  <span>Burn Video (.mp4)</span>
+                <button type="button" class="btn btn-secondary" id="btnCopyAssPath" disabled title="Copy full filesystem path to clipboard">
+                  <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  <span>Copy File Path</span>
+                </button>
+                <button type="button" class="btn btn-secondary" id="btnRefreshAssFromDisk" disabled title="Check disk for changes made in external text editor">
+                  <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                  <span>Reload from Disk</span>
                 </button>
               </div>
             </div>
@@ -965,77 +1070,6 @@
     </section>
   </main>
 
-  <!-- Subtitle Text Editor Modal -->
-  <div class="modal-overlay hidden" id="modalAssEditor" role="dialog" aria-modal="true" aria-labelledby="modalEditorTitle">
-    <div class="modal-card">
-      <div class="modal-header">
-        <div class="modal-title-wrap">
-          <span class="modal-icon">✏️</span>
-          <div>
-            <h2 id="modalEditorTitle">Subtitle Text Editor</h2>
-            <p class="modal-subtitle">Review & correct WhisperX transcribed words before publishing or downloading</p>
-          </div>
-        </div>
-        <div class="modal-header-actions">
-          <span class="modal-filename-badge" id="editorFilenameBadge">subtitles.ass</span>
-          <button type="button" class="modal-close-btn" id="btnCloseAssModal" aria-label="Close Editor">&times;</button>
-        </div>
-      </div>
-
-      <!-- Editor Mode Tabs -->
-      <div class="editor-tabs-bar">
-        <div class="editor-tab-group">
-          <button type="button" class="editor-tab active" id="tabDialogueView" data-tab="dialogue">
-            <span>📝 Spoken Dialogue Lines</span>
-          </button>
-          <button type="button" class="editor-tab" id="tabRawView" data-tab="raw">
-            <span>📄 Full .ASS Script (Raw)</span>
-          </button>
-        </div>
-        <span class="editor-tab-hint" id="editorTabHint">Edit spoken words directly per sentence line</span>
-      </div>
-
-      <!-- Modal Body -->
-      <div class="modal-body">
-        <!-- Mode 1: Friendly Dialogue Lines List -->
-        <div class="editor-view-pane" id="paneDialogueView">
-          <div class="dialogue-list-wrap" id="dialogueListContainer">
-            <!-- Populated dynamically: lines with timecodes and editable text -->
-          </div>
-        </div>
-
-        <!-- Mode 2: Full Monospace ASS Textarea -->
-        <div class="editor-view-pane hidden" id="paneRawView">
-          <textarea id="rawAssTextarea" class="code-textarea" spellcheck="false" placeholder="Loading subtitle script..."></textarea>
-        </div>
-      </div>
-
-      <!-- Modal Footer -->
-      <div class="modal-footer">
-        <div class="modal-footer-status">
-          <span class="status-indicator-dot" id="editorStatusDot"></span>
-          <span id="editorStatusText">Ready to edit</span>
-        </div>
-        <div class="modal-footer-buttons">
-          <button type="button" id="btnCancelAssEditor" class="btn btn-secondary">Cancel</button>
-          <button type="button" id="btnResetAssEditor" class="btn btn-secondary" title="Revert edits to initially generated content">Reset</button>
-          <button type="button" id="btnSaveAssEditor" class="btn btn-secondary btn-save-editor" title="Save dialogue corrections directly to sibling .ass file and close">
-            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none">
-              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
-              <polyline points="17 21 17 13 7 13 7 21"></polyline>
-              <polyline points="7 3 7 8 15 8"></polyline>
-            </svg>
-            <span>Save Edits & Close</span>
-          </button>
-          <button type="button" id="btnModalSaveAndBurn" class="btn btn-primary-gradient btn-save-and-burn" title="Save subtitles and immediately burn into video">
-            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none">
-              <polygon points="5 3 19 12 5 21 5 3"></polygon>
-            </svg>
-            <span>Save & Burn Video (.mp4)</span>
-          </button>
-        </div>
-      </div>
-    </div>
   <!-- Local Filesystem Browser Modal -->
   <div class="modal-overlay hidden" id="modalFileBrowser" role="dialog" aria-modal="true" aria-labelledby="modalBrowserTitle">
     <div class="modal-card file-browser-modal-card">

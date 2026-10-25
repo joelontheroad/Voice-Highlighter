@@ -83,6 +83,84 @@ My main concern is this: the program is VERY useful as it is for quickly adding 
 
 
 Add your findings to the "Multi Speaker Automated Diarization Plan"
+--------------------------------------------------
+/plan.  Once an .ass file is created, the "Transcript Dialog" button should be active.  (Also, it should be named "Dialog Transcript.") "Subtitle Text Verification  & Fast-edit" should become active. I think these buttons should become active once an .ass file is created even if the user clicked on "Transcribe and Burn" and the program is burning.  Do you think this new functionality can cause problems if the user is editing the .ass file while the program is using it?  Will there be read/write collisions?  Or does ffmpeg ingest the .ass file all at once and does so one time only?
+
+Create an implementation plan.
+--------------
+Add this explanatory text above the text field in the "Live Subititle Preview" section.  "Text that appears as the preview:"
+
+--------------------
+
+/plan  2 second preview works.  
+
+Add this explanatory text above the text field in the "Live Subititle Preview" section.  "Text that appears as the preview:"
+
+I prefer progessive disclosure.  However, consider this:
+Once an .ass file is created, the "Transcript Dialog" button should be active.  (Also, it should be named "Dialog Transcript.") "Subtitle Text Verification  & Fast-edit" should become active. I think these buttons should become active once an .ass file is created even if the user clicked on "Transcribe and Burn" and the program is burning.  Do you think this new functionality can cause problems if the user is editing the .ass file while the program is using it?  Will there be read/write collisions?  Or does ffmpeg ingest the .ass file all at once and does so one time only?
+
+Also, For long videos, the thermometer doesn't appear to give enough of an indication of what's going on.  It gives me an idea of where we are, but when there's long pauses, I don't know if it's stuck. For example, I'm burning a 15 minute video and it's been stuck at 94% for three minutes.  Has hit hung? I can check the command line and see lines being printed out.  I can also check nvidia-smi to see that FFMPEG is running.
+
+Do research to determine:
+- if we can get time estimates from ffmpeg and incorporate them into our thermometer and percent completed calcualtions
+- if not, suggest other ways to make the estimates more accurate, if possible.
+- do UX/human factor research on how to show that the process is still running if a thermometer doesn't appear to be moving.  Give me three UX recommendations.  I like the thermometer, so I prefer recommendations that add to it rather than replace it, but I'm open to suggestions of replacing makes better sense.
+
+
+
+Update the implementation plan. Be sure to include updating Readme.md, any other .md files as appropriate, and the Freedom to Operate documetnation.
+
+-----------------
+/plan  whisperX doesn't always get words right. For example, it can mispell names, which is reasonable because how would it know?  Give me three UX ideas where I can tell whisperX the correct spelling for particular words it's going to hear.
+
+Make an implementation plan.
+
+-------------------
+/plan It's not just names.  It's any word.  WhisperX does great, but it's not 100% perfect.  Does your recommended approach accomodate both names and other misspellings?
+
+Update implementation plan.
+
+-------------------
+/plan I don't want search and replace after the .ass file is created.  That can be done by the user with current functionality.  I want to prevent the mispelling in the first place.
+
+Rework the implementation plan with this directive.
+--------------------
+/plan  Sometimes the video changes in such a way that the choices for text placement don't work.  Come up with a UX design that allows the user to jump to different points in the video as they style it.
+
+Create an implementation plan.
+
+
+--------------------------------
+/plan  A few items to change:
+1) Change the pin in the "Start Here" pill to a down pointing arrow.
+2) I don't know what this is supposed to do:  "👥 Multi-Speaker Voice Separation (Diarization)
+Automatically clusters distinct speakers (1–5 voices) and assigns individual highlight colors offline without cloud tokens."
+3) None of the buttons seem to respond to clicks.  They don't work.  Example: Browse button to open files.
+4) We don't need "pack." delete them.  We just need the ability for the user to create, update, and delete a list of words with the correct spelling.
+
+Update implementation plan.
+-------------------------
+/plan  The .ass editing features are not useful.  What's useful is opening a text editor.    Change it so the user can open the text editor of their choice.  Perhaps click on a button opens the file manager to the location where the .ass file lives.  Put the .ass file name on the interface.  
+
+Whenever the .ass file is burned into the video file, load the .ass file from disk. Do not rely on .ass file stored in memory.  
+
+Make an implementation plan.
+
+---------------------------
+/plan I think we need to think this through more.  I don't want the program to delete any functionality with which the user interacts.  Behinds the scenes, the programmer can do what needs to be done.  
+
+Provide a recommendation.
+
+Also, give me advantages and disadvanteges of putting it Category 2 vs Category 12.
+
+Update the implementation plan.
+
+-------------------
+/plan The "+add word" button doesn't work.  I can't click on it.
+
+What's the format of the file?   Change "From filenmame" to "From File".   What does "From Speakers" mean?
+
+Make an implementation plan.
 
 
 -------------------
@@ -98,11 +176,14 @@ Do research to determine:
 
 Create a research document.
 ---------------
-/plan.  Once an .ass file is created, the "Transcript Dialog" button should be active.  (Also, it should be named "Dialog Transcript.") "Subtitle Text Verification  & Fast-edit" should become active. I think these buttons should become active once an .ass file is created even if the user clicked on "Transcribe and Burn" and the program is burning.  Do you think this new functionality can cause problems if the user is editing the .ass file while the program is using it?  Will there be read/write collisions?  Or does ffmpeg ingest the .ass file all at once and does so one time only?
+/plan create the ability to create and delete keyframes where new styles come into affect.  This typically is used when the video changes drastically and text needs to be moved to a different part of the screen. Allow the user to quickly choose keyframes so they can jump to them in the video.  
 
-Create an implementation plan.
---------------
-Add this explanatory text above the text field in the "Live Subititle Preview" section.  "Text that appears as the preview:"
+Come up with an interface that shows a timeline that the user can click on to jump into the video. The video should also show the keyframes.  This example shows a timeline with two keyframes, one on each end.  The playhead, and the key frame delete icons.  I'm giving this to you as an example, not that I want you to implement this exactly as is.  Do research on typical design patterns like this used in video editing programs.
 
---------------------
+create an implementation plan.
+
+------------------------
+/plan create the ability to create and delete keyframes where new styles come into affect. Use the existing interface where the user can scrub and jump into the movie.  Put the new keyframes on the timeline.  Each new keyframe can contain unique stylings.  Saving a style will save the current keyframes witht their stylings as well.
+
+Make an implementation plan.
 

@@ -14,6 +14,11 @@ Accelerated with **WhisperX AI** (word-level forced phoneme alignment) and hardw
 ## ✨ Features
 
 - **Precision Word Timing**: WhisperX AI delivers phoneme- and word-level synchronized subtitle timing for maximum accuracy.
+- **Pre-Transcription Spelling & Vocabulary Biasing**: Condition WhisperX before transcription begins to guarantee correct spelling for proper names, domain jargon, and acronyms using dual-layer prompt synthesis and beam search hotword boosting. Includes a clean Word Spelling List CRUD interface with in-place chip editing (`✎`) and automatic speaker/filename harvesting.
+- **Multi-Point Scene Scrubbing & 5-Point Checkpoints**:
+  - **Sub-50ms Keyframe Seek**: Fast input-seeking timeline scrubber lets creators test subtitle placement across changing video scenes without freezing the browser UI.
+  - **5-Point Filmstrip Tray**: Representative snapshots (`0%`, `25%`, `50%`, `75%`, `End`) are auto-extracted upon video ingestion for instant single-click jumping.
+  - **Dialogue-Linked Scene Jumping**: Click `[ 👁️ Preview Scene ]` on any line in the dialogue transcript or editor to jump the video canvas to that exact spoken timestamp and load the line's words into the staging preview.
 - **Dynamic Word Highlighting Animations**:
   - **Discrete Word Pop**: High-energy color shift and scale boost (100%–180%) on the active spoken word.
   - **Progressive Karaoke Wipe (`\kf`)**: Smooth continuous syllable fill sweep (Pioneer US 5,742,569 expired prior art).
@@ -30,10 +35,13 @@ Accelerated with **WhisperX AI** (word-level forced phoneme alignment) and hardw
   - **1-Click Preset Update**: Instantly update active custom presets with your current styling modifications with a single click.
   - **Export & Import JSON**: Easily share custom presets between machines or backup configurations.
 - **Sibling Asset Lifecycle State Machine**: Automatically detects co-located `.wav` (16kHz mono audio) and `.ass` (word-level subtitles), skipping redundant extraction or transcription steps when re-styling or re-burning.
-- **Progressive Disclosure & Inline Transcript Fast-Edit**:
-  - **Instant Dialog Transcript**: Toggle between Lorem Ipsum and actual transcribed speech with the **Dialog Transcript** preview mode.
-  - **Concurrent Fast-Edit Drawer**: Inspect, verify, and correct transcribed words or reassign speaker channels immediately once the `.ass` file is generated—even while background video burning is in progress.
-  - **Zero-Collision Snapshotting**: Background rendering uses isolated transcode snapshots, guaranteeing that editing subtitle lines never causes read/write collisions or crashes active FFmpeg processes.
+- **Subtitle File & External Editor Hub (Step 2)**:
+  - **Prominent File Identity**: Live `.ass` filename, filesystem path, file size in KB, and dialogue line count prominently displayed in an active status badge.
+  - **`[ 📝 Open in Text Editor ]`**: Launches the `.ass` file in your system's default text editor (VS Code, Sublime, gedit, Notepad) in < 100ms.
+  - **`[ 📁 Show in File Manager ]`**: Reveals the subtitle file in your operating system's native file explorer (Nautilus, Finder, Windows Explorer).
+  - **`[ 📋 Copy File Path ]`**: One-click clipboard copy of the full absolute path.
+  - **Strict Disk-First Burning Guarantee**: Video burning (`POST /api/burn-video`) loads the `.ass` subtitle file strictly from disk, guaranteeing all corrections saved in external text editors are 100% burned without risk of stale in-memory browser buffers.
+  - **Stage Dialog Transcript**: Preview actual spoken phrases against video frames directly on the interactive video canvas while styling.
 - **Real-Time Transcode Telemetry & Live ETA**:
   - **Dynamic Stream Pipe Polling**: Reads hardware transcode metrics in real time via `-progress pipe:1`, updating every sub-second with active encoding frames, speed multipliers (e.g., `7.4x`), and dynamic Estimated Time Remaining (ETA) countdowns.
   - **Anti-Stall Progress Thermometer**: Replaces static waiting bars with continuous progress, live media time ratios (`14:06 / 15:00`), and hardware vitals to eliminate frozen progress anxiety on long videos.

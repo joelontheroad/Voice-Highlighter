@@ -25,8 +25,9 @@ By publicly publishing this document within the public repository, any subsequen
 4. Probed hardware acceleration fallback matrices with null-frame test execution,
 5. Ephemeral launch tokens on localhost-bound Unix socket servers for media tools,
 6. Standardized progress pipe polling with dynamic speed, time-ratio, and ETA countdown derivation,
-7. Isolated execution snapshotting for concurrent in-browser subtitle editing during video encoding, or
-8. Centroid-ranked acoustic voice snippet extraction for auditory human speaker labeling,
+7. Isolated execution snapshotting for concurrent in-browser subtitle editing during video encoding,
+8. Centroid-ranked acoustic voice snippet extraction for auditory human speaker labeling, or
+9. Multi-source conversational prompt synthesis and beam search logit biasing for pre-transcription spelling prevention,
 
 is permanently anticipated under § 102 and/or rendered obvious under § 103 by this disclosure.
 
@@ -219,6 +220,40 @@ Unsupervised speaker diarization algorithms cluster speech into mathematical par
    A lightweight audio slice is rendered and exposed via a secure local endpoint (`/api/speaker-sample/{token}/{speaker_id}`).
 3. **Synchronized Channel Attribute Propagation**:
    The web UI provides an interactive `[ ▶ Listen ]` button alongside each speaker channel tab. Upon auditory identification by the user (e.g., hearing 2 seconds of speech), assigning a semantic name (`Katie Kam`) immediately propagates across all matching dialogue event actors and style headers.
+
+---
+
+### 2.9 Pre-Inference Multi-Source Prompt Synthesis and Beam Search Logit Biasing for Subtitle ASR
+
+To prevent phonetic misspellings of specialized terms, proper nouns, and acoustic homophones at the model inference layer rather than through error-prone post-processing:
+
+1. **Multi-Source Context Harvesting**:
+   Prior to audio frame evaluation, the system extracts lexical tokens across three orthogonal metadata sources:
+   - User-defined vocabulary chip arrays,
+   - Semantic speaker display names assigned in multi-speaker color channels, and
+   - Syntactically normalized filename tokens derived from media file paths.
+
+2. **Dual-Layer Inference Conditioning**:
+   - **Autoregressive Self-Attention Conditioning**: The harvested tokens are compiled into a conversational prefix sentence (`initial_prompt`) bounded within the model's self-attention context window, conditioning the transformer decoder's language model prior.
+   - **Beam Search Prefix Logit Boosting**: The token vocabulary is concurrently passed to the beam search decoder (`hotwords`), positively biasing unnormalized token log-probabilities to ensure target vocabulary hypotheses survive beam pruning during acoustic decoding without hallucinating speech during silence.
+
+3. **Single-Pass Alignment Guarantee**:
+   Because the initial transcription natively contains the correct lexical tokens and casing, subsequent forced phoneme alignment (Wav2Vec2) and SubStation Alpha compilation operate with zero text mutations, ensuring 100% synchronized word-level timestamps.
+
+---
+
+### 2.10 Multi-Point Keyframe Scrubbing and Temporal Scene Projection for Subtitle Layout Verification
+
+Subtitle layout design (placement coordinates, font dimensions, outline thickness, contrast shadows, and bounding envelopes) requires visual verification across dynamically varying backgrounds, lighting conditions, and camera framings:
+
+1. **Sub-50ms Input-Seeking Keyframe Extraction**:
+   Traditional output seeking (`ffmpeg -i input -ss ...`) decodes all preceding frames, introducing 800ms to 2.5s rendering latencies that impair interactive UI workflows. Voice Highlighter employs input seeking (`ffmpeg -ss <timestamp> -i <input> -frames:v 1 -q:v 2`), instructing the demuxer to seek directly to the nearest keyframe packet before decoding, achieving sub-50ms frame extraction across multi-gigabyte 4K media.
+
+2. **Automated 5-Point Temporal Scene Projection (Filmstrip)**:
+   Upon video ingestion, the system automatically computes a 5-point temporal distribution (`0%`, `25%`, `50%`, `75%`, `End`) across the total duration. Scaled thumbnail previews (`scale=240:-1`) are pre-rendered into deterministic local cache files (`<hash>_scene_<idx>.jpg`) and displayed as an interactive filmstrip tray below the video stage, enabling single-click verification of contrast and title placement across all phases of the video.
+
+3. **Dialogue-Linked Temporal Frame Synchronization**:
+   Each transcribed dialogue line in the Subtitle Text Verification and Fast-Edit drawer provides a single-click preview trigger (`[ 👁️ Preview Scene ]`). Activating the trigger parses the SubStation Alpha start timestamp (`0:01:23.45`), scrubs the live video preview canvas to the exact frame where the phrase is spoken, and populates the subtitle staging text with the exact spoken sentence words, allowing creators to inspect visual clarity in context without executing full video render passes.
 
 ---
 

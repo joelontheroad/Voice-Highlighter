@@ -268,3 +268,73 @@ def test_desktop_launcher_resolve_port(monkeypatch):
     assert resolve_port() == 8672
 
 
+def test_cli_config_reset_subcommand(isolated_env):
+    """Verify that 'config reset' subcommand permanently deletes state and restores defaults."""
+    res = run_cli("config", "reset", env=isolated_env)
+    assert res.returncode == 0
+    assert "reset to factory defaults" in res.stderr.lower()
+
+    # Verify default preset exists in isolated XDG directory
+    config_dir = Path(isolated_env["XDG_CONFIG_HOME"]) / "voice-highlighter" / "presets"
+    assert (config_dir / "default.yaml").exists()
+
+
+def test_cli_run_reveal_flag(isolated_env, tmp_path):
+    """Verify that 'run --reveal' processes input and cleanly triggers reveal helper without crashing."""
+    sample_file = tmp_path / "sample.txt"
+    sample_file.write_text("Testing subtitle processor with reveal flag.", encoding="utf-8")
+
+    res = run_cli("run", str(sample_file), "--reveal", "--json", env=isolated_env)
+    assert res.returncode == 0
+    data = json.loads(res.stdout)
+    assert data["status"] == "success"
+
+
+def test_parse_safe_file_uri(tmp_path):
+    """Verify RFC 8089 safe file URI decoding and path canonicalization."""
+    from backend.config import parse_safe_file_uri
+
+    test_file = tmp_path / "test space file.mp4"
+    test_file.write_text("video dummy", encoding="utf-8")
+    canonical = str(test_file.resolve())
+
+    # Case 1: Plain path
+    assert parse_safe_file_uri(str(test_file)) == canonical
+
+    # Case 2: Standard file:// URI
+    file_uri = test_file.as_uri()
+    assert parse_safe_file_uri(file_uri) == canonical
+
+    # Case 3: file://localhost/... URI
+    localhost_uri = file_uri.replace("file:///", "file://localhost/")
+    assert parse_safe_file_uri(localhost_uri) == canonical
+
+
+def test_parse_safe_file_uri_rejects_remote():
+    """Verify that file:// URIs with remote host authorities are rejected (RFC 8089 / SSRF mitigation)."""
+    import pytest
+    from backend.config import parse_safe_file_uri
+
+    with pytest.raises(ValueError, match="Remote file URI authorities are rejected"):
+        parse_safe_file_uri("file://evil-remote-host.com/share/video.mp4")
+
+    with pytest.raises(ValueError, match="Remote file URI authorities are rejected"):
+        parse_safe_file_uri("file://192.168.1.100/data/video.mp4")
+
+
+def test_reveal_in_folder_headless(tmp_path, monkeypatch):
+    """Verify reveal_in_folder returns path and avoids hanging when in headless environment."""
+    from backend.app import reveal_in_folder
+
+    target = tmp_path / "output.ass"
+    target.write_text("Dialogue: ...", encoding="utf-8")
+
+    # Force headless environment
+    monkeypatch.setenv("CI", "true")
+    res = reveal_in_folder(str(target))
+    assert res["success"] is True
+    assert res["headless"] is True
+    assert "output.ass" in res["message"] or str(tmp_path) in res["message"]
+
+
+
