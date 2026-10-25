@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 [Author/Organization]
+# SPDX-FileCopyrightText: 2026 Joel Gonzales <joelontheroad>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 name: Continuous Integration & Security Audit
@@ -44,10 +44,35 @@ jobs:
       - name: Run Standards Compliance Check
         run: python3 .standards/scripts/check-compliance.py .
 
+  detect-stack:
+    name: Detect Project Stack
+    runs-on: ubuntu-latest
+    outputs:
+      has-python: ${{ steps.detect.outputs.has-python }}
+      has-node: ${{ steps.detect.outputs.has-node }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Detect Stack
+        id: detect
+        run: |
+          if [ -f pyproject.toml ]; then
+            echo "has-python=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-python=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -f package.json ]; then
+            echo "has-node=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-node=false" >> "$GITHUB_OUTPUT"
+          fi
+
   test-python:
     name: Python Build & Test
     runs-on: ubuntu-latest
-    if: hashFiles('pyproject.toml') != ''
+    needs: detect-stack
+    if: needs.detect-stack.outputs.has-python == 'true'
     strategy:
       matrix:
         python-version: ["3.11", "3.12"]
@@ -78,7 +103,8 @@ jobs:
   test-node:
     name: Node Build & Test
     runs-on: ubuntu-latest
-    if: hashFiles('package.json') != ''
+    needs: detect-stack
+    if: needs.detect-stack.outputs.has-node == 'true'
     strategy:
       matrix:
         node-version: ["20.x", "22.x"]
