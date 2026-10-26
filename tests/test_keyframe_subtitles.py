@@ -15,6 +15,7 @@ Validates that:
 """
 
 from pathlib import Path
+
 from backend.ass_generator import (
     generate_ass_content,
     parse_ass_timestamp,

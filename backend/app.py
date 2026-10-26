@@ -50,11 +50,6 @@ from backend.config import (
     sanitize_log_path,
     save_preset,
 )
-
-# Initialize Freedesktop Shared MIME-info database (Directive 5)
-mimetypes.init()
-mimetypes.add_type("audio/wav", ".wav")
-mimetypes.add_type("audio/wav", ".wave")
 from backend.diarizer import diarize_whisper_result
 from backend.extractor import (
     burn_subtitles_to_video,
@@ -66,6 +61,11 @@ from backend.extractor import (
     test_ffmpeg_encoder,
 )
 from backend.transcriber import run_whisperx_pipeline
+
+# Initialize Freedesktop Shared MIME-info database (Directive 5)
+mimetypes.init()
+mimetypes.add_type("audio/wav", ".wav")
+mimetypes.add_type("audio/wav", ".wave")
 
 
 def _safe_burn(
@@ -580,18 +580,23 @@ def fetch_video_info(req: VideoInfoRequest):
         is_direct_wav = clean_path.lower().endswith(".wav")
         has_wav = is_direct_wav or os.path.exists(sibling_wav)
         actual_wav_path = clean_path if is_direct_wav else (sibling_wav if os.path.exists(sibling_wav) else None)
-        has_ass = os.path.exists(sibling_ass)
+
+        # Discover candidate .ass subtitles (including _voice_titles.ass and custom sibling variants)
+        resolved_ass_path, _ = _resolve_ass_file_path(media_path=clean_path)
+        actual_ass_path = resolved_ass_path if (resolved_ass_path and os.path.isfile(resolved_ass_path)) else (sibling_ass if os.path.isfile(sibling_ass) else None)
+        has_ass = bool(actual_ass_path and os.path.isfile(actual_ass_path))
+
         ass_preview = None
         ass_dialogue_count = 0
-
         ass_size_kb = 0.0
         ass_mtime = 0.0
-        if has_ass:
+
+        if has_ass and actual_ass_path:
             try:
-                stat_ass = os.stat(sibling_ass)
+                stat_ass = os.stat(actual_ass_path)
                 ass_size_kb = round(stat_ass.st_size / 1024, 1)
                 ass_mtime = stat_ass.st_mtime
-                with open(sibling_ass, "r", encoding="utf-8") as af:
+                with open(actual_ass_path, "r", encoding="utf-8") as af:
                     ass_raw = af.read()
                     ass_lines = ass_raw.splitlines()
                     ass_preview = "\n".join(ass_lines[:60])
@@ -612,8 +617,8 @@ def fetch_video_info(req: VideoInfoRequest):
             "existing_wav_path": actual_wav_path,
             "existing_wav_name": os.path.basename(actual_wav_path) if actual_wav_path else None,
             "has_existing_ass": bool(has_ass),
-            "existing_ass_path": sibling_ass if has_ass else None,
-            "existing_ass_name": os.path.basename(sibling_ass) if has_ass else None,
+            "existing_ass_path": actual_ass_path if has_ass else None,
+            "existing_ass_name": os.path.basename(actual_ass_path) if (has_ass and actual_ass_path) else None,
             "existing_ass_size_kb": ass_size_kb,
             "existing_ass_mtime": ass_mtime,
             "existing_ass_preview": ass_preview,
@@ -1116,6 +1121,8 @@ def get_task_status(task_id: str):
         "stage_message": t["stage_message"],
         "error": t.get("error"),
         "ass_preview": t.get("ass_preview"),
+        "ass_file": t.get("ass_file"),
+        "ass_filename": os.path.basename(t.get("ass_file")) if t.get("ass_file") else None,
         "ass_ready": ass_ready,
         "burn_telemetry": t.get("burn_telemetry"),
         "burn_video": burn_enabled,
@@ -1395,9 +1402,18 @@ def _resolve_ass_file_path(
         if p.endswith(".ass") and os.path.exists(p):
             candidates.append(p)
         elif os.path.exists(p):
-            _, _, _, _, sib_ass = get_sibling_paths(p)
+            _, media_dir, base_name, _, sib_ass = get_sibling_paths(p)
             if os.path.exists(sib_ass):
                 candidates.append(sib_ass)
+            vt_ass = os.path.join(media_dir, f"{base_name}_voice_titles.ass")
+            if os.path.exists(vt_ass):
+                candidates.append(vt_ass)
+            if os.path.isdir(media_dir):
+                for fname in os.listdir(media_dir):
+                    if fname.startswith(base_name) and fname.endswith(".ass"):
+                        candidate_file = os.path.join(media_dir, fname)
+                        if os.path.isfile(candidate_file):
+                            candidates.append(candidate_file)
         t = _get_or_load_task(task_or_path)
         if t and t.get("ass_file") and os.path.exists(t["ass_file"]):
             candidates.append(t["ass_file"])
@@ -1415,6 +1431,12 @@ def _resolve_ass_file_path(
             vt_ass = os.path.join(media_dir, f"{base_name}_voice_titles.ass")
             if os.path.exists(vt_ass):
                 candidates.append(vt_ass)
+            if os.path.isdir(media_dir):
+                for fname in os.listdir(media_dir):
+                    if fname.startswith(base_name) and fname.endswith(".ass"):
+                        candidate_file = os.path.join(media_dir, fname)
+                        if os.path.isfile(candidate_file):
+                            candidates.append(candidate_file)
 
     if candidates:
         # Deduplicate candidates while preserving order

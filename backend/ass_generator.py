@@ -278,8 +278,6 @@ def generate_ass_content(
 
     # Active word size boost percentage (100% to 200%)
     highlight_scale_pct = int(config.get("highlight_scale_pct", 100))
-    scale_tag = f"\\fscx{highlight_scale_pct}\\fscy{highlight_scale_pct}" if highlight_scale_pct != 100 else ""
-    scale_reset = "\\fscx100\\fscy100" if highlight_scale_pct != 100 else ""
 
     # Highlight animation style: 'discrete' (default), 'karaoke_wipe' (\\kf), or 'anticipation_glow'
     highlight_animation = str(config.get("highlight_animation", "discrete")).lower()

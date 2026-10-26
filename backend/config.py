@@ -11,8 +11,8 @@ POSIX permission hardening (modes 0700/0600), and path traversal mitigations.
 import os
 import sys
 import urllib.parse
-from typing import Any
 from pathlib import Path
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError

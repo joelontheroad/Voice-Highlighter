@@ -313,6 +313,7 @@ def test_parse_safe_file_uri(tmp_path):
 def test_parse_safe_file_uri_rejects_remote():
     """Verify that file:// URIs with remote host authorities are rejected (RFC 8089 / SSRF mitigation)."""
     import pytest
+
     from backend.config import parse_safe_file_uri
 
     with pytest.raises(ValueError, match="Remote file URI authorities are rejected"):

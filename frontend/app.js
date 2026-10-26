@@ -2594,8 +2594,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     renderSubtitlePreview();
-    if (editorState.dialogues && editorState.dialogues.length > 0) {
-      renderDrawerDialogueItems(editorState.dialogues);
+    if (state.dialogues && state.dialogues.length > 0) {
+      renderDrawerDialogueItems(state.dialogues);
     }
   }
 
@@ -2831,8 +2831,8 @@ document.addEventListener("DOMContentLoaded", () => {
         if (currentEditingSpeakerDot) currentEditingSpeakerDot.style.background = val;
         renderSpeakerTabs();
         renderSubtitlePreview();
-        if (editorState.dialogues && editorState.dialogues.length > 0) {
-          renderDrawerDialogueItems(editorState.dialogues);
+        if (state.dialogues && state.dialogues.length > 0) {
+          renderDrawerDialogueItems(state.dialogues);
         }
       }
     });
@@ -2852,8 +2852,8 @@ document.addEventListener("DOMContentLoaded", () => {
           if (currentEditingSpeakerDot) currentEditingSpeakerDot.style.background = c;
           renderSpeakerTabs();
           renderSubtitlePreview();
-          if (editorState.dialogues && editorState.dialogues.length > 0) {
-            renderDrawerDialogueItems(editorState.dialogues);
+          if (state.dialogues && state.dialogues.length > 0) {
+            renderDrawerDialogueItems(state.dialogues);
           }
         }
       });
@@ -2867,8 +2867,8 @@ document.addEventListener("DOMContentLoaded", () => {
         state.speakerChannels[state.activeSpeakerId].name = val;
         if (currentEditingSpeakerName) currentEditingSpeakerName.textContent = val;
         renderSpeakerTabs();
-        if (editorState.dialogues && editorState.dialogues.length > 0) {
-          renderDrawerDialogueItems(editorState.dialogues);
+        if (state.dialogues && state.dialogues.length > 0) {
+          renderDrawerDialogueItems(state.dialogues);
         }
       }
     });
@@ -3172,8 +3172,8 @@ document.addEventListener("DOMContentLoaded", () => {
       if (btnTextDefault.disabled) return;
       btnTextDefault.classList.add("active");
       if (btnTextLorem) btnTextLorem.classList.remove("active");
-      if (editorState.dialogues && editorState.dialogues.length > 0 && editorState.dialogues[0].clean_text) {
-        previewTextInput.value = editorState.dialogues[0].clean_text.replace(/\\N/gi, " ").replace(/\\h/gi, " ").replace(/\s+/g, " ").trim();
+      if (state.dialogues && state.dialogues.length > 0 && state.dialogues[0].clean_text) {
+        previewTextInput.value = state.dialogues[0].clean_text.replace(/\\N/gi, " ").replace(/\\h/gi, " ").replace(/\s+/g, " ").trim();
       } else {
         previewTextInput.value = "Voice Highlighter Subtitles Preview";
       }
@@ -3360,9 +3360,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (btnInspectAssStudio) {
     btnInspectAssStudio.addEventListener("click", () => {
-      if (cardSubtitleDrawer) {
-        cardSubtitleDrawer.classList.remove("collapsed");
-        cardSubtitleDrawer.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (cardAssFileHub) {
+        cardAssFileHub.classList.remove("collapsed");
+        cardAssFileHub.scrollIntoView({ behavior: "smooth", block: "start" });
       }
     });
   }
@@ -3390,8 +3390,8 @@ document.addEventListener("DOMContentLoaded", () => {
       // Progressive disclosure: Activate Step 2 & Dialog Transcript as soon as .ass is ready
       if (data.ass_ready) {
         state.hasExistingAss = true;
-        state.existingAssPath = data.download_url;
-        state.existingAssName = `${data.custom_filename || 'subtitles'}.ass`;
+        if (data.ass_file) state.existingAssPath = data.ass_file;
+        state.existingAssName = data.ass_filename || `${data.custom_filename || 'subtitles'}.ass`;
 
         if (btnTextDefault) {
           btnTextDefault.disabled = false;
@@ -3412,7 +3412,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // Refresh Subtitle File Hub details from disk
         if (!state.hubLoadedForTask || state.hubLoadedForTask !== taskId) {
           state.hubLoadedForTask = taskId;
-          refreshAssFileInfo({ taskId, mediaPath: state.videoPath });
+          refreshAssFileInfo({ taskId, mediaPath: state.videoPath, filePath: data.ass_file });
         }
       }
 
@@ -3433,8 +3433,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
         state.currentTaskId = data.task_id;
         state.hasExistingAss = true;
-        state.existingAssPath = data.download_url;
-        state.existingAssName = `${data.custom_filename || 'subtitles'}.ass`;
+        if (data.ass_file) state.existingAssPath = data.ass_file;
+        state.existingAssName = data.ass_filename || `${data.custom_filename || 'subtitles'}.ass`;
 
         if (btnDownloadAss) {
           btnDownloadAss.href = data.download_url;
@@ -3442,7 +3442,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         // Refresh disk info for the newly created .ass file
-        refreshAssFileInfo({ taskId: data.task_id, mediaPath: state.videoPath });
+        refreshAssFileInfo({ taskId: data.task_id, mediaPath: state.videoPath, filePath: data.ass_file });
 
         if (data.video_download_url || data.video_file) {
           const finalVideoPath = data.video_file || `${state.videoPath || ''}`;
@@ -3544,40 +3544,57 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Task 4: Fast NVENC Burn Video from Current / Edited ASS
   async function executeBurnVideo() {
-    const videoPath = (videoPathInput ? videoPathInput.value.trim() : '') || state.videoPath;
-    if (!videoPath) {
-      alert("Please provide or load a video file first.");
-      openNativeFileDialog();
-      return;
-    }
-    state.videoPath = videoPath;
-
-    const effectiveAss = editorState.assPath || state.existingAssPath;
-    if (!effectiveAss && !editorState.currentContent) {
-      alert("No subtitles (.ass) found to burn. Please generate subtitles first using Step 1.");
-      return;
-    }
-
-    updateWorkflowStepper('burning');
-    updateDrawerStatus('Burning subtitles with NVIDIA RTX A5000 NVENC...', 'normal');
-    if (btnBurnOnly) btnBurnOnly.classList.add('disabled');
-    if (btnDrawerBurn) {
-      btnDrawerBurn.disabled = true;
-      btnDrawerBurn.textContent = 'Burning...';
-    }
-    if (btnModalSaveAndBurn) {
-      btnModalSaveAndBurn.disabled = true;
-      btnModalSaveAndBurn.textContent = 'Burning...';
-    }
-
-    const burnTaskId = state.currentTaskId || editorState.taskId || (`burn_${Date.now()}`);
-
-    // Show horizontal thermometer progress meter directly below buttons
-    showThermometer("Burning Video with Hardware Acceleration...", 5, "Compiling ASS dialogue events and starting encoder...");
-    if (state.pollInterval) clearInterval(state.pollInterval);
-    state.pollInterval = setInterval(() => pollStatus(burnTaskId), 500);
-
     try {
+      const videoPath = (videoPathInput ? videoPathInput.value.trim() : '') || state.videoPath;
+      if (!videoPath) {
+        alert("Please provide or load a video file first.");
+        openNativeFileDialog();
+        return;
+      }
+      state.videoPath = videoPath;
+
+      // Prevent re-entrant triggers while already burning
+      if (btnBurnOnly && btnBurnOnly.classList.contains('disabled') && state.workflowStage === 'burning') {
+        return;
+      }
+
+      // Resolve subtitle path: prioritize canonical disk path, falling back to query or media sibling
+      let effectiveAss = state.existingAssPath;
+      if (!effectiveAss || effectiveAss.startsWith('/api/')) {
+        try {
+          const infoRes = await fetch(`/api/ass-file-info?media_path=${encodeURIComponent(videoPath)}`);
+          if (infoRes.ok) {
+            const infoData = await infoRes.json();
+            if (infoData.path) {
+              effectiveAss = infoData.path;
+              state.existingAssPath = infoData.path;
+              state.existingAssName = infoData.filename;
+              state.hasExistingAss = true;
+            }
+          }
+        } catch (e) {
+          console.warn("Could not query ass file info for burning:", e);
+        }
+      }
+
+      if (!effectiveAss) {
+        alert("No subtitles (.ass) found to burn. Please generate subtitles first using Step 1.");
+        return;
+      }
+
+      state.workflowStage = 'burning';
+      updateWorkflowStepper('burning');
+      if (btnBurnOnly) btnBurnOnly.classList.add('disabled');
+
+      // Always generate a fresh unique task ID for every burn execution to avoid poll collision
+      const burnTaskId = `burn_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      state.currentTaskId = burnTaskId;
+
+      // Show horizontal thermometer progress meter directly below buttons
+      showThermometer("Burning Video with Hardware Acceleration...", 5, "Compiling ASS dialogue events and starting encoder...");
+      if (state.pollInterval) clearInterval(state.pollInterval);
+      state.pollInterval = setInterval(() => pollStatus(burnTaskId), 500);
+
       // Direct disk-first load: Never send in-memory buffer content.
       // FFmpeg burns directly from the .ass file saved on disk (including external editor edits).
       const payload = {
@@ -3608,10 +3625,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const data = await res.json();
       state.stylingModified = false;
+      state.workflowStage = 'burned';
 
       // Refresh .ass metadata & dialogue from disk
       if (data.task_id || data.ass_filename) {
-        refreshAssFileInfo({ filePath: effectiveAss, taskId: data.task_id, mediaPath: videoPath });
+        refreshAssFileInfo({ filePath: data.ass_file || effectiveAss, taskId: data.task_id, mediaPath: videoPath });
       }
 
       updateWorkflowStepper('burned');
@@ -3621,6 +3639,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (data.ass_filename) {
         state.hasExistingAss = true;
         state.existingAssName = data.ass_filename;
+        if (data.ass_file) state.existingAssPath = data.ass_file;
       }
       syncDeliverableFilenames();
 
@@ -3642,6 +3661,7 @@ document.addEventListener("DOMContentLoaded", () => {
       alert(`Error burning video: ${err.message}`);
       updateThermometer(100, `Error: ${err.message}`, 5, "Burn Failed");
       updateWorkflowStepper('subtitles_ready');
+      state.workflowStage = 'subtitles_ready';
     } finally {
       if (btnBurnOnly) btnBurnOnly.classList.remove('disabled');
     }

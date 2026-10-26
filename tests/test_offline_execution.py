@@ -8,12 +8,9 @@ execute completely offline without attempting outbound network connections to
 Hugging Face or external servers, preventing UI freezes when internet is down.
 """
 
-import os
 import socket
 import sys
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from backend.transcriber import run_whisperx_pipeline
 
@@ -21,8 +18,6 @@ from backend.transcriber import run_whisperx_pipeline
 def test_offline_execution_blocks_huggingface_network():
     """Verify run_whisperx_pipeline sets offline flags and does not attempt network connections."""
     connected_hosts: list[tuple] = []
-
-    real_connect = socket.socket.connect
 
     def guarded_connect(self, address):
         connected_hosts.append(address)

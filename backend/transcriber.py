@@ -190,7 +190,6 @@ def run_whisperx_pipeline(
         Dictionary containing aligned subtitle segments, detected language, and
         word-level timestamp dictionaries.
     """
-    import os
     import whisperx
 
     device, compute_type, device_label = get_transcription_device()
