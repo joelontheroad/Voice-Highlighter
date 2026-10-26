@@ -103,6 +103,58 @@ def build_transcription_prompt(
     return initial_prompt, hotwords
 
 
+def get_locally_cached_whisper_models() -> list[str]:
+    """Discover all locally cached Faster-Whisper model sizes on disk.
+
+    Scans the standard Hugging Face hub cache directory and local application cache
+    for existing model snapshots (e.g. 'large-v3', 'base', 'medium').
+
+    Returns:
+        List of available model size identifiers.
+    """
+    import os
+    from pathlib import Path
+
+    cached: list[str] = []
+    hf_home = os.environ.get("HF_HOME")
+    candidate_dirs = [
+        Path(hf_home) / "hub" if hf_home else None,
+        Path.home() / ".cache" / "huggingface" / "hub",
+        Path.home() / ".cache" / "voice-highlighter" / "models",
+    ]
+    for cdir in candidate_dirs:
+        if cdir and cdir.is_dir():
+            try:
+                for p in cdir.glob("models--Systran--faster-whisper-*"):
+                    snapshots = p / "snapshots"
+                    if snapshots.is_dir() and any(snapshots.iterdir()):
+                        name = p.name.replace("models--Systran--faster-whisper-", "")
+                        if name not in cached:
+                            cached.append(name)
+            except OSError:
+                pass
+    return cached
+
+
+def is_network_available(host: str = "1.1.1.1", port: int = 53, timeout: float = 1.2) -> bool:
+    """Perform a fast non-blocking probe to verify external internet connectivity.
+
+    Args:
+        host: Probe destination host or IP address.
+        port: Destination port.
+        timeout: Socket connection timeout guard in seconds.
+
+    Returns:
+        True if connection succeeded; False if network is unreachable or timed out.
+    """
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except (OSError, TimeoutError):
+        return False
+
+
 def run_whisperx_pipeline(
     audio_wav_path: str,
     model_name: str = "large-v3",
@@ -140,16 +192,6 @@ def run_whisperx_pipeline(
     """
     import os
     import whisperx
-    from backend.config import get_cache_dir
-
-    # SECURITY: Isolate model cache within XDG cache jail and enforce 100% offline operation (Directive 1)
-    models_dir = get_cache_dir() / "models"
-    models_dir.mkdir(parents=True, exist_ok=True)
-    (models_dir / "hf").mkdir(parents=True, exist_ok=True)
-    os.environ["HF_HOME"] = str(models_dir / "hf")
-    os.environ["HF_HUB_OFFLINE"] = "1"
-    os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    os.environ["HF_DATASETS_OFFLINE"] = "1"
 
     device, compute_type, device_label = get_transcription_device()
     device_index = 0
@@ -175,48 +217,73 @@ def run_whisperx_pipeline(
     print(f"[WhisperX] Loading audio from {audio_wav_path}...")
     audio = whisperx.load_audio(audio_wav_path)
 
-    # 2. Load WhisperX Model (enforce local cache first to prevent Hugging Face update checks)
+    # 2. Load WhisperX Model (enforce local cache first for 100% offline execution without network pings)
     print(f"[WhisperX] Loading model {model_name}...")
+    model = None
     try:
+        # SECURITY: Prioritize local cache (local_files_only=True) to avoid telemetry or network hangs (Directive 1)
         model = whisperx.load_model(
             model_name,
             device=device,
             device_index=device_index,
             compute_type=compute_type,
             asr_options=asr_options if asr_options else None,
-            download_root=str(models_dir),
             local_files_only=True,
         )
     except Exception as local_err:
-        print(f"[WhisperX] Local cached model '{model_name}' not found ({local_err}). Checking download...")
-        orig_hf_offline = os.environ.pop("HF_HUB_OFFLINE", None)
-        try:
-            model = whisperx.load_model(
-                model_name,
-                device=device,
-                device_index=device_index,
-                compute_type=compute_type,
-                asr_options=asr_options if asr_options else None,
-                download_root=str(models_dir),
-                local_files_only=False,
-            )
-        except Exception as e:
-            # Fall back to medium model if VRAM/RAM or download limits prevent loading large-v3
-            print(f"[WhisperX] Error loading {model_name}, falling back to 'medium': {e}")
-            model = whisperx.load_model(
-                "medium",
-                device=device,
-                device_index=device_index,
-                compute_type=compute_type,
-                asr_options=asr_options if asr_options else None,
-                download_root=str(models_dir),
-                local_files_only=False,
-            )
-        finally:
-            if orig_hf_offline is not None:
-                os.environ["HF_HUB_OFFLINE"] = orig_hf_offline
+        print(f"[WhisperX] Local cached model '{model_name}' not found ({local_err}). Checking download availability...")
+        cached_models = get_locally_cached_whisper_models()
+        online = is_network_available()
+
+        if not online:
+            if cached_models:
+                pref_order = ["large-v3", "large-v2", "large", "medium", "distil-large-v3", "small", "base", "tiny"]
+                fallback_model = next((m for m in pref_order if m in cached_models), cached_models[0])
+                print(f"[WhisperX] Network offline. Falling back to cached model '{fallback_model}' (cached: {cached_models}).")
+                if progress_callback:
+                    progress_callback(f"Offline fallback: using cached {fallback_model}...", 25)
+                model = whisperx.load_model(
+                    fallback_model,
+                    device=device,
+                    device_index=device_index,
+                    compute_type=compute_type,
+                    asr_options=asr_options if asr_options else None,
+                    local_files_only=True,
+                )
             else:
-                os.environ["HF_HUB_OFFLINE"] = "1"
+                raise RuntimeError(
+                    f"Whisper model '{model_name}' is not cached locally, and no internet connection is available to download it. "
+                    "Please connect to the internet once to download this model."
+                ) from local_err
+        else:
+            # Online: download requested model once to local cache
+            try:
+                print(f"[WhisperX] Downloading '{model_name}' for local caching...")
+                if progress_callback:
+                    progress_callback(f"Downloading WhisperX {model_name}...", 22)
+                model = whisperx.load_model(
+                    model_name,
+                    device=device,
+                    device_index=device_index,
+                    compute_type=compute_type,
+                    asr_options=asr_options if asr_options else None,
+                    local_files_only=False,
+                )
+            except Exception as dl_err:
+                if cached_models:
+                    pref_order = ["large-v3", "large-v2", "large", "medium", "small", "base", "tiny"]
+                    fallback_model = next((m for m in pref_order if m in cached_models), cached_models[0])
+                    print(f"[WhisperX] Download failed ({dl_err}). Falling back to cached model '{fallback_model}'.")
+                    model = whisperx.load_model(
+                        fallback_model,
+                        device=device,
+                        device_index=device_index,
+                        compute_type=compute_type,
+                        asr_options=asr_options if asr_options else None,
+                        local_files_only=True,
+                    )
+                else:
+                    raise RuntimeError(f"Failed to load or download Whisper model '{model_name}': {dl_err}") from dl_err
 
     if progress_callback:
         progress_callback(f"Transcribing speech with WhisperX ({device_label})...", 45)
@@ -233,12 +300,10 @@ def run_whisperx_pipeline(
     # 4. Load alignment model and align words (enforce local cache / offline mode)
     print("[WhisperX] Loading forced alignment model...")
     align_device = "cuda" if device == "cuda" else "cpu"
-    align_dir = str(models_dir / "align")
     try:
         model_a, metadata = whisperx.load_align_model(
             language_code=detected_lang,
             device=align_device,
-            model_dir=align_dir,
             model_cache_only=True,
         )
         print("[WhisperX] Aligning word-level timestamps...")

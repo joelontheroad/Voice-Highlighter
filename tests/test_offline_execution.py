@@ -44,13 +44,49 @@ def test_offline_execution_blocks_huggingface_network():
             )
             assert result is not None
 
-    # Verify offline environment flags were enforced
-    assert os.environ.get("HF_HUB_OFFLINE") == "1"
-    assert os.environ.get("TRANSFORMERS_OFFLINE") == "1"
-    assert os.environ.get("HF_DATASETS_OFFLINE") == "1"
+    # Verify local_files_only=True was passed to load_model
+    call_kwargs = mock_whisperx.load_model.call_args.kwargs
+    assert call_kwargs.get("local_files_only") is True
+
+    # Verify model_cache_only=True was passed to load_align_model
+    align_kwargs = mock_whisperx.load_align_model.call_args.kwargs
+    assert align_kwargs.get("model_cache_only") is True
 
     # Verify no external internet sockets were contacted
     assert len(connected_hosts) == 0
+
+
+def test_offline_fallback_to_cached_model():
+    """Verify that when requested model is missing and network is offline, it falls back to a cached model."""
+    from backend.transcriber import run_whisperx_pipeline
+
+    mock_whisperx = MagicMock()
+    mock_model = MagicMock()
+    # First call (for 'medium') fails with LocalEntryNotFoundError
+    # Second call (for fallback 'large-v3') succeeds
+    mock_whisperx.load_model.side_effect = [
+        OSError("Model not found locally"),
+        mock_model,
+    ]
+    mock_whisperx.load_audio.return_value = MagicMock()
+    mock_model.transcribe.return_value = {"segments": [], "language": "en"}
+    mock_whisperx.load_align_model.return_value = (MagicMock(), MagicMock())
+    mock_whisperx.align.return_value = {"segments": [], "word_segments": []}
+
+    with patch("backend.transcriber.is_network_available", return_value=False):
+        with patch("backend.transcriber.get_locally_cached_whisper_models", return_value=["base", "large-v3"]):
+            with patch.dict(sys.modules, {"whisperx": mock_whisperx}):
+                result = run_whisperx_pipeline(
+                    audio_wav_path="/mock/test.wav",
+                    model_name="medium",
+                )
+                assert result is not None
+
+    # Verify fallback to large-v3 was called with local_files_only=True
+    assert mock_whisperx.load_model.call_count == 2
+    second_call_args, second_call_kwargs = mock_whisperx.load_model.call_args_list[1]
+    assert second_call_args[0] == "large-v3"
+    assert second_call_kwargs.get("local_files_only") is True
 
 
 def test_diarization_pipeline_no_hf_token():
