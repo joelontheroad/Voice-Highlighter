@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: 2026 [Author/Organization]
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+name: Release & Supply Chain Attestation
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build-and-release:
+    name: Build Artifacts & Attestations
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Set up Python
+        uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c # v5.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Build Python Distribution (if applicable)
+        if: hashFiles('pyproject.toml') != ''
+        run: |
+          python -m pip install --upgrade pip build cyclonedx-bom
+          python -m build
+          cyclonedx-py requirements -o dist/sbom.json || cyclonedx-py environment -o dist/sbom.json
+
+      - name: Build Node Distribution (if applicable)
+        if: hashFiles('package.json') != ''
+        run: |
+          npm ci
+          npm pack --pack-destination dist/
+          npx @cyclonedx/cyclonedx-npm --output-file dist/sbom-node.json
+
+      - name: Generate SHA-256 Checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@9d7c94cfd0a1f3ed45544c887983e9fa900f0564 # v2.0.4
+        with:
+          files: dist/*
+          generate_release_notes: true

@@ -5,6 +5,41 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <!-- Directive 3 & 13: Universal Global UI Error Boundary (Zero Silent Crashes) -->
+  <script>
+    window.addEventListener('error', function(event) {
+      showFatalUIError('UI Runtime Error: ' + (event.message || 'Script error') + ' (' + (event.filename || 'unknown') + ':' + (event.lineno || 0) + ')');
+    });
+    window.addEventListener('unhandledrejection', function(event) {
+      var reason = event.reason;
+      var msg = reason && (reason.message || reason.toString()) ? (reason.message || reason.toString()) : 'Unhandled Promise Rejection';
+      showFatalUIError('Async Operation Error: ' + msg);
+    });
+    function showFatalUIError(msg) {
+      var box = document.getElementById('__fatal_error_banner');
+      if (!box) {
+        box = document.createElement('div');
+        box.id = '__fatal_error_banner';
+        box.setAttribute('role', 'alert');
+        box.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#b91c1c;color:#fff;padding:12px 16px;z-index:99999;font-weight:600;font-family:monospace;font-size:14px;box-shadow:0 4px 6px rgba(0,0,0,0.3);display:flex;justify-content:space-between;align-items:center;';
+        if (document.body) {
+          document.body.prepend(box);
+        } else {
+          document.documentElement.prepend(box);
+        }
+      }
+      box.textContent = '';
+      var textSpan = document.createElement('span');
+      textSpan.textContent = '⚠️ ' + msg;
+      box.appendChild(textSpan);
+      var dismissBtn = document.createElement('button');
+      dismissBtn.textContent = 'Dismiss';
+      dismissBtn.style.cssText = 'background:#fff;color:#b91c1c;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-weight:bold;margin-left:12px;';
+      dismissBtn.onclick = function() { box.remove(); };
+      box.appendChild(dismissBtn);
+    }
+  </script>
+
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Voice Highlighter — AI Word-Level Subtitle Generator</title>

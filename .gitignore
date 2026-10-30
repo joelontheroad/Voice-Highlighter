@@ -57,3 +57,6 @@ JG Notes/*.odg
 
 .agents/
 AGENTS.md
+
+.agents/rules/
+.standards/

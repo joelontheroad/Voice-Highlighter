@@ -186,4 +186,21 @@ create an implementation plan.
 /plan create the ability to create and delete keyframes where new styles come into affect. Use the existing interface where the user can scrub and jump into the movie.  Put the new keyframes on the timeline.  Each new keyframe can contain unique stylings.  Saving a style will save the current keyframes witht their stylings as well.
 
 Make an implementation plan.
+------------------------
+/plan I'd like to translate other languages into english. Do the research to determine if whisperX can translate, or if there are other modules that need to be added.
+
+Create an implementation plan.
+--------------------------------
+/plan Can you determine the native language immediately when the file is loaded, before the user choses an action?  If so, I'd like a three way toggle (or radio buttons), with these choices.
+- English only
+- [Original language only]
+- Both languges
+
+If the user chosed "both languages", then I'd like a toggle to become active:
+- English on top
+- Original language on top
+
+I don't want the choices to be active, or seen if the video is in English.  (Perhpas a collapsed accordian?). They only become active when a different language is detected.
+
+update implementation plan
 
