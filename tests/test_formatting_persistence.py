@@ -333,7 +333,7 @@ def test_system_info_version_compliance() -> None:
     assert info["success"] is True
     assert "version" in info
     assert info["version"] == __version__
-    assert info["version"] == "1.1.0"
+    assert info["version"] == "1.2.0"
 
 
 def test_preset_persistence_cycle(tmp_path: Path, monkeypatch) -> None:

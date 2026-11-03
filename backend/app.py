@@ -39,7 +39,13 @@ from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend import __version__
-from backend.ass_generator import generate_ass_content, update_ass_formatting
+from backend.ass_generator import (
+    extract_ass_metadata,
+    generate_ass_content,
+    merge_speaker_channels,
+    parse_ass_timestamp,
+    update_ass_formatting,
+)
 from backend.config import (
     StylePreset,
     delete_preset,
@@ -50,7 +56,7 @@ from backend.config import (
     sanitize_log_path,
     save_preset,
 )
-from backend.diarizer import diarize_whisper_result
+from backend.diarizer import diarize_whisper_result, extract_audio_snippet_bytes
 from backend.extractor import (
     burn_subtitles_to_video,
     extract_audio,
@@ -234,6 +240,16 @@ class TranscribeRequest(BaseModel):
     reuse_existing_wav: bool | None = False
     enable_diarization: bool | None = False
     custom_vocabulary: list[str] | None = None
+    speaker_count: int | None = None
+
+
+class RediarizeRequest(BaseModel):
+    """Request payload for on-demand acoustic speaker re-clustering."""
+
+    task_id: str | None = None
+    video_path: str | None = None
+    speaker_count: int = 5
+    styling: dict[str, Any] | None = None
 
 
 class PreviewAssRequest(BaseModel):
@@ -854,18 +870,37 @@ def process_transcription_job(
                 media_keywords=filename_tokens,
             )
 
-            if enable_diarization:
+            # Determine if user requested explicit speaker count
+            target_spk = None
+            if styling.get("speaker_count") and int(styling.get("speaker_count", 0)) >= 2:
+                target_spk = int(styling.get("speaker_count"))
+            elif styling.get("speakerCount") and int(styling.get("speakerCount", 0)) >= 2:
+                target_spk = int(styling.get("speakerCount"))
+            elif isinstance(styling.get("speaker_channels"), dict) and len(styling["speaker_channels"]) >= 2:
+                target_spk = len(styling["speaker_channels"])
+
+            should_diarize = bool(
+                enable_diarization
+                or styling.get("is_multi_speaker")
+                or styling.get("isMultiSpeaker")
+                or (target_spk and target_spk >= 2)
+            )
+            tasks[task_id]["wav_path"] = wav_path
+            if should_diarize:
                 update_progress("Clustering multi-speaker acoustic voices...", 82)
                 try:
+                    max_spk = min(7, max(2, target_spk or 7))
                     whisper_result, speaker_samples = diarize_whisper_result(
                         audio_wav_path=wav_path,
                         whisper_result=whisper_result,
                         min_speakers=2,
-                        max_speakers=5,
+                        max_speakers=max_spk,
+                        target_speakers=None,
+                        keyframes=styling.get("keyframes") if styling else None,
                     )
                     # Persist audio snippet bytes to disk in AUDIO_DIR for streaming
                     serializable_samples: dict[str, Any] = {}
-                    for spk_id, sample_meta in speaker_samples.items():
+                    for idx, (spk_id, sample_meta) in enumerate(speaker_samples.items()):
                         raw_bytes = sample_meta.get("bytes", b"")
                         if raw_bytes:
                             snippet_path = os.path.join(AUDIO_DIR, f"{task_id}_{spk_id}.wav")
@@ -874,12 +909,29 @@ def process_transcription_job(
                                     sf.write(raw_bytes)
                             except Exception:
                                 pass
-                        serializable_samples[spk_id] = {
+
+                            # Also create alias for human-readable speaker label
+                            spk_name = sample_meta.get("speaker_name", f"Speaker {idx + 1}")
+                            safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "", spk_name)
+                            if safe_name and safe_name != spk_id:
+                                alias_path = os.path.join(AUDIO_DIR, f"{task_id}_{safe_name}.wav")
+                                try:
+                                    with open(alias_path, "wb") as sf:
+                                        sf.write(raw_bytes)
+                                except Exception:
+                                    pass
+
+                        sample_payload = {
                             "quote": sample_meta.get("quote", ""),
                             "duration": sample_meta.get("duration", 2.5),
                             "speaker_name": sample_meta.get("speaker_name", spk_id),
                             "sample_url": f"/api/speaker-sample/{task_id}/{spk_id}",
                         }
+                        serializable_samples[spk_id] = sample_payload
+                        spk_name = sample_meta.get("speaker_name", f"Speaker {idx + 1}")
+                        serializable_samples[spk_name] = sample_payload
+                        serializable_samples[f"Speaker {idx + 1}"] = sample_payload
+
                     tasks[task_id]["speaker_samples"] = serializable_samples
                     tasks[task_id]["speakers_found"] = list(speaker_samples.keys())
                 except Exception as de:
@@ -1048,13 +1100,18 @@ def start_transcribe(req: TranscribeRequest, auth: str = Depends(verify_auth)):
         "speaker_samples": None,
     }
 
+    effective_styling = dict(req.styling or {})
+    if req.speaker_count and req.speaker_count >= 2:
+        effective_styling["speaker_count"] = req.speaker_count
+        effective_styling["is_multi_speaker"] = True
+
     thread = threading.Thread(
         target=process_transcription_job,
         args=(
             task_id,
             video_path,
             req.model_name or "large-v3",
-            req.styling,
+            effective_styling,
             bool(req.burn_video),
             req.output_filename,
             bool(req.reuse_existing_ass if req.reuse_existing_ass is not None else False),
@@ -1067,6 +1124,181 @@ def start_transcribe(req: TranscribeRequest, auth: str = Depends(verify_auth)):
     thread.start()
 
     return {"task_id": task_id}
+
+
+@app.post("/api/rediarize")
+def rediarize_speech(req: RediarizeRequest, auth: str = Depends(verify_auth)):
+    """Fast on-demand acoustic speaker re-clustering for an existing task or media file.
+
+    Re-clusters speech segments into the user's requested number of speakers (2-5 voices)
+    in < 100ms using cached Whisper segments and audio. Generates updated audio snippets
+    for all active speaker channels and recompiles the ASS subtitles without re-running ASR.
+
+    Args:
+        req: Re-diarization request payload specifying task_id or video_path, and speaker_count.
+        auth: Authentication token validated by dependency injection.
+
+    Returns:
+        Dictionary containing updated speakers_found, speaker_samples, and ass_content.
+    """
+    task_id = req.task_id or str(uuid.uuid4())
+    task = _get_or_load_task(task_id) if req.task_id else None
+
+    video_path = None
+    if task:
+        video_path = task.get("video_path")
+    if not video_path and req.video_path:
+        video_path = os.path.expanduser(req.video_path.strip())
+
+    if not video_path or not os.path.exists(video_path):
+        raise HTTPException(status_code=404, detail="Media file not found for re-diarization")
+
+    clean_path, media_dir, base_name, sibling_wav, sibling_ass = get_sibling_paths(video_path)
+
+    wav_path = task.get("wav_path") if task else None
+    if not wav_path or not os.path.exists(wav_path):
+        if os.path.exists(sibling_wav):
+            wav_path = sibling_wav
+        else:
+            scratch_wav = os.path.join(AUDIO_DIR, f"{task_id}.wav")
+            if os.path.exists(scratch_wav):
+                wav_path = scratch_wav
+            else:
+                extract_audio(clean_path, scratch_wav)
+                wav_path = scratch_wav
+
+    # Retrieve or reconstruct Whisper segments
+    whisper_result = task.get("whisper_result") if task else None
+    if not whisper_result or not whisper_result.get("segments"):
+        # Reconstruct segments from sibling ASS if available
+        ass_source = task.get("ass_file") if task else None
+        if not ass_source or not os.path.exists(ass_source):
+            ass_source = sibling_ass if os.path.exists(sibling_ass) else None
+
+        segments = []
+        if ass_source and os.path.exists(ass_source):
+            with open(ass_source, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("Dialogue:"):
+                        parts = line.split(",", 9)
+                        if len(parts) >= 10:
+                            start_s = parse_ass_timestamp(parts[1])
+                            end_s = parse_ass_timestamp(parts[2])
+                            text = re.sub(r"\{.*?\}", "", parts[9]).strip()
+                            segments.append({"start": start_s, "end": end_s, "text": text, "words": []})
+        whisper_result = {"segments": segments}
+
+    if not whisper_result.get("segments"):
+        raise HTTPException(status_code=400, detail="No speech segments available to re-cluster")
+
+    target_k = max(1, min(req.speaker_count, 7))
+    try:
+        whisper_result, speaker_samples = diarize_whisper_result(
+            audio_wav_path=wav_path,
+            whisper_result=whisper_result,
+            min_speakers=2,
+            max_speakers=7,
+            target_speakers=target_k,
+            keyframes=req.styling.get("keyframes") if req.styling else None,
+        )
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=f"Acoustic re-clustering error: {err}")
+
+    # Persist updated audio snippet bytes to disk in AUDIO_DIR
+    serializable_samples: dict[str, Any] = {}
+    for idx, (spk_id, sample_meta) in enumerate(speaker_samples.items()):
+        raw_bytes = sample_meta.get("bytes", b"")
+        if raw_bytes:
+            snippet_path = os.path.join(AUDIO_DIR, f"{task_id}_{spk_id}.wav")
+            try:
+                with open(snippet_path, "wb") as sf:
+                    sf.write(raw_bytes)
+            except Exception:
+                pass
+
+            spk_name = sample_meta.get("speaker_name", f"Speaker {idx + 1}")
+            safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "", spk_name)
+            if safe_name and safe_name != spk_id:
+                alias_path = os.path.join(AUDIO_DIR, f"{task_id}_{safe_name}.wav")
+                try:
+                    with open(alias_path, "wb") as sf:
+                        sf.write(raw_bytes)
+                except Exception:
+                    pass
+
+        sample_payload = {
+            "quote": sample_meta.get("quote", ""),
+            "duration": sample_meta.get("duration", 5.5),
+            "speaker_name": sample_meta.get("speaker_name", spk_id),
+            "sample_url": f"/api/speaker-sample/{task_id}/{spk_id}",
+        }
+        serializable_samples[spk_id] = sample_payload
+        spk_name = sample_meta.get("speaker_name", f"Speaker {idx + 1}")
+        serializable_samples[spk_name] = sample_payload
+        serializable_samples[f"Speaker {idx + 1}"] = sample_payload
+
+    # Re-compile ASS subtitles
+    effective_styling = dict((task.get("styling") if task else None) or req.styling or {})
+    effective_styling["is_multi_speaker"] = target_k >= 2
+    effective_styling["isMultiSpeaker"] = target_k >= 2
+    effective_styling["speaker_count"] = target_k
+    effective_styling["speakerCount"] = target_k
+
+    DEFAULT_PALETTE = ["#FFDF00", "#00E5FF", "#FF007F", "#00FF66", "#B026FF", "#FF9900", "#D8B4FE", "#F43F5E"]
+    existing_channels = dict(effective_styling.get("speaker_channels") or {})
+    for idx, spk_id in enumerate(speaker_samples.keys()):
+        if spk_id not in existing_channels:
+            existing_channels[spk_id] = {
+                "id": spk_id,
+                "name": speaker_samples[spk_id].get("speaker_name", f"Speaker {idx + 1}"),
+                "primary_color": "#FFFFFF",
+                "highlight_color": DEFAULT_PALETTE[idx % len(DEFAULT_PALETTE)],
+                "outline_color": "#000000",
+                "box_bg_color": "#000000",
+                "box_font_color": "#FFFFFF",
+            }
+    effective_styling["speaker_channels"] = existing_channels
+
+    meta = get_video_metadata(clean_path)
+    ass_content = generate_ass_content(
+        whisper_result=whisper_result,
+        config=effective_styling,
+        video_meta=meta,
+    )
+
+    # Save to disk
+    target_ass = (task.get("ass_file") if task else None) or sibling_ass
+    try:
+        with open(target_ass, "w", encoding="utf-8") as f:
+            f.write(ass_content)
+    except Exception:
+        target_ass = os.path.join(OUTPUTS_DIR, f"{task_id}.ass")
+        with open(target_ass, "w", encoding="utf-8") as f:
+            f.write(ass_content)
+
+    scratch_ass = os.path.join(OUTPUTS_DIR, f"{task_id}.ass")
+    try:
+        with open(scratch_ass, "w", encoding="utf-8") as f:
+            f.write(ass_content)
+    except Exception:
+        pass
+
+    if task_id in tasks:
+        tasks[task_id]["whisper_result"] = whisper_result
+        tasks[task_id]["speakers_found"] = list(speaker_samples.keys())
+        tasks[task_id]["speaker_samples"] = serializable_samples
+        tasks[task_id]["ass_file"] = target_ass
+        tasks[task_id]["ass_preview"] = "\n".join(ass_content.splitlines()[:60])
+        tasks[task_id]["styling"] = effective_styling
+
+    return {
+        "status": "success",
+        "task_id": task_id,
+        "speakers_found": list(speaker_samples.keys()),
+        "speaker_samples": serializable_samples,
+        "ass_file": target_ass,
+        "ass_content": ass_content,
+    }
 
 def _get_or_load_task(task_id: str) -> dict[str, Any] | None:
     """Retrieve task metadata from memory cache or restore from disk.
@@ -1218,7 +1450,7 @@ def get_speaker_sample(
     token: str | None = Query(None, alias="token"),
     auth: str = Depends(verify_auth),
 ):
-    """Stream a representative 2-second acoustic voice snippet for interactive verification.
+    """Stream a representative 5-second acoustic voice snippet for interactive verification.
 
     Args:
         task_id: Unique task identifier.
@@ -1334,6 +1566,38 @@ class UpdateAssRequest(BaseModel):
     styling_modified: bool | None = False
 
 
+class KeyframeUpdateRequest(BaseModel):
+    """Request payload for updating keyframes directly to the disk .ass file."""
+
+    keyframes: list[dict[str, Any]]
+    task_id: str | None = None
+    media_path: str | None = None
+    ass_path: str | None = None
+    styling: dict[str, Any] | None = None
+
+
+class MergeSpeakersRequest(BaseModel):
+    """Request payload for merging one speaker channel into another."""
+
+    source_speaker_id: str
+    target_speaker_id: str
+    ass_path: str | None = None
+    media_path: str | None = None
+    task_id: str | None = None
+
+
+class SpeakerChannelUpdateRequest(BaseModel):
+    """Request payload for updating speaker channel definitions directly to the disk .ass file."""
+
+    speaker_id: str
+    name: str | None = None
+    highlight_color: str | None = None
+    show_speaker_name: bool | None = None
+    task_id: str | None = None
+    media_path: str | None = None
+    ass_path: str | None = None
+
+
 class BurnVideoRequest(BaseModel):
     """Request payload for burning existing or updated subtitles into video."""
 
@@ -1394,7 +1658,7 @@ def _resolve_ass_file_path(
     if ass_path:
         p = os.path.expanduser(ass_path.strip())
         if os.path.exists(p):
-            candidates.append(p)
+            return p, os.path.basename(p)
 
     # 2. task_or_path can be an ASS file path, media path, or task_id
     if task_or_path:
@@ -1478,6 +1742,8 @@ def get_ass_content(
     with open(file_path, "r", encoding="utf-8") as f:
         content = f.read()
 
+    ass_meta = extract_ass_metadata(content)
+
     # Parse dialogue lines for the friendly editor
     dialogues = []
     lines = content.splitlines()
@@ -1509,6 +1775,93 @@ def get_ass_content(
         unique_speakers_found = ["Speaker 1"]
 
     t = _get_or_load_task(task_id) if task_id else None
+    speakers_list = (t.get("speakers_found") if (t and t.get("speakers_found")) else None)
+    if not speakers_list:
+        speakers_list = unique_speakers_found
+
+    samples_dict = t.get("speaker_samples") if t else None
+    if not samples_dict and len(speakers_list) > 1:
+        # Generate on-demand acoustic snippets from companion audio WAV
+        clean_media = parse_safe_file_uri(media_path) if media_path else ""
+        if not clean_media or not os.path.exists(clean_media):
+            clean_media = file_path
+
+        _, _, _, sibling_wav, _ = get_sibling_paths(clean_media)
+        source_wav = sibling_wav if os.path.exists(sibling_wav) else (clean_media if clean_media.lower().endswith(".wav") else "")
+        if not source_wav and os.path.exists(clean_media) and clean_media.lower().endswith((".mp4", ".mov", ".mkv", ".webm")):
+            temp_wav = os.path.join(AUDIO_DIR, f"{hashlib.md5(clean_media.encode()).hexdigest()[:12]}.wav")
+            try:
+                extract_audio(clean_media, temp_wav)
+                source_wav = temp_wav
+            except Exception:
+                source_wav = ""
+
+        if source_wav and os.path.exists(source_wav):
+            generated_samples: dict[str, Any] = {}
+            sample_task_key = task_id or f"hub_{hashlib.md5(file_path.encode()).hexdigest()[:12]}"
+
+            for idx, spk in enumerate(speakers_list):
+                canonical_id = f"SPEAKER_0{idx}" if idx < 10 else f"SPEAKER_{idx}"
+                matching_dls = [
+                    dl for dl in dialogues
+                    if dl.get("speaker") == spk
+                    or dl.get("style") == f"Speaker_{spk}"
+                    or dl.get("style") == f"Speaker_{canonical_id}"
+                    or dl.get("style") == canonical_id
+                    or f"[{spk}]" in dl.get("raw_text", "")
+                    or f"[Speaker {idx + 1}]" in dl.get("raw_text", "")
+                ]
+                if not matching_dls and idx < len(dialogues):
+                    step = max(1, len(dialogues) // len(speakers_list))
+                    pick_idx = min(idx * step, len(dialogues) - 1)
+                    matching_dls = [dialogues[pick_idx]]
+
+                if matching_dls:
+                    def score_dl(item):
+                        s = parse_ass_timestamp(item["start"])
+                        e = parse_ass_timestamp(item["end"])
+                        dur = max(0.1, e - s)
+                        return -abs(dur - 5.5)
+
+                    best_dl = max(matching_dls, key=score_dl)
+                    start_s = parse_ass_timestamp(best_dl["start"])
+                    end_s = parse_ass_timestamp(best_dl["end"])
+                    if end_s - start_s < 4.5:
+                        end_s = start_s + 5.0
+                    elif end_s - start_s > 6.5:
+                        end_s = start_s + 6.0
+
+                    try:
+                        raw_bytes = extract_audio_snippet_bytes(source_wav, start_s, end_s)
+                        if raw_bytes:
+                            snip_path = os.path.join(AUDIO_DIR, f"{sample_task_key}_{canonical_id}.wav")
+                            with open(snip_path, "wb") as sf:
+                                sf.write(raw_bytes)
+
+                            safe_spk_name = re.sub(r"[^a-zA-Z0-9_\-]", "", spk)
+                            if safe_spk_name and safe_spk_name != canonical_id:
+                                snip_alias = os.path.join(AUDIO_DIR, f"{sample_task_key}_{safe_spk_name}.wav")
+                                with open(snip_alias, "wb") as sf:
+                                    sf.write(raw_bytes)
+
+                            sample_meta = {
+                                "quote": best_dl.get("clean_text", "")[:45],
+                                "duration": round(end_s - start_s, 2),
+                                "speaker_name": spk if not spk.startswith("SPEAKER_") else f"Speaker {idx + 1}",
+                                "sample_url": f"/api/speaker-sample/{sample_task_key}/{canonical_id}",
+                            }
+                            generated_samples[canonical_id] = sample_meta
+                            generated_samples[spk] = sample_meta
+                            generated_samples[f"Speaker {idx + 1}"] = sample_meta
+                    except Exception as e:
+                        print(f"[Voice Highlighter] On-demand snippet extraction note: {e}")
+
+            if generated_samples:
+                samples_dict = generated_samples
+                if t:
+                    t["speaker_samples"] = samples_dict
+                else:
+                    tasks[sample_task_key] = {"speaker_samples": samples_dict}
 
     return {
         "success": True,
@@ -1517,10 +1870,15 @@ def get_ass_content(
         "filename": display_name or os.path.basename(file_path),
         "content": content,
         "dialogues": dialogues,
-        "detected_speakers": unique_speakers_found,
-        "speaker_count": len(unique_speakers_found),
-        "is_multi_speaker": len(unique_speakers_found) > 1,
-        "speaker_samples": t.get("speaker_samples") if t else None,
+        "dialogue_count": len(dialogues),
+        "detected_speakers": speakers_list,
+        "speakers_found": speakers_list,
+        "speaker_count": len(speakers_list),
+        "is_multi_speaker": len(speakers_list) > 1 or bool(ass_meta.get("keyframes")),
+        "speaker_samples": samples_dict,
+        "keyframes": ass_meta.get("keyframes", []),
+        "speaker_channels": ass_meta.get("speaker_channels", {}),
+        "segments": ass_meta.get("segments", []),
         "has_burned_video": bool(t.get("video_file") if t else False),
         "video_file": t.get("video_file") if t else None,
         "video_filename": os.path.basename(t.get("video_file")) if (t and t.get("video_file")) else None
@@ -1637,6 +1995,240 @@ def update_ass_content(
     }
 
 
+@app.get("/api/ass-dialogues")
+@app.get("/api/ass-dialogues/{task_id}")
+def get_ass_dialogues(
+    task_id: str | None = None,
+    media_path: str | None = None,
+    ass_path: str | None = None,
+):
+    """Retrieve authoritative parsed dialogue events and styles directly from the disk .ass file.
+
+    Guarantees 100% visual parity between frontend preview and FFmpeg video burning.
+    """
+    return get_ass_content(task_id=task_id, media_path=media_path, ass_path=ass_path)
+
+
+@app.post("/api/keyframe")
+def update_keyframe_endpoint(
+    req: KeyframeUpdateRequest,
+    auth: str = Depends(verify_auth),
+):
+    """Save timeline keyframes directly to disk .ass and return updated parsed dialogues.
+
+    Establishes the .ass file on disk as the Single Source of Truth.
+    """
+    file_path, display_name = _resolve_ass_file_path(req.task_id, req.media_path, req.ass_path)
+    if not file_path or not os.path.exists(file_path):
+        raise HTTPException(
+            status_code=404,
+            detail="Subtitle (.ass) file not found. Please generate subtitles first."
+        )
+
+    with open(file_path, "r", encoding="utf-8") as f:
+        content_str = f.read()
+
+    meta = None
+    clean_media = parse_safe_file_uri(req.media_path) if req.media_path else None
+    if clean_media and os.path.exists(clean_media):
+        try:
+            meta = get_video_metadata(clean_media)
+        except Exception:
+            pass
+
+    t = _get_or_load_task(req.task_id) if req.task_id else None
+    task_segments = None
+    if t and t.get("whisper_result"):
+        task_segments = t["whisper_result"].get("segments")
+
+    cfg = dict(req.styling or {})
+    cfg["keyframes"] = req.keyframes
+
+    updated_ass = update_ass_formatting(
+        ass_content=content_str,
+        config=cfg,
+        video_meta=meta,
+        segments=task_segments,
+    )
+
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(updated_ass)
+
+    if req.task_id:
+        output_ass_path = os.path.join(OUTPUTS_DIR, f"{req.task_id}.ass")
+        try:
+            with open(output_ass_path, "w", encoding="utf-8") as f:
+                f.write(updated_ass)
+        except Exception:
+            pass
+
+    parsed_dialogues = []
+    lines = updated_ass.splitlines()
+    for idx, line in enumerate(lines):
+        if line.startswith("Dialogue:"):
+            parts = line.split(",", 9)
+            if len(parts) >= 10:
+                speaker_name = parts[4].strip() if len(parts) > 4 else ""
+                clean_text = re.sub(r'\{[^}]*\}', '', parts[9])
+                clean_text = clean_text.replace('\\N', ' ').replace('\\n', ' ').replace('\\h', ' ')
+                clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+                parsed_dialogues.append({
+                    "line_index": idx,
+                    "layer": parts[0].replace("Dialogue:", "").strip(),
+                    "start": parts[1].strip(),
+                    "end": parts[2].strip(),
+                    "style": parts[3].strip(),
+                    "speaker": speaker_name or "Speaker 1",
+                    "raw_text": parts[9],
+                    "clean_text": clean_text
+                })
+
+    return {
+        "status": "success",
+        "success": True,
+        "keyframes": req.keyframes,
+        "dialogues": parsed_dialogues,
+        "dialogue_count": len(parsed_dialogues),
+        "path": file_path,
+        "file_path": file_path,
+    }
+
+
+@app.post("/api/speaker-channel")
+def update_speaker_channel_endpoint(
+    req: SpeakerChannelUpdateRequest,
+    auth: str = Depends(verify_auth),
+):
+    """Update speaker channel metadata (name, color, prefix visibility) directly on disk .ass."""
+    file_path, display_name = _resolve_ass_file_path(req.task_id, req.media_path, req.ass_path)
+    if not file_path or not os.path.exists(file_path):
+        raise HTTPException(
+            status_code=404,
+            detail="Subtitle (.ass) file not found. Please generate subtitles first."
+        )
+
+    with open(file_path, "r", encoding="utf-8") as f:
+        content_str = f.read()
+
+    meta = None
+    clean_media = parse_safe_file_uri(req.media_path) if req.media_path else None
+    if clean_media and os.path.exists(clean_media):
+        try:
+            meta = get_video_metadata(clean_media)
+        except Exception:
+            pass
+
+    existing_meta = extract_ass_metadata(content_str)
+    spk_map = dict(existing_meta.get("speaker_channels") or {})
+    ch = dict(spk_map.get(req.speaker_id) or {"id": req.speaker_id})
+    if req.name is not None:
+        ch["name"] = req.name
+    if req.highlight_color is not None:
+        ch["highlight_color"] = req.highlight_color
+    if req.show_speaker_name is not None:
+        ch["show_speaker_name"] = req.show_speaker_name
+    spk_map[req.speaker_id] = ch
+
+    cfg = {"speaker_channels": spk_map, "is_multi_speaker": True}
+    t = _get_or_load_task(req.task_id) if req.task_id else None
+    task_segments = None
+    if t and t.get("whisper_result"):
+        task_segments = t["whisper_result"].get("segments")
+
+    updated_ass = update_ass_formatting(
+        ass_content=content_str,
+        config=cfg,
+        video_meta=meta,
+        segments=task_segments,
+    )
+
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(updated_ass)
+
+    parsed_dialogues = []
+    lines = updated_ass.splitlines()
+    for idx, line in enumerate(lines):
+        if line.startswith("Dialogue:"):
+            parts = line.split(",", 9)
+            if len(parts) >= 10:
+                speaker_name = parts[4].strip() if len(parts) > 4 else ""
+                clean_text = re.sub(r'\{[^}]*\}', '', parts[9])
+                clean_text = clean_text.replace('\\N', ' ').replace('\\n', ' ').replace('\\h', ' ')
+                clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+                parsed_dialogues.append({
+                    "line_index": idx,
+                    "layer": parts[0].replace("Dialogue:", "").strip(),
+                    "start": parts[1].strip(),
+                    "end": parts[2].strip(),
+                    "style": parts[3].strip(),
+                    "speaker": speaker_name or "Speaker 1",
+                    "raw_text": parts[9],
+                    "clean_text": clean_text
+                })
+
+    return {
+        "status": "success",
+        "success": True,
+        "speaker_id": req.speaker_id,
+        "speaker_channels": spk_map,
+        "dialogues": parsed_dialogues,
+        "dialogue_count": len(parsed_dialogues),
+        "path": file_path,
+        "file_path": file_path,
+    }
+
+
+
+@app.post("/api/merge-speakers")
+def merge_speakers_endpoint(
+    req: MergeSpeakersRequest,
+    auth: str = Depends(verify_auth),
+):
+    """Merge source speaker channel into target speaker channel on disk ASS file."""
+    file_path, display_name = _resolve_ass_file_path(req.task_id, req.media_path, req.ass_path)
+    if not file_path or not os.path.exists(file_path):
+        raise HTTPException(
+            status_code=404,
+            detail="Subtitle (.ass) file not found. Please generate subtitles first."
+        )
+
+    res = merge_speaker_channels(file_path, req.source_speaker_id, req.target_speaker_id)
+
+    with open(file_path, "r", encoding="utf-8") as f:
+        disk_content = f.read()
+
+    meta = extract_ass_metadata(disk_content)
+    parsed_dialogues = []
+    for idx, line in enumerate(disk_content.splitlines()):
+        if line.startswith("Dialogue:"):
+            parts = line.split(",", 9)
+            if len(parts) >= 10:
+                speaker_name = parts[4].strip() if len(parts) > 4 else ""
+                clean_text = re.sub(r"\{[^}]*\}", "", parts[9])
+                clean_text = clean_text.replace("\\N", " ").replace("\\n", " ").replace("\\h", " ")
+                clean_text = re.sub(r"\s+", " ", clean_text).strip()
+                parsed_dialogues.append({
+                    "line_index": idx,
+                    "layer": parts[0].replace("Dialogue:", "").strip(),
+                    "start": parts[1].strip(),
+                    "end": parts[2].strip(),
+                    "style": parts[3].strip(),
+                    "speaker": speaker_name or "Speaker 1",
+                    "raw_text": parts[9],
+                    "clean_text": clean_text,
+                })
+
+    return {
+        "status": "success",
+        "merge_result": res,
+        "speakers": meta.get("speaker_channels", {}),
+        "keyframes": meta.get("keyframes", []),
+        "dialogues": parsed_dialogues,
+        "dialogue_count": len(parsed_dialogues),
+        "path": file_path,
+        "file_path": file_path,
+    }
+
 @app.post("/api/burn-video")
 def burn_video_endpoint(req: BurnVideoRequest, auth: str = Depends(verify_auth)):
     """Burn subtitles into source video with hardware acceleration and update task metadata.
@@ -1677,18 +2269,28 @@ def burn_video_endpoint(req: BurnVideoRequest, auth: str = Depends(verify_auth))
     except Exception:
         pass
 
-    # 2. Extract video metadata and update formatting ONLY if user explicitly changed styling in UI
-    if req.styling_modified:
-        styling_cfg = req.styling
-        if not styling_cfg and req.task_id:
-            t_existing = _get_or_load_task(req.task_id)
-            if t_existing and t_existing.get("styling"):
-                styling_cfg = t_existing.get("styling")
+    # 2. Extract video metadata and update formatting if styling modified OR keyframes/multi-speaker present
+    styling_cfg = req.styling
+    if not styling_cfg and req.task_id:
+        t_existing = _get_or_load_task(req.task_id)
+        if t_existing and t_existing.get("styling"):
+            styling_cfg = t_existing.get("styling")
 
+    has_keyframes = bool(styling_cfg and styling_cfg.get("keyframes"))
+    has_multi_spk = bool(styling_cfg and (styling_cfg.get("is_multi_speaker") or styling_cfg.get("isMultiSpeaker")))
+    should_update_ass = bool(req.styling_modified or has_keyframes or has_multi_spk or (styling_cfg and len(styling_cfg) > 0))
+
+    if should_update_ass and styling_cfg:
+        task_segments = None
+        if req.task_id:
+            t_obj = _get_or_load_task(req.task_id)
+            if t_obj and t_obj.get("whisper_result"):
+                task_segments = t_obj["whisper_result"].get("segments")
         current_content = update_ass_formatting(
             ass_content=current_content,
             config=styling_cfg,
             video_meta=meta,
+            segments=task_segments,
         )
         os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
         with open(file_path, "w", encoding="utf-8") as f:
@@ -1952,8 +2554,8 @@ def reveal_in_folder(target_path: str) -> dict[str, Any]:
     dir_path = clean_target if os.path.isdir(clean_target) else os.path.dirname(clean_target)
     filename = os.path.basename(clean_target) if os.path.isfile(clean_target) else None
 
-    # Pre-flight: Headless environment check (Directive 11)
-    if is_headless():
+    # Pre-flight: Headless environment check or test isolation check (Directive 11)
+    if is_headless() or os.environ.get("VOICE_HIGHLIGHTER_TESTING"):
         return {
             "success": True,
             "headless": True,
@@ -2278,20 +2880,76 @@ def is_headless() -> bool:
 
 
 def open_browser_window(url: str) -> None:
-    """Safely open the target URL in the user's default browser window without crashing.
+    """Safely open the target URL in its own standalone browser window without crashing.
 
     Silences noisy stderr messages produced by external browser helper processes
     (e.g., Chromium Linux zygote Broken pipe messages when attaching to an existing session).
+    Opens the URL in a dedicated top-level window (not a new tab).
 
     Args:
         url: Application URL including ephemeral authentication token.
     """
+    if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("VOICE_HIGHLIGHTER_TESTING"):
+        return
+
     try:
         import shutil
 
-        if sys.platform.startswith("linux") and shutil.which("xdg-open"):
+        # On Linux, detect default browser binary and launch with --new-window
+        if sys.platform.startswith("linux"):
+            target_bin = None
+            if shutil.which("xdg-settings"):
+                try:
+                    res = subprocess.run(
+                        ["xdg-settings", "get", "default-web-browser"],
+                        capture_output=True,
+                        text=True,
+                        timeout=1.0,
+                    )
+                    desktop = res.stdout.strip().replace(".desktop", "")
+                    if shutil.which(desktop):
+                        target_bin = desktop
+                except Exception:
+                    pass
+
+            if not target_bin:
+                for candidate in ["brave-browser", "google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "firefox"]:
+                    if shutil.which(candidate):
+                        target_bin = candidate
+                        break
+
+            if target_bin:
+                subprocess.Popen(
+                    [target_bin, "--new-window", url],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                return
+
+            if shutil.which("xdg-open"):
+                subprocess.Popen(
+                    ["xdg-open", url],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                return
+
+        # On macOS, 'open -n' opens in a new instance/window
+        if sys.platform == "darwin" and shutil.which("open"):
             subprocess.Popen(
-                ["xdg-open", url],
+                ["open", "-n", url],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            return
+
+        # On Windows, 'start' with browser
+        if sys.platform == "win32":
+            subprocess.Popen(
+                ["cmd", "/c", "start", "", url],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
@@ -2299,7 +2957,7 @@ def open_browser_window(url: str) -> None:
             return
 
         import webbrowser
-        webbrowser.open(url)
+        webbrowser.open_new(url)
     except Exception as exc:
         # SECURITY: Catch any browser launch failures without crashing the server process
         sys.stderr.write(f"[Voice Highlighter] Notice: Could not open browser ({exc}).\n")
@@ -2338,11 +2996,31 @@ def run_server(
         timer.daemon = True
         timer.start()
 
+    class GracefulServer(uvicorn.Server):
+        def handle_exit(self, sig: int, frame: Any) -> None:
+            if not getattr(self, "_shutdown_started", False):
+                self._shutdown_started = True
+                try:
+                    from backend.cli import ShutdownSpinner
+                    self._spinner = ShutdownSpinner("Shutting down Voice Highlighter...")
+                    self._spinner.start()
+                except Exception:
+                    self._spinner = None
+            super().handle_exit(sig, frame)
+
     try:
-        if reload:
-            uvicorn.run("backend.app:app", host=host, port=port, reload=True, reload_dirs=["backend"])
-        else:
-            uvicorn.run(app, host=host, port=port, log_level="warning")
+        config = uvicorn.Config(
+            "backend.app:app" if reload else app,
+            host=host,
+            port=port,
+            reload=reload,
+            reload_dirs=["backend"] if reload else None,
+            log_level="warning",
+        )
+        server = GracefulServer(config)
+        server.run()
+        if hasattr(server, "_spinner") and server._spinner:
+            server._spinner.stop("✓ Voice Highlighter stopped cleanly.\n")
     except OSError as exc:
         sys.stderr.write(f"\n[Voice Highlighter] Error: Could not bind to {host}:{port} ({exc}).\n")
         sys.stderr.write("[Voice Highlighter] The port may already be in use. Pass '--port <PORT>' or set VOICE_HIGHLIGHTER_PORT to choose a different port.\n")

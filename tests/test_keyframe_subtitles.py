@@ -305,3 +305,96 @@ def test_update_ass_formatting_with_keyframes_right_stay_in_effect():
     assert r"\pos(500,300)" in d3
     assert "&H0000FF00&" in d3
 
+
+def test_keyframe_scoped_single_vs_multi_speaker():
+    """Verify single-speaker formatting before keyframe and multi-speaker formatting at/after keyframe."""
+    whisper_result = {
+        "segments": [
+            {
+                "start": 2.0,
+                "end": 6.0,
+                "text": "Before keyframe single voice",
+                "speaker": "SPEAKER_00",
+                "words": [
+                    {"word": "Before", "start": 2.0, "end": 2.8, "speaker": "SPEAKER_00"},
+                    {"word": "keyframe", "start": 3.0, "end": 4.0, "speaker": "SPEAKER_00"},
+                ],
+            },
+            {
+                "start": 18.0,
+                "end": 22.0,
+                "text": "After keyframe multiple voices",
+                "speaker": "SPEAKER_01",
+                "words": [
+                    {"word": "After", "start": 18.0, "end": 19.0, "speaker": "SPEAKER_01"},
+                    {"word": "keyframe", "start": 19.2, "end": 20.5, "speaker": "SPEAKER_01"},
+                ],
+            },
+        ]
+    }
+
+    config = {
+        "pos_x_pct": 50.0,
+        "pos_y_pct": 80.0,
+        "highlight_color": "#FFDF00",
+        "is_multi_speaker": False,
+        "keyframes": [
+            {
+                "time": 15.0,
+                "styling": {
+                    "is_multi_speaker": True,
+                    "speaker_channels": {
+                        "SPEAKER_00": {"name": "Speaker 1", "highlight_color": "#00FF00", "primary_color": "#FFFFFF"},
+                        "SPEAKER_01": {"name": "Speaker 2", "highlight_color": "#FF007F", "primary_color": "#FFFFFF"},
+                    },
+                },
+            }
+        ],
+        "speaker_channels": {
+            "SPEAKER_00": {"name": "Speaker 1", "highlight_color": "#00FF00", "primary_color": "#FFFFFF"},
+            "SPEAKER_01": {"name": "Speaker 2", "highlight_color": "#FF007F", "primary_color": "#FFFFFF"},
+        },
+    }
+
+    video_meta = {"width": 1080, "height": 1920}
+    ass_text = generate_ass_content(whisper_result, config=config, video_meta=video_meta)
+    dialogues = [line for line in ass_text.splitlines() if line.startswith("Dialogue:")]
+    assert len(dialogues) >= 2
+
+    # First dialogue event (start at 2.0s < 15.0s): must be Default style, not Speaker_SPEAKER_00
+    early_parts = dialogues[0].split(",", 9)
+    assert early_parts[3] == "Default"
+
+    # Second dialogue event (start at 18.0s >= 15.0s): must be Speaker_SPEAKER_01
+    late_parts = dialogues[-1].split(",", 9)
+    assert late_parts[3] == "Speaker_SPEAKER_01"
+    # Highlight color for SPEAKER_01 is #FF007F (&H007F00FF&)
+    assert "&H007F00FF&" in late_parts[9]
+
+    # Now verify update_ass_formatting strips prefixes before keyframe
+    existing_ass = (
+        "[Script Info]\nPlayResX: 1080\nPlayResY: 1920\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        "Style: Default,Arial,50,&H00FFFFFF&,&H0000DFFF&,&H00000000&,&H80000000&,0,0,0,0,100,100,0,0,1,2,0,2,10,10,50,1\n"
+        "Style: Speaker_SPEAKER_01,Arial,50,&H00FFFFFF&,&H007F00FF&,&H00000000&,&H80000000&,0,0,0,0,100,100,0,0,1,2,0,2,10,10,50,1\n\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        "Dialogue: 0,0:00:03.00,0:00:05.00,Speaker_SPEAKER_00,Speaker 1,0,0,0,,{\\c&H0000DFFF&}[Speaker 1]: {\\c&H00FFFFFF&}Early speech\n"
+        "Dialogue: 0,0:00:18.00,0:00:20.00,Speaker_SPEAKER_01,Speaker 2,0,0,0,,{\\c&H007F00FF&}[Speaker 2]: {\\c&H00FFFFFF&}Late speech\n"
+    )
+
+    reformatted = update_ass_formatting(existing_ass, config=config, video_meta=video_meta)
+    ref_dialogues = [line for line in reformatted.splitlines() if line.startswith("Dialogue:")]
+    assert len(ref_dialogues) == 2
+
+    # Line 1 (at 3.0s, before keyframe): style must be Default, prefix [Speaker 1]: removed
+    ref_d1 = ref_dialogues[0].split(",", 9)
+    assert ref_d1[3] == "Default"
+    assert "[Speaker 1]:" not in ref_d1[9]
+
+    # Line 2 (at 18.0s, after keyframe): style must be Speaker_SPEAKER_01
+    ref_d2 = ref_dialogues[1].split(",", 9)
+    assert ref_d2[3] == "Speaker_SPEAKER_01"
+
+

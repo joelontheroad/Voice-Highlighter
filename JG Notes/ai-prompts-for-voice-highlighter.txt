@@ -203,4 +203,17 @@ If the user chosed "both languages", then I'd like a toggle to become active:
 I don't want the choices to be active, or seen if the video is in English.  (Perhpas a collapsed accordian?). They only become active when a different language is detected.
 
 update implementation plan
+----------------------
+/plan Instagram is more complicated than facebook or youtube.  There are apparently three different aspect ratios depending on whether or not it's a feed, etc.
+
+Do research on those three aspect ratios and create an implementation plan to add an appropriate overlay so text the user can be sure the text doesn't get cut off at those aspect ratios.
+
+----------------------
+/plan  Can you make the sound snippets longer by three seconds?
+
+The program correctly recognized keyframes in preview.  However, when it burned into video, it forgot there keyframes.  I dropped a keyframe at the beginning of the video and one half way through when other speakers started speaking so they could be identified.  In preview, the program worked, but when it was burned to video, the speakers were not identified. They should have been identified in text in the video.
+
+Fix this.
+
+Make an implementation plan.
 

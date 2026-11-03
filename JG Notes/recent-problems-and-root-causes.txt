@@ -1,0 +1,161 @@
+Executive Summary
+This implementation plan resolves the speaker identification failures on multi-speaker videos (specifically verified against the user's reference file win-win-parking-benefits-pgm-v1.3.wav), fixes the missing speaker identification in burned videos when keyframes are used, and ensures the application launches in its own dedicated window rather than as a tab in an existing browser session.
+
+1. Problem Analysis & Empirical Findings
+A. Speaker Diarization Failure on win-win-parking-benefits-pgm-v1.3.wav
+The reference audio file contains four unique adult female speakers:
+
+Katie Kam: First half (0:00 to ~0:27, Segments 0–4: 26.7s total speech).
+Diane Kearns-Osterweil: Segment 5 (~30.85s–31.49s, "Street lights.").
+Stephanie Bazan: Segment 6 (~35.17s–35.75s, "Inventures.").
+Jennifer Franklin: Segment 7 (~36.82s–41.36s, "Parking benefit district revenue can be used to fix our sidewalks in West Campus.").
+Root Causes Uncovered:
+Phonetic & Segment Duration Instability:
+Segment 2 ("Let me tell you more about it", 1.0s) has lower pitch inflection at the end of the intro thought. Because MFCC averages over short isolated segments capture phonetics (vowels/consonants) rather than vocal tract identity, Seg 2 was clustered separately as SPEAKER_01.
+Segments 5 and 6 are ultra-short (<0.7s) single-phrase utterances ("Street lights.", "Inventures.").
+With 4 target clusters, splitting Katie Kam into SPEAKER_00 and SPEAKER_01 forced Jennifer Franklin (Seg 7) to be merged into SPEAKER_00 (Katie Kam). Jennifer Franklin was completely obliterated!
+Microphone Channel Bias in Raw MFCCs:
+All speakers were recorded with the same microphone in the same ambient environment in West Campus. Normalized MFCCs are 99% identical across all speakers (cosine similarity 0.98–0.998).
+In contrast, the vocal tract subband energy distribution shows distinct separation:
+Katie Kam: 71.6% of vocal energy in the 500–1500 Hz formant region, centroid 1317 Hz.
+Diane Kearns-Osterweil: Centroid 1701 Hz (bright vocal resonance).
+Stephanie Bazan: High pitch register (median F0 ~250–320 Hz).
+Jennifer Franklin: 50.1% of vocal energy in the 100–500 Hz region (vs Katie's 19.4%), centroid 1548 Hz.
+Absence of Conversational Turn Aggregation:
+Segments 0–4 are separated by breath pauses of only 0.02s to 0.76s (gaps < 0.85s). There is no speaker handover in a 0.1s pause during continuous speech.
+When segments are grouped into Conversational Turns by speech continuity (gap threshold <= 0.85s), the audio partitions into exactly 4 turns:
+Turn 1 [0.03–26.71s]: Katie Kam (Segments 0, 1, 2, 3, 4)
+Turn 2 [30.85–31.49s]: Diane Kearns-Osterweil (Segment 5)
+Turn 3 [35.17–35.75s]: Stephanie Bazan (Segment 6)
+Turn 4 [36.82–41.36s]: Jennifer Franklin (Segment 7)
+Clustering at the Turn level (or incorporating Keyframe priors) achieves 100% accurate 1-to-1 mapping to the 4 real speakers.
+B. Missing Speaker Identification in Burned Video
+When the user dropped Keyframe 1 at t=0 (single speaker) and Keyframe 2 halfway through (multi-speaker):
+
+In the preview stage, frontend JavaScript simulates styles dynamically.
+In update_ass_formatting() during video burning:
+Dialogue lines after Keyframe 2 had Style: Default and empty Actor if transcription initially started in single-speaker mode.
+The formatter checked curr_spk_id: if absent, line 919 fell back to first_key (SPEAKER_00 / Speaker 1).
+Consequently, all dialogue lines were burned as Speaker 1, forgetting the multi-speaker keyframe tags and dropping the speaker names in the burned video.
+C. Browser Tab vs Standalone Window
+open_browser_window() currently executes xdg-open <url> on Linux or webbrowser.open(url).
+
+xdg-open sends an IPC/D-Bus request to the user's running browser session (e.g. Brave, Chrome, Firefox), which opens the URL in a new tab of the currently focused window.
+Modern desktop browsers accept --new-window <url> (or --app=<url> for Chromium/Brave/Edge) to create a dedicated, standalone top-level window.
+===================================================
+mplementation Plan: 7-Speaker Diarization, Voice Separation Fix, Window Cleanup & Terminal Shutdown
+1. Problem Diagnosis & Architectural Findings
+A. 7-Speaker Studio Expansion (Requirement 1)
+Current Limitation: Speaker channels are hardcoded or clamped to a maximum of 5 across multiple files:
+backend/diarizer.py: Default max_speakers=5.
+backend/app.py: Line 890 (max_speakers=5) and Line 1186/1192 in /api/rediarize (min(req.speaker_count, 5)).
+frontend/index.html: Label reads "Multi-Speaker (1–5 Voices)", and #speakerCountSelector only has pill buttons for 2, 3, 4, 5.
+frontend/app.js: ensureSpeakerChannels() clamps with Math.min(count, 5). State initial dictionary only defines channels through SPEAKER_04.
+Palette Readiness: backend/app.py already includes an 8-color palette (DEFAULT_PALETTE = ["#FFDF00", "#00E5FF", "#FF007F", "#00FF66", "#B026FF", "#FF9900", "#D8B4FE", "#F43F5E"]). SPEAKER_05 (Speaker 6) maps to Amber Orange (#FF9900) and SPEAKER_06 (Speaker 7) maps to Lavender (#D8B4FE).
+B. Speaker Identification Root Cause (Requirement 2)
+The user reported: "it misidentified speaker #3 an #4 as the same person and therefore missed the last speaker." Code inspection of backend/diarizer.py revealed four compounding causes:
+
+Mathematical Zeroing of MFCC Feature Mean:
+In backend/diarizer.py:183-186:
+python
+
+cmn_mfcc = mfcc_sub - mfcc_sub.mean(dim=-1, keepdim=True)
+mean_mfcc = cmn_mfcc.mean(dim=-1)
+Subtracting the per-segment mean and then taking the mean across time is mathematically identically 0.0 ((X - mean(X)).mean() == 0).
+This zeroed out 18 critical acoustic features, discarding the static spectral envelope, formant frequencies, and vocal tract length of each speaker!
+Drowned-Out Fundamental Pitch (F0):
+Pitch is the single strongest acoustic discriminator between human speakers.
+Currently, pitch is represented by just 2 scalars ([p_med, p_std]) out of 74 dimensions.
+When the vector is L2-normalized (feat / ||feat||), pitch differences between two speakers contribute $< 2.5%$ of the total distance. Minor room acoustics in std_delta completely overwhelm vocal pitch differences.
+Ward Linkage Bias Against Minority Clusters:
+AgglomerativeClustering was configured with metric="euclidean", linkage="ward".
+Ward linkage minimizes total squared variance increase, which heavily biases toward creating clusters of equal size.
+In dialogue videos, secondary speakers (e.g. Speakers #3 and #4) have fewer utterances than dominant speakers (#1 and #2). Ward linkage aggressively merges small clusters of minority speakers together into a single cluster to minimize the variance penalty.
+Aggressive Temporal Smoothing (2.5s Window):
+Lines 323–332 merge any utterance $< 2.5$ seconds bracketed by turns of another speaker.
+Conversational interjections from Speakers #3 or #4 (e.g. 1.2s to 2.2s) bracketed by Speaker #2 were forcibly overwritten with Speaker #2's identity!
+C. Stray File Manager Windows ("test_cli_run...") (Requirement 3)
+Root Cause: During test runs (tests/test_cli_standards.py:test_cli_run_reveal_flag), the CLI is invoked with run --reveal <tmp_dir>.
+In backend/app.py:reveal_in_folder(), Linux desktop detection checks DISPLAY and DBUS_SESSION_BUS_ADDRESS.
+Because the tests ran in a desktop session without CI=true set in isolated_env, reveal_in_folder() launched /usr/bin/cosmic-files (or xdg-open) for every test run, leaving multiple file manager windows open on the desktop.
+Immediate Action: The 5 orphaned cosmic-files processes have already been closed and terminated.
+Permanent Fix: reveal_in_folder() must detect test execution (PYTEST_CURRENT_TEST or CI or VOICE_HIGHLIGHTER_TESTING), and tests/test_cli_standards.py must isolate the test environment so live graphical window spawns never occur during tests.
+D. CLI Hang on Ctrl+C and Killed Terminal Keyboard (Requirement 4)
+Root Cause of Hang: When voice-highlighter serve runs via Uvicorn, pressing Ctrl+C initiates Uvicorn's server shutdown. Uvicorn waits on open connections, event loops, and background tasks without rendering any feedback on stderr, making the CLI appear frozen to the user.
+Root Cause of Dead Keyboard: Terminal raw/cbreak attributes and cursor visibility (\033[?25l / termios.ECHO) are left modified if the process terminates or handles SIGINT without restoring termios settings. The terminal shell is left with echo disabled, so keystrokes produce no visual characters and the keyboard appears "dead".
+Solution:
+Implement an animated terminal shutdown spinner on sys.stderr (⠋ Shutting down Voice Highlighter...) that displays immediately upon Ctrl+C.
+Capture initial terminal attributes at startup (termios.tcgetattr(sys.stdin)).
+Implement a universal restore_terminal() routine that restores termios.tcsetattr, emits \033[?25h\033[0m (show cursor, reset styles), and runs stty sane as a safety net.
+Register restore_terminal() via atexit, signal handlers, and finally blocks, exiting cleanly with code 130 per AGENTS.md Directives 8 & 10.
+=======================================
+mplementation Plan: 3-Second Longer Voice Snippets & Video Burn Keyframe/Speaker Identification
+1. Overview & Problem Statement
+The user reported two core issues:
+
+Audio Snippet Length: Voice snippets in the Multi-Speaker Voice Studio are currently ~2.5–3.0 seconds long, which is too brief for confident speaker identification. The user requested extending snippet duration by three seconds (~5.5–6.0 seconds).
+Keyframe Loss & Missing Speaker Identification in Burned Video:
+The user dropped a keyframe at the start of the video (0.0s) and one halfway through when other speakers began speaking so they could be identified.
+In the frontend preview, the keyframes and speaker labels ([Speaker Name]:) worked properly.
+However, when burned to video via NVENC/FFmpeg, the keyframes were forgotten and speaker identification text was completely omitted from the video.
+2. Root Cause Analysis
+A. Voice Snippet Length Capped at ~2.5–3.0s
+In 
+backend/diarizer.py:389-405
+, candidate segment ranking prefers durations between 1.5s and 3.5s (centered at 2.5s), and slices with min(snippet_start + 3.0, float(best_seg.get("end", snippet_start + 2.5))).
+In 
+backend/diarizer.py:265-267
+, the single-speaker fallback uses min(first_s + 3.0, ...).
+In 
+backend/app.py:1780-1790
+, the on-demand snippet generator scores segments targeting 2.5s and clamps duration between 2.0s and 3.0s.
+B. Keyframes Forgotten During Video Burning
+In 
+frontend/app.js:1534-1580
+, addOrUpdateKeyframeAtCurrentTime() and deleteKeyframeAtCurrentTime() mutate state.keyframes but fail to set state.stylingModified = true.
+When the user clicks Burn Video, 
+frontend/app.js:3997-4005
+ sends styling_modified: !!state.stylingModified (which evaluates to false).
+In 
+backend/app.py:1991-2007
+, burn_video_endpoint checks if req.styling_modified:. Because it was false, update_ass_formatting() was never executed, and FFmpeg burned directly from the original un-keyframed .ass file on disk!
+C. Speaker Identification Missing in Burned Video Text
+Preview vs. Backend Discrepancy: In 
+frontend/app.js:2029-2030
+, the live preview automatically injects [${spkChannel.name || 'Speaker'}]: whenever state.isMultiSpeaker is true.
+ASS Generator Default: In 
+backend/ass_generator.py:500
+, generate_ass_content() only outputs speaker name prefixes if channel.get("show_speaker_name", False) is explicitly true. In 
+backend/config.py:37
+ and frontend/app.js, show_speaker_name defaults to false.
+FFmpeg Subtitle Burning Mechanics: FFmpeg's subtitles filter renders the text field of ASS dialogue events (d_parts[9]). The Actor field (d_parts[4]) is non-rendered metadata.
+ASS Formatting Updater Omission: In 
+backend/ass_generator.py:846-856
+, update_ass_formatting() strips speaker prefixes if is_multi_for_line is false, but never inserts or updates speaker prefixes when is_multi_for_line is true! Thus, even if the user customized speaker names in the UI, they were never written into dialogue text and never burned into the video.
+===============================================
+Implementation Plan: Robust Multi-Speaker Diarization, Ambient Noise Rejection & 5-Channel Studio Unlocking
+Fix the three multi-speaker issues reported on win-win-pleasant-valley-v1.1.wav:
+
+Speaker Undercounting: The program only identified 2 speakers instead of all 4 actual speakers (Katie Kam + 3 Parks & Rec Board speakers).
+UI Channels 4 & 5 Grayed Out: Changing the voice count to 5 left speakers 4 and 5 disabled / unusable in the UI with no audio samples or assigned dialogue.
+Ambient Noise Misattribution: The first speaker (Katie Kam) was split into Speaker #1 and Speaker #2 because of outdoor park ambient noise vs. indoor voiceover acoustics.
+1. Problem Analysis & Root Causes
+1.1 Ambient Noise & Channel Split on First Speaker (Katie Kam -> Speaker 1 & 2)
+Root Cause:
+extract_acoustic_embedding() in 
+backend/diarizer.py
+ computes 20 MFCCs across whole segment slices without Cepstral Mean Normalization (CMN) and without energy-based Voice Activity Detection (VAD).
+MFCC band 0 (log energy/gain) was retained. Outdoor segments (park ambiance, wind, traffic noise) have a vastly different frequency tilt and energy baseline than indoor voiceover recordings.
+Because cosine distance between un-normalized MFCC vectors is dominated by the recording environment and channel transfer function ($C_{\text{recorded}} = C_{\text{speech}} + C_{\text{channel}}$), Katie Kam speaking outdoors clustered into SPEAKER_00 ("Speaker 1"), while Katie Kam speaking in voiceover clustered into SPEAKER_01 ("Speaker 2").
+1.2 Under-Identifying Speakers (Only 2 or 3 Clusters Instead of 4)
+Root Cause:
+diarize_whisper_result() hardcoded unsupervised selection via silhouette_score(emb_matrix, lbls, metric="cosine") over $k \in [2, 5]$.
+Silhouette scoring mathematically penalizes unbalanced clusters. In real multi-speaker meetings where the host/candidate speaks for 60% of the video and board members speak in shorter bursts, the average silhouette score drops sharply for $k \ge 3$, artificially forcing $k=2$.
+Most critically: When the user selected 4 or 5 voices in the UI, that user configuration was completely ignored by the backend! Neither backend/app.py nor backend/transcriber.py passed target_speakers / exact_k to diarize_whisper_result().
+1.3 Channels 4 and 5 Grayed Out in UI
+Root Cause:
+When the user clicked the "5" voice count pill, ensureSpeakerChannels(5) created channel objects, but state.speakerSamples only contained snippets for the 2 clusters previously produced by the backend.
+In updateSpeakerSampleUI(), when sample is null, btnPlaySpeakerSample.disabled = true and classList.add("disabled"), making the "Listen" button permanently grayed out for Speaker 4 and 5.
+The UI lacked a fast "Re-cluster / Re-diarize" action to immediately recalculate speaker assignments across existing segments when the user switches voice count, leaving channels 4 and 5 without assigned lines.
+
+===============================================

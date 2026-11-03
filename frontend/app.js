@@ -54,6 +54,8 @@ document.addEventListener("DOMContentLoaded", () => {
     outputFilename: "",
     socialPlatform: "none", // 'none', 'youtube', 'instagram', 'facebook'
     socialDevice: "mobile", // 'mobile', 'web'
+    igSurface: "reels", // 'reels' (9:16), 'feed' (4:5), 'grid' (1:1), 'all' (multi-guide)
+    igMaskLetterbox: true,
     previewText: "Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt.",
     activeWordIndex: 0,
     currentTaskId: null,
@@ -81,7 +83,7 @@ document.addEventListener("DOMContentLoaded", () => {
         outline_color: "#000000",
         box_bg_color: "#000000",
         box_font_color: "#FFFFFF",
-        show_speaker_name: false
+        show_speaker_name: true
       },
       "SPEAKER_01": {
         id: "SPEAKER_01",
@@ -91,7 +93,7 @@ document.addEventListener("DOMContentLoaded", () => {
         outline_color: "#000000",
         box_bg_color: "#000000",
         box_font_color: "#FFFFFF",
-        show_speaker_name: false
+        show_speaker_name: true
       },
       "SPEAKER_02": {
         id: "SPEAKER_02",
@@ -101,7 +103,7 @@ document.addEventListener("DOMContentLoaded", () => {
         outline_color: "#000000",
         box_bg_color: "#000000",
         box_font_color: "#FFFFFF",
-        show_speaker_name: false
+        show_speaker_name: true
       },
       "SPEAKER_03": {
         id: "SPEAKER_03",
@@ -111,7 +113,7 @@ document.addEventListener("DOMContentLoaded", () => {
         outline_color: "#000000",
         box_bg_color: "#000000",
         box_font_color: "#FFFFFF",
-        show_speaker_name: false
+        show_speaker_name: true
       },
       "SPEAKER_04": {
         id: "SPEAKER_04",
@@ -121,7 +123,27 @@ document.addEventListener("DOMContentLoaded", () => {
         outline_color: "#000000",
         box_bg_color: "#000000",
         box_font_color: "#FFFFFF",
-        show_speaker_name: false
+        show_speaker_name: true
+      },
+      "SPEAKER_05": {
+        id: "SPEAKER_05",
+        name: "Speaker 6",
+        primary_color: "#FFFFFF",
+        highlight_color: "#FF9900",
+        outline_color: "#000000",
+        box_bg_color: "#000000",
+        box_font_color: "#FFFFFF",
+        show_speaker_name: true
+      },
+      "SPEAKER_06": {
+        id: "SPEAKER_06",
+        name: "Speaker 7",
+        primary_color: "#FFFFFF",
+        highlight_color: "#D8B4FE",
+        outline_color: "#000000",
+        box_bg_color: "#000000",
+        box_font_color: "#FFFFFF",
+        show_speaker_name: true
       }
     },
     stylingModified: false,
@@ -154,13 +176,19 @@ document.addEventListener("DOMContentLoaded", () => {
       custom_vocabulary: Array.isArray(state.customVocabulary) ? [...state.customVocabulary] : [],
       keyframes: (state.keyframes && state.keyframes.length > 0) ? JSON.parse(JSON.stringify(state.keyframes)) : []
     };
-    if (state.isMultiSpeaker && state.speakerCount >= 2 && state.speakerChannels) {
+    payload.is_multi_speaker = Boolean(state.isMultiSpeaker);
+    payload.isMultiSpeaker = Boolean(state.isMultiSpeaker);
+    payload.speaker_count = state.speakerCount || (state.speakerChannels ? Object.keys(state.speakerChannels).length : 1);
+    if (state.isMultiSpeaker && state.speakerChannels) {
       const activeChannels = {};
-      const spkKeys = Object.keys(state.speakerChannels).slice(0, state.speakerCount);
+      const spkCount = state.speakerCount || Math.max(2, Object.keys(state.speakerChannels).length);
+      const spkKeys = Object.keys(state.speakerChannels).slice(0, spkCount);
       spkKeys.forEach(k => {
-        activeChannels[k] = state.speakerChannels[k];
+        const ch = { ...state.speakerChannels[k] };
+        ch.show_speaker_name = true;
+        activeChannels[k] = ch;
       });
-      payload.speaker_channels = JSON.parse(JSON.stringify(activeChannels));
+      payload.speaker_channels = activeChannels;
     }
     return payload;
   }
@@ -266,7 +294,15 @@ document.addEventListener("DOMContentLoaded", () => {
       if (timelineKeyframeBanner) timelineKeyframeBanner.style.display = "none";
     } else {
       if (stagePlaceholder) stagePlaceholder.classList.add("hidden");
-      if (stagePoster) stagePoster.classList.remove("hidden");
+      if (stagePoster) {
+        stagePoster.classList.remove("hidden");
+      }
+      if (state.isPlaying && stageVideo && stageVideo.src && !stageVideo.error) {
+        stageVideo.classList.remove("hidden");
+        if (stagePoster) stagePoster.classList.add("hidden");
+      } else if (stageVideo) {
+        stageVideo.classList.add("hidden");
+      }
       if (subtitleDragBox) subtitleDragBox.classList.remove("hidden");
       if (state.showBounds && subtitleBoundsEnvelope) {
         subtitleBoundsEnvelope.classList.remove("hidden");
@@ -511,6 +547,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const socialPlatformBtns = document.querySelectorAll("#socialPlatformSelector .mini-pill-btn");
   const socialDeviceBtns = document.querySelectorAll("#socialDeviceSelector .mini-pill-btn");
   const socialUiLayer = document.getElementById("socialUiLayer");
+  const deviceRow = document.getElementById("deviceRow");
+  const igSurfaceRow = document.getElementById("igSurfaceRow");
+  const igSurfaceBtns = document.querySelectorAll("#igSurfaceSelector .mini-pill-btn");
+  const igOptionsRow = document.getElementById("igOptionsRow");
+  const chkIgMaskLetterbox = document.getElementById("chkIgMaskLetterbox");
+  const btnIgAutoSafe = document.getElementById("btnIgAutoSafe");
+  const igCollisionIndicator = document.getElementById("igCollisionIndicator");
 
   // Preview Controls
   const btnTextDefault = document.getElementById("btnTextDefault");
@@ -932,6 +975,11 @@ document.addEventListener("DOMContentLoaded", () => {
       if (stageVideo) {
         stageVideo.src = streamUrl;
         stageVideo.currentTime = 0;
+        stageVideo.classList.add("hidden");
+      }
+      if (stagePoster) {
+        stagePoster.src = data.preview_frame_url + "?t=" + Date.now();
+        stagePoster.classList.remove("hidden");
       }
 
       // Reset burned video deliverable on new source video load
@@ -1054,6 +1102,7 @@ document.addEventListener("DOMContentLoaded", () => {
       labelPosY.textContent = `${state.posY}%`;
     }
     updateBoundsEnvelope();
+    updateInstagramCollisionStatus();
     if (state.isAtKeyframe) {
       syncActiveKeyframeFromState();
     }
@@ -1108,6 +1157,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       boundsGuidelines.innerHTML = guidesHtml;
     }
+    updateInstagramCollisionStatus();
   }
 
   // Drag on preview stage
@@ -1295,6 +1345,11 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       if (stageVideo) {
         stageVideo.pause();
+        stageVideo.classList.add("hidden");
+      }
+      if (stagePoster && state.videoPath) {
+        stagePoster.src = `/api/video-frame?path=${encodeURIComponent(state.videoPath)}&t=${(stageVideo ? stageVideo.currentTime : (state.currentSeekTime || 0)).toFixed(2)}`;
+        stagePoster.classList.remove("hidden");
       }
       state.isPlaying = false;
       updatePlayPauseUI(false);
@@ -1380,9 +1435,35 @@ document.addEventListener("DOMContentLoaded", () => {
         marker.classList.add("active");
       }
 
+      let isMarkerDrag = false;
+      let startX = 0;
+
+      marker.addEventListener("mousedown", (e) => {
+        isMarkerDrag = false;
+        startX = e.clientX;
+        const onMarkerMouseMove = (moveEvt) => {
+          if (Math.abs(moveEvt.clientX - startX) > 3) {
+            isMarkerDrag = true;
+            if (stageTimelineSlider) {
+              const rect = stageTimelineSlider.getBoundingClientRect();
+              const ratio = Math.max(0, Math.min(1, (moveEvt.clientX - rect.left) / rect.width));
+              seekVideoStageTo(ratio * dur, true, false);
+            }
+          }
+        };
+        const onMarkerMouseUp = () => {
+          window.removeEventListener("mousemove", onMarkerMouseMove);
+          window.removeEventListener("mouseup", onMarkerMouseUp);
+        };
+        window.addEventListener("mousemove", onMarkerMouseMove);
+        window.addEventListener("mouseup", onMarkerMouseUp);
+      });
+
       marker.addEventListener("click", (e) => {
         e.stopPropagation();
-        seekVideoStageTo(Number(kf.time), true);
+        if (!isMarkerDrag) {
+          seekVideoStageTo(Number(kf.time), true);
+        }
       });
 
       timelineKeyframesTrack.appendChild(marker);
@@ -1465,17 +1546,70 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  let keyframeSyncTimer = null;
+  function debounceSyncKeyframes(delay = 400) {
+    if (keyframeSyncTimer) clearTimeout(keyframeSyncTimer);
+    keyframeSyncTimer = setTimeout(() => {
+      syncKeyframesToBackend();
+    }, delay);
+  }
+
+  async function syncKeyframesToBackend() {
+    if (!state.hasLoadedVideo && !state.existingAssPath && !state.currentTaskId) return;
+    const taskId = state.currentTaskId || null;
+    const mediaPath = state.videoPath || "";
+    const assPath = state.existingAssPath || "";
+
+    try {
+      const token = state.authToken || (new URLSearchParams(window.location.search)).get("token") || "";
+      let url = "/api/keyframe";
+      if (token) url += `?token=${encodeURIComponent(token)}`;
+
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task_id: taskId,
+          media_path: mediaPath,
+          ass_path: assPath,
+          keyframes: state.keyframes || [],
+          styling: getCurrentStylingPayload(),
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.dialogues) {
+          state.dialogues = data.dialogues;
+          renderSubtitlePreview();
+        }
+        if (data.path) {
+          state.existingAssPath = data.path;
+        }
+      }
+    } catch (err) {
+      console.warn("Could not sync keyframes to backend ASS:", err);
+    }
+  }
+
   function syncActiveKeyframeFromState() {
     if (!state.isAtKeyframe || !state.selectedKeyframeId || !state.keyframes) return;
     const kf = state.keyframes.find(k => k.id === state.selectedKeyframeId);
     if (kf) {
       kf.styling = getCurrentStylingSnapshot(false);
+      state.stylingModified = true;
+      debounceSyncKeyframes(400);
     }
   }
 
   function addOrUpdateKeyframeAtCurrentTime() {
     if (!state.hasLoadedVideo) return;
     const t = state.currentSeekTime || 0;
+
+    // Capture base preset styling prior to adding the first keyframe so scrubbing before it reverts cleanly
+    if (!state.basePresetStyling || state.keyframes.length === 0) {
+      state.basePresetStyling = getCurrentStylingSnapshot(false);
+    }
+
     const snapshot = getCurrentStylingSnapshot(false);
     const existing = findKeyframeAtTime(t, 0.25);
 
@@ -1495,9 +1629,11 @@ document.addEventListener("DOMContentLoaded", () => {
       showPresetStatus(`Added keyframe at ${formatTimestampMMSS(t)} (style active to the right)`);
     }
 
+    state.stylingModified = true;
     updatePresetToolbarState();
     renderTimelineKeyframeMarkers();
     updateKeyframeToolbarAndBanner(t);
+    syncKeyframesToBackend();
   }
 
   function deleteKeyframeAtCurrentTime() {
@@ -1509,9 +1645,11 @@ document.addEventListener("DOMContentLoaded", () => {
     state.keyframes = state.keyframes.filter(k => k.id !== existing.id);
     showPresetStatus(`Deleted keyframe at ${formatTimestampMMSS(existing.time)}`);
 
+    state.stylingModified = true;
     updatePresetToolbarState();
     renderTimelineKeyframeMarkers();
     seekVideoStageTo(t, false);
+    syncKeyframesToBackend();
   }
 
   function jumpToPrevKeyframe() {
@@ -1549,8 +1687,12 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     if (!fromVideoPlayback && stageVideo && stageVideo.src) {
-      if (Math.abs(stageVideo.currentTime - clamped) > 0.12) {
-        stageVideo.currentTime = clamped;
+      if (Math.abs(stageVideo.currentTime - clamped) > 0.04) {
+        if ('fastSeek' in stageVideo) {
+          try { stageVideo.fastSeek(clamped); } catch (_) { stageVideo.currentTime = clamped; }
+        } else {
+          stageVideo.currentTime = clamped;
+        }
       }
     }
 
@@ -1567,6 +1709,8 @@ document.addEventListener("DOMContentLoaded", () => {
       state.activeKeyframeId = null;
       if (state.basePresetStyling) {
         applyPresetStyling(state.basePresetStyling, true);
+      } else {
+        setMultiSpeakerMode(false);
       }
     }
 
@@ -1609,8 +1753,13 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!fromVideoPlayback) {
       if (seekDebounceTimer) clearTimeout(seekDebounceTimer);
       seekDebounceTimer = setTimeout(() => {
-        if (!state.videoPath || !stagePoster) return;
-        stagePoster.src = `/api/video-frame?path=${encodeURIComponent(state.videoPath)}&t=${clamped.toFixed(2)}`;
+        if (state.videoPath && stagePoster) {
+          stagePoster.src = `/api/video-frame?path=${encodeURIComponent(state.videoPath)}&t=${clamped.toFixed(2)}`;
+          stagePoster.classList.remove("hidden");
+          if (!state.isPlaying && stageVideo) {
+            stageVideo.classList.add("hidden");
+          }
+        }
       }, 40);
     }
   }
@@ -1678,10 +1827,20 @@ document.addEventListener("DOMContentLoaded", () => {
     stageVideo.addEventListener("pause", () => {
       state.isPlaying = false;
       updatePlayPauseUI(false);
+      stageVideo.classList.add("hidden");
+      if (stagePoster && state.videoPath) {
+        stagePoster.src = `/api/video-frame?path=${encodeURIComponent(state.videoPath)}&t=${stageVideo.currentTime.toFixed(2)}`;
+        stagePoster.classList.remove("hidden");
+      }
     });
     stageVideo.addEventListener("ended", () => {
       state.isPlaying = false;
       updatePlayPauseUI(false);
+      stageVideo.classList.add("hidden");
+      if (stagePoster && state.videoPath) {
+        stagePoster.src = `/api/video-frame?path=${encodeURIComponent(state.videoPath)}&t=${stageVideo.currentTime.toFixed(2)}`;
+        stagePoster.classList.remove("hidden");
+      }
     });
     stageVideo.addEventListener("timeupdate", () => {
       if (!state.isPlaying) return;
@@ -1815,11 +1974,21 @@ document.addEventListener("DOMContentLoaded", () => {
     subtitleDragBox.style.maxWidth = `${state.lineWidthPct}%`;
 
     // 2. Format words into lines according to maxLines, maxChars, and lineWidthPct
-    const cleanedPreview = (state.previewText || "")
+    let cleanedPreview = (state.previewText || "")
       .replace(/\\N/gi, " ")
       .replace(/\\h/gi, " ")
       .replace(/\s+/g, " ")
       .trim();
+
+    let lineSpeakerName = null;
+    const prefixMatch = cleanedPreview.match(/^(\[([^\]]+)\]|\(([^)]+)\)):\s*/);
+    if (prefixMatch) {
+      lineSpeakerName = (prefixMatch[2] || prefixMatch[3] || "").trim();
+      cleanedPreview = cleanedPreview.substring(prefixMatch[0].length).trim();
+    }
+    if (!state.isMultiSpeaker) {
+      lineSpeakerName = null;
+    }
     const words = cleanedPreview ? cleanedPreview.split(/\s+/) : [];
     if (words.length === 0) return;
 
@@ -1881,12 +2050,23 @@ document.addEventListener("DOMContentLoaded", () => {
       // Per-speaker styling when multi-speaker mode is active
       let spkChannel = null;
       if (state.isMultiSpeaker && state.speakerChannels) {
-        const spkKeys = Object.keys(state.speakerChannels).slice(0, state.speakerCount);
-        if (spkKeys.length >= 2) {
-          const spkKey = (activeBlock.length === 1 && state.activeSpeakerId && spkKeys.includes(state.activeSpeakerId))
-            ? state.activeSpeakerId
-            : spkKeys[lineIdx % spkKeys.length];
-          spkChannel = state.speakerChannels[spkKey];
+        if (lineSpeakerName) {
+          for (const k of Object.keys(state.speakerChannels)) {
+            const ch = state.speakerChannels[k];
+            if (ch && (ch.name === lineSpeakerName || ch.id === lineSpeakerName)) {
+              spkChannel = ch;
+              break;
+            }
+          }
+        }
+        if (!spkChannel) {
+          const spkKeys = Object.keys(state.speakerChannels).slice(0, state.speakerCount);
+          if (spkKeys.length >= 2) {
+            const spkKey = (activeBlock.length === 1 && state.activeSpeakerId && spkKeys.includes(state.activeSpeakerId))
+              ? state.activeSpeakerId
+              : spkKeys[lineIdx % spkKeys.length];
+            spkChannel = state.speakerChannels[spkKey];
+          }
         }
       }
 
@@ -1935,12 +2115,14 @@ document.addEventListener("DOMContentLoaded", () => {
         return `<span class="subtitle-word ${extraClass}" style="${inlineStyle}">${w}</span>`;
       }).join(" ");
 
-      let speakerPrefix = "";
-      if (state.isMultiSpeaker && spkChannel && (state.maxLines > 1 || lineIdx === 0)) {
-        speakerPrefix = `<span style="font-size:0.75em; opacity:0.85; margin-right:6px; color:${spkChannel.highlight_color}; font-weight:700;">[${spkChannel.name || 'Speaker'}]:</span>`;
+      let speakerLine = "";
+      if (state.isMultiSpeaker && (lineSpeakerName || spkChannel) && lineIdx === activeBlock.length - 1) {
+        const displayName = lineSpeakerName || (spkChannel ? spkChannel.name : 'Speaker');
+        const displayColor = (spkChannel && spkChannel.highlight_color) ? spkChannel.highlight_color : activeHighlight;
+        speakerLine = `<div class="subtitle-speaker-label" style="font-size:0.75em; opacity:0.9; margin-top:4px; color:${displayColor}; font-weight:700;">${displayName}</div>`;
       }
 
-      return `<div>${speakerPrefix}${lineHtml}</div>`;
+      return `<div>${lineHtml}</div>${speakerLine}`;
     });
 
     subtitleRenderedText.innerHTML = htmlLines.join("");
@@ -2524,12 +2706,12 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ----------------------------------------------------
-  // 4b. Multi-Speaker Color Channels System (Up to 5 Voices)
+  // 4b. Multi-Speaker Color Channels System (Up to 7 Voices)
   // ----------------------------------------------------
   const DEFAULT_SPEAKER_PALETTE = ["#FFDF00", "#00E5FF", "#FF007F", "#00FF66", "#B026FF", "#FF9900", "#D8B4FE", "#F43F5E"];
 
   function ensureSpeakerChannels(count) {
-    const targetCount = Math.max(2, Math.min(count || 5, 5));
+    const targetCount = Math.max(2, Math.min(count || 7, 7));
     for (let i = 0; i < targetCount; i++) {
       const spkId = `SPEAKER_0${i}`;
       if (!state.speakerChannels[spkId]) {
@@ -2541,7 +2723,7 @@ document.addEventListener("DOMContentLoaded", () => {
           outline_color: "#000000",
           box_bg_color: "#000000",
           box_font_color: "#FFFFFF",
-          show_speaker_name: false
+          show_speaker_name: true
         };
       }
     }
@@ -2550,7 +2732,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function setMultiSpeakerMode(enabled, count = null) {
     state.isMultiSpeaker = !!enabled;
     if (enabled) {
-      const voiceCount = count || (state.speakerCount >= 2 ? state.speakerCount : 5);
+      const voiceCount = count || (state.speakerCount >= 2 ? state.speakerCount : 7);
       state.speakerCount = voiceCount;
       ensureSpeakerChannels(voiceCount);
 
@@ -2594,9 +2776,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     renderSubtitlePreview();
-    if (state.dialogues && state.dialogues.length > 0) {
-      renderDrawerDialogueItems(state.dialogues);
-    }
   }
 
   function updateSpeakerControlsVisibility(speakerCount, detectedSpeakers) {
@@ -2607,22 +2786,32 @@ document.addEventListener("DOMContentLoaded", () => {
       setMultiSpeakerMode(false);
     } else {
       if (detectedSpeakers && detectedSpeakers.length > 0) {
-        detectedSpeakers.forEach((spkId, idx) => {
-          if (!state.speakerChannels[spkId]) {
-            state.speakerChannels[spkId] = {
-              id: spkId,
-              name: spkId.startsWith("SPEAKER_") ? `Speaker ${idx + 1}` : spkId,
+        detectedSpeakers.forEach((spkItem, idx) => {
+          let canonicalId = `SPEAKER_0${idx}`;
+          if (typeof spkItem === "string" && spkItem.startsWith("SPEAKER_")) {
+            canonicalId = spkItem;
+          } else if (typeof spkItem === "string" && /^Speaker\s+(\d+)$/i.test(spkItem)) {
+            const num = parseInt(spkItem.replace(/^Speaker\s+/i, ""), 10);
+            canonicalId = `SPEAKER_0${Math.max(0, num - 1)}`;
+          }
+
+          if (!state.speakerChannels[canonicalId]) {
+            state.speakerChannels[canonicalId] = {
+              id: canonicalId,
+              name: (typeof spkItem === "string" && !spkItem.startsWith("SPEAKER_")) ? spkItem : `Speaker ${idx + 1}`,
               primary_color: "#FFFFFF",
               highlight_color: DEFAULT_SPEAKER_PALETTE[idx % DEFAULT_SPEAKER_PALETTE.length],
               outline_color: "#000000",
               box_bg_color: "#000000",
               box_font_color: "#FFFFFF",
-              show_speaker_name: false
+              show_speaker_name: true
             };
+          } else if (typeof spkItem === "string" && !spkItem.startsWith("SPEAKER_") && !/^Speaker\s+\d+$/i.test(spkItem)) {
+            state.speakerChannels[canonicalId].name = spkItem;
           }
         });
       }
-      setMultiSpeakerMode(true, Math.max(count, (detectedSpeakers ? detectedSpeakers.length : 2)));
+      setMultiSpeakerMode(true, Math.max(2, Math.min(count, 7)));
     }
   }
 
@@ -2630,6 +2819,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!speakerTabsBar) return;
     speakerTabsBar.innerHTML = "";
     const limit = state.isMultiSpeaker ? state.speakerCount : 2;
+    ensureSpeakerChannels(limit);
     const keys = Object.keys(state.speakerChannels).slice(0, limit);
 
     keys.forEach(key => {
@@ -2703,41 +2893,121 @@ document.addEventListener("DOMContentLoaded", () => {
     updateSpeakerSampleUI();
   }
 
+  async function triggerFastRediarize(count) {
+    const videoPath = (videoPathInput ? videoPathInput.value.trim() : "") || state.videoPath;
+    const taskId = state.currentTaskId || state.activeTaskId || null;
+    if (!videoPath && !taskId) return;
+
+    try {
+      if (speakerSamplePlayText && (!state.speakerSamples || !state.speakerSamples[state.activeSpeakerId])) {
+        speakerSamplePlayText.textContent = "Clustering...";
+      }
+      const token = state.authToken || (new URLSearchParams(window.location.search)).get("token") || "";
+      let url = "/api/rediarize";
+      if (token) {
+        url += `?token=${encodeURIComponent(token)}`;
+      }
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task_id: taskId,
+          video_path: videoPath || null,
+          speaker_count: count,
+          styling: getCurrentStylingPayload()
+        })
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.speaker_samples) {
+          state.speakerSamples = data.speaker_samples;
+        }
+        if (data.speakers_found) {
+          state.detectedSpeakers = data.speakers_found;
+        }
+        if (data.ass_content) {
+          state.activeAssContent = data.ass_content;
+          updateAssPreviewDisplay(data.ass_content);
+        }
+        updateSpeakerControlsVisibility(count, data.speakers_found || Object.keys(data.speaker_samples || {}));
+        syncActiveSpeakerUI();
+        renderSubtitlePreview();
+      }
+    } catch (err) {
+      console.warn("[Voice Highlighter] Fast re-diarize notice:", err);
+    } finally {
+      updateSpeakerSampleUI();
+    }
+  }
+
   function updateSpeakerSampleUI() {
     if (!speakerSamplePlayerRow || !btnPlaySpeakerSample) return;
     const currentSpk = state.activeSpeakerId || "SPEAKER_00";
-    const sample = state.speakerSamples ? state.speakerSamples[currentSpk] : null;
+    const ch = state.speakerChannels ? state.speakerChannels[currentSpk] : null;
+    const chName = ch ? ch.name : null;
+    const spkNum = parseInt(currentSpk.replace(/\D/g, "") || "0", 10) + 1;
+    const sample = state.speakerSamples ? (
+      state.speakerSamples[currentSpk] ||
+      (chName ? state.speakerSamples[chName] : null) ||
+      state.speakerSamples[`Speaker ${spkNum}`] ||
+      null
+    ) : null;
 
     if (sample && sample.sample_url) {
       btnPlaySpeakerSample.disabled = false;
       btnPlaySpeakerSample.classList.remove("disabled");
+      btnPlaySpeakerSample.title = `Play representative 5-second snippet for ${currentSpk}`;
+      if (speakerSamplePlayText) speakerSamplePlayText.textContent = "Listen";
+      if (speakerSamplePlayIcon) speakerSamplePlayIcon.textContent = "▶";
       if (speakerSampleQuote) {
         const quoteText = sample.quote ? `"${sample.quote}"` : `Sample for ${sample.speaker_name || currentSpk}`;
-        speakerSampleQuote.textContent = `${quoteText} (${sample.duration || 2.5}s)`;
+        speakerSampleQuote.textContent = `${quoteText} (${sample.duration || 5.5}s)`;
         speakerSampleQuote.style.color = "var(--text-main, #f8fafc)";
       }
     } else {
-      btnPlaySpeakerSample.disabled = true;
-      btnPlaySpeakerSample.classList.add("disabled");
+      const hasMedia = Boolean((videoPathInput && videoPathInput.value.trim()) || state.videoPath || state.currentTaskId || state.activeTaskId);
+      btnPlaySpeakerSample.disabled = !hasMedia;
+      btnPlaySpeakerSample.classList.toggle("disabled", !hasMedia);
+      btnPlaySpeakerSample.title = hasMedia
+        ? "Re-cluster dialogue to identify voice sample for this channel"
+        : "No speech detected for this speaker channel";
+      if (speakerSamplePlayText) speakerSamplePlayText.textContent = hasMedia ? "Cluster" : "Listen";
+      if (speakerSamplePlayIcon) speakerSamplePlayIcon.textContent = hasMedia ? "⚡" : "▶";
       if (speakerSampleQuote) {
-        speakerSampleQuote.textContent = state.isMultiSpeaker
-          ? "Voice sample ready after transcription"
-          : "Enable Multi-Speaker Diarization to hear voice samples";
+        if (hasMedia) {
+          speakerSampleQuote.textContent = "Click Cluster to identify voice sample for this channel";
+        } else {
+          speakerSampleQuote.textContent = state.isMultiSpeaker
+            ? "Voice sample ready after transcription"
+            : "Enable Multi-Speaker Diarization to hear voice samples";
+        }
         speakerSampleQuote.style.color = "var(--text-muted, #94a3b8)";
       }
       if (speakerSampleAudio && !speakerSampleAudio.paused) {
         speakerSampleAudio.pause();
       }
-      if (speakerSamplePlayIcon) speakerSamplePlayIcon.textContent = "▶";
-      if (speakerSamplePlayText) speakerSamplePlayText.textContent = "Listen";
     }
   }
 
   if (btnPlaySpeakerSample && speakerSampleAudio) {
     btnPlaySpeakerSample.addEventListener("click", () => {
       const currentSpk = state.activeSpeakerId || "SPEAKER_00";
-      const sample = state.speakerSamples ? state.speakerSamples[currentSpk] : null;
-      if (!sample || !sample.sample_url) return;
+      const ch = state.speakerChannels ? state.speakerChannels[currentSpk] : null;
+      const chName = ch ? ch.name : null;
+      const spkNum = parseInt(currentSpk.replace(/\D/g, "") || "0", 10) + 1;
+      const sample = state.speakerSamples ? (
+        state.speakerSamples[currentSpk] ||
+        (chName ? state.speakerSamples[chName] : null) ||
+        state.speakerSamples[`Speaker ${spkNum}`] ||
+        null
+      ) : null;
+      if (!sample || !sample.sample_url) {
+        const hasMedia = Boolean((videoPathInput && videoPathInput.value.trim()) || state.videoPath || state.currentTaskId || state.activeTaskId);
+        if (hasMedia) {
+          triggerFastRediarize(state.speakerCount || 7);
+        }
+        return;
+      }
 
       if (!speakerSampleAudio.paused) {
         speakerSampleAudio.pause();
@@ -2794,7 +3064,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (btnModeMultiSpeaker) {
     btnModeMultiSpeaker.addEventListener("click", () => {
-      setMultiSpeakerMode(true, state.speakerCount >= 2 ? state.speakerCount : 5);
+      setMultiSpeakerMode(true, state.speakerCount >= 2 ? state.speakerCount : 7);
       if (checkEnableDiarization) {
         checkEnableDiarization.checked = true;
         state.enableDiarization = true;
@@ -2804,19 +3074,63 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (btnToggleSpeakerChannels) {
     btnToggleSpeakerChannels.addEventListener("click", () => {
-      setMultiSpeakerMode(!state.isMultiSpeaker, state.speakerCount >= 2 ? state.speakerCount : 5);
+      setMultiSpeakerMode(!state.isMultiSpeaker, state.speakerCount >= 2 ? state.speakerCount : 7);
     });
   }
 
   if (countPillBtns && countPillBtns.length > 0) {
     countPillBtns.forEach(btn => {
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", async () => {
         const count = parseInt(btn.dataset.count, 10);
-        if (count >= 2 && count <= 5) {
+        if (count >= 2 && count <= 7) {
           setMultiSpeakerMode(true, count);
+          await triggerFastRediarize(count);
         }
       });
     });
+  }
+
+  let speakerChannelSyncTimer = null;
+  function debounceSyncSpeakerChannel(spkId, delay = 350) {
+    if (speakerChannelSyncTimer) clearTimeout(speakerChannelSyncTimer);
+    speakerChannelSyncTimer = setTimeout(() => {
+      syncSpeakerChannelToBackend(spkId);
+    }, delay);
+  }
+
+  async function syncSpeakerChannelToBackend(spkId) {
+    if (!state.hasLoadedVideo && !state.existingAssPath && !state.currentTaskId) return;
+    const ch = state.speakerChannels ? state.speakerChannels[spkId] : null;
+    if (!ch) return;
+
+    try {
+      const token = state.authToken || (new URLSearchParams(window.location.search)).get("token") || "";
+      let url = "/api/speaker-channel";
+      if (token) url += `?token=${encodeURIComponent(token)}`;
+
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task_id: state.currentTaskId || null,
+          media_path: state.videoPath || "",
+          ass_path: state.existingAssPath || "",
+          speaker_id: spkId,
+          name: ch.name || spkId,
+          color: ch.highlight_color || "#FFDF00",
+          styling: getCurrentStylingPayload(),
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.dialogues) {
+          state.dialogues = data.dialogues;
+          renderSubtitlePreview();
+        }
+      }
+    } catch (err) {
+      console.warn("Could not sync speaker channel to backend ASS:", err);
+    }
   }
 
   if (colorSpeakerHighlight) {
@@ -2831,9 +3145,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (currentEditingSpeakerDot) currentEditingSpeakerDot.style.background = val;
         renderSpeakerTabs();
         renderSubtitlePreview();
-        if (state.dialogues && state.dialogues.length > 0) {
-          renderDrawerDialogueItems(state.dialogues);
-        }
+        debounceSyncSpeakerChannel(state.activeSpeakerId);
       }
     });
   }
@@ -2852,9 +3164,7 @@ document.addEventListener("DOMContentLoaded", () => {
           if (currentEditingSpeakerDot) currentEditingSpeakerDot.style.background = c;
           renderSpeakerTabs();
           renderSubtitlePreview();
-          if (state.dialogues && state.dialogues.length > 0) {
-            renderDrawerDialogueItems(state.dialogues);
-          }
+          debounceSyncSpeakerChannel(state.activeSpeakerId);
         }
       });
     });
@@ -2865,10 +3175,39 @@ document.addEventListener("DOMContentLoaded", () => {
       if (state.isMultiSpeaker && state.speakerChannels && state.speakerChannels[state.activeSpeakerId]) {
         const val = e.target.value.trim() || state.activeSpeakerId;
         state.speakerChannels[state.activeSpeakerId].name = val;
+        state.speakerChannels[state.activeSpeakerId].show_speaker_name = true;
+        state.stylingModified = true;
+        if (state.isAtKeyframe) {
+          syncActiveKeyframeFromState();
+        }
         if (currentEditingSpeakerName) currentEditingSpeakerName.textContent = val;
         renderSpeakerTabs();
-        if (state.dialogues && state.dialogues.length > 0) {
-          renderDrawerDialogueItems(state.dialogues);
+        renderSubtitlePreview();
+        debounceSyncSpeakerChannel(state.activeSpeakerId);
+      }
+    });
+
+    inputSpeakerDisplayName.addEventListener("change", (e) => {
+      if (state.isMultiSpeaker && state.speakerChannels && state.speakerChannels[state.activeSpeakerId]) {
+        const val = e.target.value.trim() || state.activeSpeakerId;
+        const activeId = state.activeSpeakerId;
+
+        // Check if another channel already has this exact name
+        let duplicateChannelId = null;
+        for (const [id, ch] of Object.entries(state.speakerChannels)) {
+          if (id !== activeId && ch.name && ch.name.trim().toLowerCase() === val.toLowerCase()) {
+            duplicateChannelId = id;
+            break;
+          }
+        }
+
+        if (duplicateChannelId) {
+          openMergeConfirmation(
+            activeId,
+            duplicateChannelId,
+            `Speaker channel ${duplicateChannelId} is already named "${val}". Would you like to merge ${activeId} into ${duplicateChannelId}?`,
+            false
+          );
         }
       }
     });
@@ -2911,7 +3250,23 @@ document.addEventListener("DOMContentLoaded", () => {
         state.speakerChannels["SPEAKER_03"].highlight_color = "#00FF66";
         state.speakerChannels["SPEAKER_03"].name = "Speaker 4";
         state.speakerChannels["SPEAKER_04"].highlight_color = "#B026FF";
+      } else if (theme === "septet") {
+        state.speakerCount = 7;
+        ensureSpeakerChannels(7);
+        state.speakerChannels["SPEAKER_00"].highlight_color = "#FFDF00";
+        state.speakerChannels["SPEAKER_00"].name = "Speaker 1";
+        state.speakerChannels["SPEAKER_01"].highlight_color = "#00E5FF";
+        state.speakerChannels["SPEAKER_01"].name = "Speaker 2";
+        state.speakerChannels["SPEAKER_02"].highlight_color = "#FF007F";
+        state.speakerChannels["SPEAKER_02"].name = "Speaker 3";
+        state.speakerChannels["SPEAKER_03"].highlight_color = "#00FF66";
+        state.speakerChannels["SPEAKER_03"].name = "Speaker 4";
+        state.speakerChannels["SPEAKER_04"].highlight_color = "#B026FF";
         state.speakerChannels["SPEAKER_04"].name = "Speaker 5";
+        state.speakerChannels["SPEAKER_05"].highlight_color = "#FF9900";
+        state.speakerChannels["SPEAKER_05"].name = "Speaker 6";
+        state.speakerChannels["SPEAKER_06"].highlight_color = "#D8B4FE";
+        state.speakerChannels["SPEAKER_06"].name = "Speaker 7";
       }
 
       setMultiSpeakerMode(true, state.speakerCount);
@@ -2943,7 +3298,25 @@ document.addEventListener("DOMContentLoaded", () => {
       socialPlatformBtns.forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
       state.socialPlatform = btn.dataset.platform;
+
+      if (state.socialPlatform === "instagram") {
+        if (igSurfaceRow) igSurfaceRow.classList.remove("hidden");
+        if (igOptionsRow) igOptionsRow.classList.remove("hidden");
+        if (deviceRow) {
+          if (state.igSurface === "reels") {
+            deviceRow.classList.remove("hidden");
+          } else {
+            deviceRow.classList.add("hidden");
+          }
+        }
+      } else {
+        if (igSurfaceRow) igSurfaceRow.classList.add("hidden");
+        if (igOptionsRow) igOptionsRow.classList.add("hidden");
+        if (deviceRow) deviceRow.classList.remove("hidden");
+      }
+
       renderSocialOverlay();
+      updateInstagramCollisionStatus();
     });
   });
 
@@ -2955,6 +3328,156 @@ document.addEventListener("DOMContentLoaded", () => {
       renderSocialOverlay();
     });
   });
+
+  // Instagram Surface Mode Selector
+  igSurfaceBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      igSurfaceBtns.forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      state.igSurface = btn.dataset.igSurface;
+
+      if (deviceRow) {
+        if (state.igSurface === "reels") {
+          deviceRow.classList.remove("hidden");
+        } else {
+          deviceRow.classList.add("hidden");
+        }
+      }
+
+      renderSocialOverlay();
+      updateInstagramCollisionStatus();
+    });
+  });
+
+  // Instagram Darken Mask Toggle
+  if (chkIgMaskLetterbox) {
+    chkIgMaskLetterbox.addEventListener("change", () => {
+      state.igMaskLetterbox = chkIgMaskLetterbox.checked;
+      renderSocialOverlay();
+    });
+  }
+
+  // Auto-Fit to Instagram Safe Center Button
+  if (btnIgAutoSafe) {
+    btnIgAutoSafe.addEventListener("click", () => {
+      state.posX = 50;
+      state.posY = 58;
+      if (state.lineWidthPct > 80) {
+        state.lineWidthPct = 80;
+        if (sliderLineWidth) sliderLineWidth.value = 80;
+        if (labelLineWidth) labelLineWidth.textContent = "80%";
+      }
+      updatePosition(state.posX, state.posY, true);
+      renderSubtitleText();
+      renderSocialOverlay();
+      updateInstagramCollisionStatus();
+    });
+  }
+
+  // ----------------------------------------------------
+  // Instagram Live Collision & Cutoff Detection
+  // ----------------------------------------------------
+  function updateInstagramCollisionStatus() {
+    if (!igCollisionIndicator) return;
+
+    if (state.socialPlatform !== "instagram") {
+      igCollisionIndicator.classList.add("hidden");
+      igCollisionIndicator.innerHTML = "";
+      if (subtitleBoundsEnvelope) {
+        subtitleBoundsEnvelope.classList.remove("envelope-warning-cutoff");
+      }
+      return;
+    }
+
+    igCollisionIndicator.classList.remove("hidden");
+
+    // Compute envelope bounds relative to preview height
+    const stageHeight = (videoStage && videoStage.clientHeight > 0) ? videoStage.clientHeight : 568;
+    const scaleRatio = 0.28;
+    const renderedFontSize = Math.round((state.fontSize || 68) * scaleRatio);
+    const lineHeightPx = renderedFontSize * 1.34;
+    const lines = Math.max(1, Math.min(3, state.maxLines || 1));
+    const boostScale = (state.highlightScalePct || 100) / 100;
+    const boostHeadroom = Math.round(renderedFontSize * Math.max(0, boostScale - 1.0));
+    const isBox = (state.highlightStyle === "box");
+    const boxPadding = isBox ? 28 : 16;
+    const totalHeightPx = Math.round((lines * lineHeightPx) + boostHeadroom + boxPadding);
+    const envelopeHeightPct = (totalHeightPx / stageHeight) * 100;
+
+    const boxTop = state.posY - (envelopeHeightPct / 2);
+    const boxBottom = state.posY + (envelopeHeightPct / 2);
+    const boxLeft = state.posX - (state.lineWidthPct / 2);
+    const boxRight = state.posX + (state.lineWidthPct / 2);
+
+    // Instagram Limits:
+    // 4:5 Feed: Top 14.84%, Bottom 85.16%
+    // 1:1 Grid: Top 21.88%, Bottom 78.12%
+    // 9:16 Reels: Top 14.0%, Bottom 65.0%, Left 6.0%, Right 88.0%
+    const isFeedCutoff = (boxBottom > 85.16 || boxTop < 14.84);
+    const isGridCutoff = (boxBottom > 78.12 || boxTop < 21.88);
+    const isReelsObscured = (boxBottom > 65.0 || boxTop < 14.0 || boxRight > 88.0 || boxLeft < 6.0);
+
+    let isWarning = false;
+    let statusText = "";
+    let statusIcon = "✅";
+
+    if (state.igSurface === "feed") {
+      if (isFeedCutoff) {
+        isWarning = true;
+        statusIcon = "⚠️";
+        statusText = "Sliced in 4:5 Feed (Cut off in feed scroll)";
+      } else {
+        statusText = "Fits Inside 4:5 Feed View";
+      }
+    } else if (state.igSurface === "grid") {
+      if (isGridCutoff) {
+        isWarning = true;
+        statusIcon = "⚠️";
+        statusText = "Sliced in 1:1 Grid (Cut off on profile thumbnail)";
+      } else {
+        statusText = "Fits Inside 1:1 Profile Grid";
+      }
+    } else if (state.igSurface === "reels") {
+      if (isReelsObscured) {
+        isWarning = true;
+        statusIcon = "⚠️";
+        statusText = "Obscured by Reels UI (Behind caption/actions)";
+      } else {
+        statusText = "Clear of Reels UI Clutter";
+      }
+    } else { // "all"
+      if (isGridCutoff && isFeedCutoff) {
+        isWarning = true;
+        statusIcon = "⚠️";
+        statusText = "Cut off in Feed (4:5) & Grid (1:1)";
+      } else if (isGridCutoff) {
+        isWarning = true;
+        statusIcon = "⚠️";
+        statusText = "Cut off on Profile Grid (1:1)";
+      } else if (isFeedCutoff) {
+        isWarning = true;
+        statusIcon = "⚠️";
+        statusText = "Cut off in Feed Scroll (4:5)";
+      } else if (isReelsObscured) {
+        isWarning = true;
+        statusIcon = "⚠️";
+        statusText = "Obscured by Reels UI";
+      } else {
+        statusText = "★ 100% Safe Across All Instagram Surfaces";
+      }
+    }
+
+    igCollisionIndicator.className = `ig-collision-indicator ${isWarning ? "ig-collision-warning" : "ig-collision-safe"}`;
+    igCollisionIndicator.innerHTML = `<span>${statusIcon}</span> <span>${statusText}</span>`;
+
+    if (subtitleBoundsEnvelope) {
+      if (isWarning) {
+        subtitleBoundsEnvelope.classList.add("envelope-warning-cutoff");
+      } else {
+        subtitleBoundsEnvelope.classList.remove("envelope-warning-cutoff");
+      }
+    }
+  }
 
   // ----------------------------------------------------
   // Social Media UI Overlay Generator
@@ -3039,69 +3562,125 @@ document.addEventListener("DOMContentLoaded", () => {
         `;
       }
     } else if (state.socialPlatform === "instagram") {
-      if (isMobile) {
-        // Instagram Reels Mobile App UI
+      if (!state.igMaskLetterbox) {
+        socialUiLayer.classList.add("no-mask");
+      } else {
+        socialUiLayer.classList.remove("no-mask");
+      }
+
+      if (state.igSurface === "feed") {
+        // Instagram 4:5 Feed Viewport & Letterbox Masks (1080x1350, 285px / 14.84% cropped top & bottom)
         socialUiLayer.innerHTML = `
-          <div class="social-top-bar">
-            <span class="ig-reels-title">Reels ▾</span>
-            <div class="social-top-icons">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
-            </div>
+          <div class="ig-letterbox-mask ig-letterbox-top" style="height: 14.84%;"></div>
+          <div class="ig-crop-viewport ig-feed-viewport" style="top: 14.84%; height: 70.32%;">
+            <div class="ig-surface-badge ig-badge-feed">4:5 In-Feed Scroll Crop • 1080 × 1350</div>
           </div>
-
-          <div class="social-right-bar">
-            <div class="social-action-btn">
-              <div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></div>
-              <span class="social-action-count">94.2K</span>
-            </div>
-            <div class="social-action-btn">
-              <div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18zM18 14H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg></div>
-              <span class="social-action-count">830</span>
-            </div>
-            <div class="social-action-btn">
-              <div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></div>
-              <span class="social-action-count">Share</span>
-            </div>
-            <div class="social-action-btn">
-              <div class="social-action-icon"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"></circle><circle cx="12" cy="12" r="2"></circle><circle cx="19" cy="12" r="2"></circle></svg></div>
-            </div>
-            <div class="social-avatar" style="border-radius: 4px; width: 26px; height: 26px;">♫</div>
+          <div class="ig-letterbox-mask ig-letterbox-bottom" style="height: 14.84%;"></div>
+        `;
+      } else if (state.igSurface === "grid") {
+        // Instagram 1:1 Profile Grid Viewport & Letterbox Masks (1080x1080, 420px / 21.88% cropped top & bottom)
+        socialUiLayer.innerHTML = `
+          <div class="ig-letterbox-mask ig-letterbox-top" style="height: 21.88%;"></div>
+          <div class="ig-crop-viewport ig-grid-viewport" style="top: 21.88%; height: 56.24%;">
+            <div class="ig-surface-badge ig-badge-grid">1:1 Profile Grid Preview • 1080 × 1080</div>
           </div>
-
-          <div class="social-bottom-bar">
-            <div class="social-user-row">
-              <div class="social-avatar">CS</div>
-              <span class="social-username">creator_studio</span>
-              <span class="social-follow-pill ig-pill">Follow</span>
+          <div class="ig-letterbox-mask ig-letterbox-bottom" style="height: 21.88%;"></div>
+        `;
+      } else if (state.igSurface === "all") {
+        // Simultaneous Tri-Ratio Safe Zones Multi-Guide
+        socialUiLayer.innerHTML = `
+          <div class="ig-multiguide-box">
+            <div class="ig-guide-line ig-guide-feed" style="top: 14.84%;">
+              <span>4:5 Feed Top Cutoff (285px)</span>
+              <span>1080 × 1350</span>
             </div>
-            <div class="social-caption">Captivating vertical reels with AI animated word highlights... <strong>more</strong></div>
-            <div class="social-audio-tag">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
-              <span>creator_studio • Original Audio</span>
+            <div class="ig-guide-line ig-guide-grid" style="top: 21.88%;">
+              <span>1:1 Grid Top Cutoff (420px)</span>
+              <span>1080 × 1080</span>
+            </div>
+            <div class="ig-guide-line ig-guide-reels" style="top: 65%;">
+              <span>Reels UI Obstruction Limit</span>
+              <span>Captions / Audio UI</span>
+            </div>
+            <div class="ig-guide-line ig-guide-grid" style="top: 78.12%;">
+              <span>1:1 Grid Bottom Cutoff</span>
+              <span>Profile Grid Boundary</span>
+            </div>
+            <div class="ig-guide-line ig-guide-feed" style="top: 85.16%;">
+              <span>4:5 Feed Bottom Cutoff</span>
+              <span>Feed Safe Boundary</span>
+            </div>
+            <div class="ig-universal-safe-zone">
+              <div class="ig-universal-badge">★ Universal Safe Zone (Visible Everywhere)</div>
             </div>
           </div>
         `;
       } else {
-        // Instagram Reels Web Desktop UI
-        socialUiLayer.innerHTML = `
-          <div class="web-player-chrome">
-            <div class="web-top-bar">
-              <span>📷 Instagram Reels (Web Browser)</span>
-              <span>🔊 Audio On</span>
+        // Instagram Reels 9:16 Full Screen UI (reels)
+        if (isMobile) {
+          // Instagram Reels Mobile App UI
+          socialUiLayer.innerHTML = `
+            <div class="social-top-bar">
+              <span class="ig-reels-title">Reels ▾</span>
+              <div class="social-top-icons">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+              </div>
             </div>
-            <div class="social-right-bar" style="bottom: 60px;">
-              <div class="social-action-btn"><div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></div><span class="social-action-count">94.2K</span></div>
-              <div class="social-action-btn"><div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18z"/></svg></div><span class="social-action-count">830</span></div>
+
+            <div class="social-right-bar">
+              <div class="social-action-btn">
+                <div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></div>
+                <span class="social-action-count">94.2K</span>
+              </div>
+              <div class="social-action-btn">
+                <div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18zM18 14H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg></div>
+                <span class="social-action-count">830</span>
+              </div>
+              <div class="social-action-btn">
+                <div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></div>
+                <span class="social-action-count">Share</span>
+              </div>
+              <div class="social-action-btn">
+                <div class="social-action-icon"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"></circle><circle cx="12" cy="12" r="2"></circle><circle cx="19" cy="12" r="2"></circle></svg></div>
+              </div>
+              <div class="social-avatar" style="border-radius: 4px; width: 26px; height: 26px;">♫</div>
             </div>
-            <div class="social-bottom-bar" style="bottom: 12px;">
+
+            <div class="social-bottom-bar">
               <div class="social-user-row">
                 <div class="social-avatar">CS</div>
-                <span class="social-username">creator_studio • Follow</span>
+                <span class="social-username">creator_studio</span>
+                <span class="social-follow-pill ig-pill">Follow</span>
               </div>
-              <div class="social-caption">High-impact vertical video styling and word highlighting</div>
+              <div class="social-caption">Captivating vertical reels with AI animated word highlights... <strong>more</strong></div>
+              <div class="social-audio-tag">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+                <span>creator_studio • Original Audio</span>
+              </div>
             </div>
-          </div>
-        `;
+          `;
+        } else {
+          // Instagram Reels Web Desktop UI
+          socialUiLayer.innerHTML = `
+            <div class="web-player-chrome">
+              <div class="web-top-bar">
+                <span>📷 Instagram Reels (Web Browser)</span>
+                <span>🔊 Audio On</span>
+              </div>
+              <div class="social-right-bar" style="bottom: 60px;">
+                <div class="social-action-btn"><div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></div><span class="social-action-count">94.2K</span></div>
+                <div class="social-action-btn"><div class="social-action-icon"><svg viewBox="0 0 24 24"><path d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18z"/></svg></div><span class="social-action-count">830</span></div>
+              </div>
+              <div class="social-bottom-bar" style="bottom: 12px;">
+                <div class="social-user-row">
+                  <div class="social-avatar">CS</div>
+                  <span class="social-username">creator_studio • Follow</span>
+                </div>
+                <div class="social-caption">High-impact vertical video styling and word highlighting</div>
+              </div>
+            </div>
+          `;
+        }
       }
     } else if (state.socialPlatform === "facebook") {
       if (isMobile) {
@@ -3158,6 +3737,7 @@ document.addEventListener("DOMContentLoaded", () => {
         `;
       }
     }
+    updateInstagramCollisionStatus();
   }
 
   // Preview Text Switcher
@@ -3501,7 +4081,8 @@ document.addEventListener("DOMContentLoaded", () => {
       output_filename: customFilename || null,
       reuse_existing_ass: false,
       reuse_existing_wav: false,
-      enable_diarization: Boolean((checkEnableDiarization && checkEnableDiarization.checked) || state.enableDiarization || state.isMultiSpeaker),
+      enable_diarization: Boolean((checkEnableDiarization && checkEnableDiarization.checked) || state.enableDiarization || state.isMultiSpeaker || (state.speakerCount && state.speakerCount >= 2)),
+      speaker_count: state.isMultiSpeaker ? (state.speakerCount || 7) : 1,
       custom_vocabulary: Array.isArray(state.customVocabulary) ? [...state.customVocabulary] : [],
       styling: getCurrentStylingPayload()
     };
@@ -3604,7 +4185,7 @@ document.addEventListener("DOMContentLoaded", () => {
         output_filename: (outputFilenameInput ? outputFilenameInput.value.trim() : null) || state.outputFilename,
         content: null,
         styling: getCurrentStylingPayload(),
-        styling_modified: !!state.stylingModified
+        styling_modified: Boolean(state.stylingModified || (state.keyframes && state.keyframes.length > 0) || state.isMultiSpeaker)
       };
 
       const res = await fetch('/api/burn-video', {
@@ -3806,7 +4387,7 @@ document.addEventListener("DOMContentLoaded", () => {
             outline_color: "#000000",
             box_bg_color: "#000000",
             box_font_color: "#ffffff",
-            show_speaker_name: false
+            show_speaker_name: true
           },
           "SPEAKER_01": {
             id: "SPEAKER_01",
@@ -3816,7 +4397,7 @@ document.addEventListener("DOMContentLoaded", () => {
             outline_color: "#000000",
             box_bg_color: "#000000",
             box_font_color: "#ffffff",
-            show_speaker_name: false
+            show_speaker_name: true
           }
         }
       }
@@ -3848,7 +4429,7 @@ document.addEventListener("DOMContentLoaded", () => {
             outline_color: "#000000",
             box_bg_color: "#000000",
             box_font_color: "#ffffff",
-            show_speaker_name: false
+            show_speaker_name: true
           },
           "SPEAKER_01": {
             id: "SPEAKER_01",
@@ -3858,7 +4439,7 @@ document.addEventListener("DOMContentLoaded", () => {
             outline_color: "#000000",
             box_bg_color: "#000000",
             box_font_color: "#ffffff",
-            show_speaker_name: false
+            show_speaker_name: true
           },
           "SPEAKER_02": {
             id: "SPEAKER_02",
@@ -3868,7 +4449,7 @@ document.addEventListener("DOMContentLoaded", () => {
             outline_color: "#000000",
             box_bg_color: "#000000",
             box_font_color: "#ffffff",
-            show_speaker_name: false
+            show_speaker_name: true
           },
           "SPEAKER_03": {
             id: "SPEAKER_03",
@@ -3878,7 +4459,7 @@ document.addEventListener("DOMContentLoaded", () => {
             outline_color: "#000000",
             box_bg_color: "#000000",
             box_font_color: "#ffffff",
-            show_speaker_name: false
+            show_speaker_name: true
           },
           "SPEAKER_04": {
             id: "SPEAKER_04",
@@ -3888,7 +4469,99 @@ document.addEventListener("DOMContentLoaded", () => {
             outline_color: "#000000",
             box_bg_color: "#000000",
             box_font_color: "#ffffff",
-            show_speaker_name: false
+            show_speaker_name: true
+          }
+        }
+      }
+    },
+    "factory:ensemble_septet": {
+      name: "👥 Ensemble Septet (7 Voices)",
+      styling: {
+        posX: 50,
+        posY: 80,
+        fontFamily: "Montserrat",
+        fontSize: 24,
+        primaryColor: "#ffffff",
+        outlineColor: "#000000",
+        outlineWidth: 4,
+        bold: true,
+        italic: false,
+        highlightStyle: "color",
+        highlightColor: "#ffdf00",
+        highlightScale: 100,
+        highlightAnimation: "none",
+        isMultiSpeaker: true,
+        speakerCount: 7,
+        speakerChannels: {
+          "SPEAKER_00": {
+            id: "SPEAKER_00",
+            name: "Speaker 1",
+            primary_color: "#ffffff",
+            highlight_color: "#ffdf00",
+            outline_color: "#000000",
+            box_bg_color: "#000000",
+            box_font_color: "#ffffff",
+            show_speaker_name: true
+          },
+          "SPEAKER_01": {
+            id: "SPEAKER_01",
+            name: "Speaker 2",
+            primary_color: "#ffffff",
+            highlight_color: "#00e5ff",
+            outline_color: "#000000",
+            box_bg_color: "#000000",
+            box_font_color: "#ffffff",
+            show_speaker_name: true
+          },
+          "SPEAKER_02": {
+            id: "SPEAKER_02",
+            name: "Speaker 3",
+            primary_color: "#ffffff",
+            highlight_color: "#ff007f",
+            outline_color: "#000000",
+            box_bg_color: "#000000",
+            box_font_color: "#ffffff",
+            show_speaker_name: true
+          },
+          "SPEAKER_03": {
+            id: "SPEAKER_03",
+            name: "Speaker 4",
+            primary_color: "#ffffff",
+            highlight_color: "#00ff66",
+            outline_color: "#000000",
+            box_bg_color: "#000000",
+            box_font_color: "#ffffff",
+            show_speaker_name: true
+          },
+          "SPEAKER_04": {
+            id: "SPEAKER_04",
+            name: "Speaker 5",
+            primary_color: "#ffffff",
+            highlight_color: "#b026ff",
+            outline_color: "#000000",
+            box_bg_color: "#000000",
+            box_font_color: "#ffffff",
+            show_speaker_name: true
+          },
+          "SPEAKER_05": {
+            id: "SPEAKER_05",
+            name: "Speaker 6",
+            primary_color: "#ffffff",
+            highlight_color: "#ff9900",
+            outline_color: "#000000",
+            box_bg_color: "#000000",
+            box_font_color: "#ffffff",
+            show_speaker_name: true
+          },
+          "SPEAKER_06": {
+            id: "SPEAKER_06",
+            name: "Speaker 7",
+            primary_color: "#ffffff",
+            highlight_color: "#d8b4fe",
+            outline_color: "#000000",
+            box_bg_color: "#000000",
+            box_font_color: "#ffffff",
+            show_speaker_name: true
           }
         }
       }
@@ -4121,12 +4794,14 @@ document.addEventListener("DOMContentLoaded", () => {
       boxFontColor: state.boxFontColor,
       maxLines: state.maxLines,
       lineWidthPct: state.lineWidthPct,
-      maxChars: state.maxChars
+      maxChars: state.maxChars,
+      isMultiSpeaker: Boolean(state.isMultiSpeaker),
+      speakerCount: state.speakerCount || 1,
     };
     if (includeKeyframes && state.keyframes && state.keyframes.length > 0) {
       snapshot.keyframes = JSON.parse(JSON.stringify(state.keyframes));
     }
-    if (state.isMultiSpeaker && state.speakerCount >= 2 && state.speakerChannels) {
+    if (state.speakerChannels) {
       snapshot.speaker_channels = JSON.parse(JSON.stringify(state.speakerChannels));
     }
     if (state.customVocabulary && state.customVocabulary.length > 0) {
@@ -4295,19 +4970,29 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Multi-Speaker Color Channels
-    if (styling.speaker_channels && Object.keys(styling.speaker_channels).length >= 2) {
-      state.speakerChannels = JSON.parse(JSON.stringify(styling.speaker_channels));
-      state.detectedSpeakers = Object.keys(styling.speaker_channels);
-      state.speakerCount = Object.keys(styling.speaker_channels).length;
+    const isMultiInStyling = styling.isMultiSpeaker !== undefined
+      ? Boolean(styling.isMultiSpeaker)
+      : (styling.is_multi_speaker !== undefined
+          ? Boolean(styling.is_multi_speaker)
+          : (Boolean(styling.speaker_channels) && Object.keys(styling.speaker_channels).length >= 2));
+
+    if (isMultiInStyling) {
+      if (styling.speaker_channels) {
+        state.speakerChannels = JSON.parse(JSON.stringify(styling.speaker_channels));
+        state.detectedSpeakers = Object.keys(styling.speaker_channels);
+      }
+      const count = styling.speakerCount || (state.detectedSpeakers ? state.detectedSpeakers.length : 2);
+      state.speakerCount = count;
       state.isMultiSpeaker = true;
-      if (!state.speakerChannels[state.activeSpeakerId]) {
+      if (!state.speakerChannels[state.activeSpeakerId] && state.detectedSpeakers && state.detectedSpeakers.length > 0) {
         state.activeSpeakerId = state.detectedSpeakers[0];
       }
-      updateSpeakerControlsVisibility(state.speakerCount, state.detectedSpeakers);
-    } else if (styling.speaker_channels === undefined && !state.hasExistingAss) {
-      // Single speaker preset: hide multi-speaker controls
+      setMultiSpeakerMode(true, count);
+      updateSpeakerControlsVisibility(count, state.detectedSpeakers);
+    } else {
       state.isMultiSpeaker = false;
       state.speakerCount = 1;
+      setMultiSpeakerMode(false);
       updateSpeakerControlsVisibility(1);
     }
 
@@ -4741,14 +5426,25 @@ document.addEventListener("DOMContentLoaded", () => {
         updateSpeakerSampleUI();
       }
 
-      const spkCount = data.speaker_count || (data.detected_speakers ? data.detected_speakers.length : 1);
+      const spkCount = data.speaker_count || (data.speakers_found ? data.speakers_found.length : (data.detected_speakers ? data.detected_speakers.length : 1));
       const isMulti = Boolean(data.is_multi_speaker || spkCount > 1);
       if (isMulti) {
         state.isMultiSpeaker = true;
-        updateSpeakerControlsVisibility(spkCount, data.detected_speakers);
+        updateSpeakerControlsVisibility(spkCount, data.speakers_found || data.detected_speakers);
       } else {
         state.isMultiSpeaker = false;
         updateSpeakerControlsVisibility(1);
+      }
+
+      if (Array.isArray(data.keyframes) && data.keyframes.length > 0) {
+        state.keyframes = data.keyframes;
+        renderTimelineKeyframeMarkers();
+        updateKeyframeToolbarAndBanner(state.currentSeekTime || 0);
+      }
+      if (data.speaker_channels && Object.keys(data.speaker_channels).length > 0) {
+        Object.assign(state.speakerChannels, data.speaker_channels);
+        renderSpeakerTabs();
+        syncActiveSpeakerUI();
       }
 
       if (state.dialogues && state.dialogues.length > 0) {
@@ -5018,4 +5714,127 @@ document.addEventListener("DOMContentLoaded", () => {
   populatePresetDropdown(savedActivePreset);
   loadAndApplyPreset(savedActivePreset);
   syncPresetsFromBackend();
+
+
+  // Speaker Channel Merge Modal Elements & Logic
+  const modalMergeSpeaker = document.getElementById("modalMergeSpeaker");
+  const modalMergeMessage = document.getElementById("modalMergeMessage");
+  const modalMergeSelectWrap = document.getElementById("modalMergeSelectWrap");
+  const selectMergeTarget = document.getElementById("selectMergeTarget");
+  const btnCloseMergeModal = document.getElementById("btnCloseMergeModal");
+  const btnCancelMerge = document.getElementById("btnCancelMerge");
+  const btnConfirmMerge = document.getElementById("btnConfirmMerge");
+  const btnTriggerMergeModal = document.getElementById("btnTriggerMergeModal");
+
+  let pendingMergeSourceId = null;
+  let pendingMergeTargetId = null;
+
+  function openMergeConfirmation(sourceId, targetId, message, showSelect = false) {
+    pendingMergeSourceId = sourceId;
+    pendingMergeTargetId = targetId;
+    if (modalMergeMessage) modalMergeMessage.textContent = message;
+
+    if (modalMergeSelectWrap && selectMergeTarget) {
+      if (showSelect) {
+        selectMergeTarget.innerHTML = "";
+        Object.entries(state.speakerChannels).forEach(([id, ch]) => {
+          if (id !== sourceId) {
+            const opt = document.createElement("option");
+            opt.value = id;
+            opt.textContent = `${ch.name || id} (${id})`;
+            selectMergeTarget.appendChild(opt);
+          }
+        });
+        modalMergeSelectWrap.classList.remove("hidden");
+        pendingMergeTargetId = selectMergeTarget.value;
+      } else {
+        modalMergeSelectWrap.classList.add("hidden");
+      }
+    }
+
+    if (modalMergeSpeaker) modalMergeSpeaker.classList.remove("hidden");
+  }
+
+  function closeMergeConfirmation() {
+    if (modalMergeSpeaker) modalMergeSpeaker.classList.add("hidden");
+    pendingMergeSourceId = null;
+    pendingMergeTargetId = null;
+  }
+
+  if (btnCloseMergeModal) btnCloseMergeModal.addEventListener("click", closeMergeConfirmation);
+  if (btnCancelMerge) btnCancelMerge.addEventListener("click", closeMergeConfirmation);
+
+  if (selectMergeTarget) {
+    selectMergeTarget.addEventListener("change", (e) => {
+      pendingMergeTargetId = e.target.value;
+    });
+  }
+
+  if (btnTriggerMergeModal) {
+    btnTriggerMergeModal.addEventListener("click", () => {
+      const activeId = state.activeSpeakerId;
+      const otherKeys = Object.keys(state.speakerChannels).filter(k => k !== activeId);
+      if (otherKeys.length === 0) {
+        showGlobalError("No other speaker channels available to merge into.");
+        return;
+      }
+      openMergeConfirmation(
+        activeId,
+        otherKeys[0],
+        `Choose which speaker channel to merge ${state.speakerChannels[activeId]?.name || activeId} into:`,
+        true
+      );
+    });
+  }
+
+  if (btnConfirmMerge) {
+    btnConfirmMerge.addEventListener("click", async () => {
+      const srcId = pendingMergeSourceId;
+      const tgtId = pendingMergeTargetId || (selectMergeTarget ? selectMergeTarget.value : null);
+      if (!srcId || !tgtId || srcId === tgtId) {
+        closeMergeConfirmation();
+        return;
+      }
+
+      btnConfirmMerge.disabled = true;
+      btnConfirmMerge.textContent = "Merging...";
+
+      try {
+        const payload = {
+          source_speaker_id: srcId,
+          target_speaker_id: tgtId,
+          ass_path: state.existingAssPath,
+          media_path: state.currentMediaFile,
+          task_id: state.currentTaskId
+        };
+
+        const resp = await fetch("/api/merge-speakers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (!resp.ok) {
+          const errData = await resp.json().catch(() => ({}));
+          throw new Error(errData.detail || "Failed to merge speaker channels.");
+        }
+
+        delete state.speakerChannels[srcId];
+        if (state.activeSpeakerId === srcId) {
+          state.activeSpeakerId = tgtId;
+        }
+
+        renderSpeakerTabs();
+        selectSpeakerChannel(tgtId);
+        renderSubtitlePreview();
+        closeMergeConfirmation();
+      } catch (err) {
+        showGlobalError(`Speaker Merge Error: ${err.message}`);
+      } finally {
+        btnConfirmMerge.disabled = false;
+        btnConfirmMerge.textContent = "Yes, Merge Voices";
+      }
+    });
+  }
+
 });

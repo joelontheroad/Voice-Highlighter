@@ -1339,6 +1339,25 @@ input[type="range"] {
   box-shadow: 0 0 8px rgba(0, 229, 255, 0.25);
 }
 
+/* Envelope Warning Cutoff State (when colliding with platform crop/safe boundary) */
+.subtitle-bounds-envelope.envelope-warning-cutoff {
+  border-color: #f87171 !important;
+  background: rgba(239, 68, 68, 0.12) !important;
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.35), inset 0 0 10px rgba(239, 68, 68, 0.1) !important;
+}
+
+.subtitle-bounds-envelope.envelope-warning-cutoff::before,
+.subtitle-bounds-envelope.envelope-warning-cutoff::after {
+  border-color: #f87171 !important;
+}
+
+.subtitle-bounds-envelope.envelope-warning-cutoff .bounds-badge {
+  background: rgba(185, 28, 28, 0.95) !important;
+  border-color: #f87171 !important;
+  color: #ffffff !important;
+}
+
+
 /* Subtitle Drag Box */
 .subtitle-drag-box {
   position: absolute;
@@ -2047,6 +2066,249 @@ input[type="range"] {
   align-items: center;
   font-size: 0.72rem;
   color: #e5e7eb;
+}
+
+/* =========================================
+   INSTAGRAM MULTI-RATIO OVERLAYS & CONTROLS
+========================================= */
+
+.social-tool-row.ig-sub-row {
+  padding-left: 8px;
+  border-left: 2px solid rgba(0, 229, 255, 0.4);
+  transition: all 0.2s ease;
+}
+
+.ig-options-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ig-checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.ig-checkbox-label input[type="checkbox"] {
+  cursor: pointer;
+  accent-color: var(--primary);
+  width: 14px;
+  height: 14px;
+}
+
+.ig-checkbox-label:hover {
+  color: var(--text-main);
+}
+
+.btn-ig-micro {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-card);
+  color: var(--text-main);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm, 6px);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn-ig-micro:hover {
+  background: rgba(0, 229, 255, 0.15);
+  border-color: var(--primary);
+  color: var(--primary);
+  transform: translateY(-1px);
+}
+
+.btn-ig-micro:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Instagram Live Cutoff / Collision Indicator */
+.ig-collision-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  user-select: none;
+  transition: all 0.2s ease;
+}
+
+.ig-collision-indicator.ig-collision-safe {
+  background: rgba(16, 185, 129, 0.18);
+  border: 1px solid rgba(16, 185, 129, 0.6);
+  color: #10b981;
+}
+
+.ig-collision-indicator.ig-collision-warning {
+  background: rgba(239, 68, 68, 0.22);
+  border: 1px solid rgba(239, 68, 68, 0.75);
+  color: #fca5a5;
+  animation: pulse-ig-warn 2s infinite ease-in-out;
+}
+
+@keyframes pulse-ig-warn {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 8px 2px rgba(239, 68, 68, 0.35);
+  }
+}
+
+/* Letterbox Shading & Crop Viewports */
+.ig-letterbox-mask {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: rgba(0, 0, 0, 0.68);
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+  z-index: 14;
+  transition: background 0.2s ease, opacity 0.2s ease;
+}
+
+.social-ui-layer.no-mask .ig-letterbox-mask {
+  background: transparent !important;
+  backdrop-filter: none !important;
+}
+
+.ig-letterbox-top {
+  top: 0;
+}
+
+.ig-letterbox-bottom {
+  bottom: 0;
+}
+
+.ig-crop-viewport {
+  position: absolute;
+  left: 0;
+  right: 0;
+  box-sizing: border-box;
+  pointer-events: none;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.ig-feed-viewport {
+  border-top: 2px dashed #00e5ff;
+  border-bottom: 2px dashed #00e5ff;
+  box-shadow: 0 0 12px rgba(0, 229, 255, 0.15), inset 0 0 12px rgba(0, 229, 255, 0.05);
+}
+
+.ig-grid-viewport {
+  border-top: 2px dashed #e1306c;
+  border-bottom: 2px dashed #e1306c;
+  box-shadow: 0 0 12px rgba(225, 48, 108, 0.15), inset 0 0 12px rgba(225, 48, 108, 0.05);
+}
+
+.ig-surface-badge {
+  align-self: center;
+  margin: 6px auto;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  user-select: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+.ig-badge-feed {
+  background: rgba(0, 229, 255, 0.9);
+  color: #080c16;
+}
+
+.ig-badge-grid {
+  background: rgba(225, 48, 108, 0.95);
+  color: #ffffff;
+}
+
+/* All Safe Zones Multi-Guide */
+.ig-multiguide-box {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 15;
+}
+
+.ig-guide-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  user-select: none;
+  box-sizing: border-box;
+}
+
+.ig-guide-feed {
+  border-top: 1.5px dashed #00e5ff;
+  color: #00e5ff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.ig-guide-grid {
+  border-top: 1.5px dashed #e1306c;
+  color: #e1306c;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.ig-guide-reels {
+  border-top: 1.5px dashed #f59e0b;
+  color: #f59e0b;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.ig-universal-safe-zone {
+  position: absolute;
+  left: 8%;
+  right: 14%;
+  top: 21.88%;
+  height: 43.12%;
+  border: 2px dashed #10b981;
+  background: rgba(16, 185, 129, 0.09);
+  border-radius: 6px;
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.22), inset 0 0 12px rgba(16, 185, 129, 0.05);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+.ig-universal-badge {
+  background: #10b981;
+  color: #080c16;
+  padding: 3px 8px;
+  border-radius: 9999px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
 }
 
 /* =========================================
@@ -4375,7 +4637,7 @@ input[type="range"] {
   flex: 1;
   display: flex;
   align-items: center;
-  height: 24px;
+  height: 30px;
 }
 
 .timeline-track-container .timeline-slider {
@@ -4398,18 +4660,37 @@ input[type="range"] {
 
 .timeline-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: #38bdf8;
   border: 2px solid #ffffff;
-  cursor: pointer;
-  box-shadow: 0 0 6px rgba(56, 189, 248, 0.8);
+  cursor: grab;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.8), 0 2px 4px rgba(0, 0, 0, 0.4);
   transition: transform 0.1s;
 }
 
-.timeline-slider::-webkit-slider-thumb:hover {
+.timeline-slider::-webkit-slider-thumb:hover,
+.timeline-slider::-webkit-slider-thumb:active {
   transform: scale(1.2);
+  cursor: grabbing;
+}
+
+.timeline-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #38bdf8;
+  border: 2px solid #ffffff;
+  cursor: grab;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.8), 0 2px 4px rgba(0, 0, 0, 0.4);
+  transition: transform 0.1s;
+}
+
+.timeline-slider::-moz-range-thumb:hover,
+.timeline-slider::-moz-range-thumb:active {
+  transform: scale(1.2);
+  cursor: grabbing;
 }
 
 .timeline-keyframes-track {
@@ -4424,10 +4705,10 @@ input[type="range"] {
 
 .keyframe-marker {
   position: absolute;
-  top: 50%;
+  top: calc(50% + 11px);
   transform: translate(-50%, -50%) rotate(45deg);
-  width: 11px;
-  height: 11px;
+  width: 10px;
+  height: 10px;
   background: linear-gradient(135deg, #ffd700, #f59e0b);
   border: 1.5px solid #ffffff;
   border-radius: 2px;

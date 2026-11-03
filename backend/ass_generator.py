@@ -7,8 +7,9 @@ Synthesizes SSA/ASS v4+ subtitle scripts with karaoke-style active word
 highlighting, custom typography, positional anchoring, bounding badge styling,
 and responsive multi-line layout algorithms.
 """
-
+import json
 import re
+from pathlib import Path
 from typing import Any
 
 
@@ -83,6 +84,44 @@ def parse_ass_timestamp(ts_str: str) -> float:
     return 0.0
 
 
+def extract_ass_metadata(ass_content: str) -> dict[str, Any]:
+    """Extract embedded Voice Highlighter metadata (keyframes, speaker channels, segments) from ASS comments.
+
+    Args:
+        ass_content: Raw ASS subtitle content string.
+
+    Returns:
+        Dictionary with extracted 'keyframes' (list), 'speaker_channels' (dict), and 'segments' (list).
+    """
+    metadata: dict[str, Any] = {"keyframes": [], "speaker_channels": {}, "segments": []}
+    if not ass_content:
+        return metadata
+
+    for line in ass_content.splitlines():
+        line = line.strip()
+        if line.startswith("; VoiceHighlighterKeyframes:"):
+            payload = line.split(":", 1)[1].strip()
+            try:
+                metadata["keyframes"] = json.loads(payload)
+            except Exception:
+                pass
+        elif line.startswith("; VoiceHighlighterSpeakers:"):
+            payload = line.split(":", 1)[1].strip()
+            try:
+                metadata["speaker_channels"] = json.loads(payload)
+            except Exception:
+                pass
+        elif line.startswith("; VoiceHighlighterSegments:"):
+            payload = line.split(":", 1)[1].strip()
+            try:
+                metadata["segments"] = json.loads(payload)
+            except Exception:
+                pass
+        elif line.startswith("[Events]"):
+            break
+    return metadata
+
+
 def resolve_styling_at_time(
     t: float,
     keyframes: list[dict[str, Any]],
@@ -137,11 +176,21 @@ def resolve_styling_at_time(
         "maxLines": "max_lines",
         "lineWidthPct": "line_width_pct",
         "maxChars": "max_chars_per_line",
+        "isMultiSpeaker": "is_multi_speaker",
+        "speakerCount": "speaker_count",
+        "speakerChannels": "speaker_channels",
     }
     for k, v in raw_styling.items():
         merged[k] = v
         if k in key_aliases:
             merged[key_aliases[k]] = v
+
+    if "is_multi_speaker" in raw_styling:
+        merged["is_multi_speaker"] = raw_styling["is_multi_speaker"]
+        merged["isMultiSpeaker"] = raw_styling["is_multi_speaker"]
+    elif "isMultiSpeaker" in raw_styling:
+        merged["is_multi_speaker"] = raw_styling["isMultiSpeaker"]
+        merged["isMultiSpeaker"] = raw_styling["isMultiSpeaker"]
 
     return merged
 
@@ -343,6 +392,34 @@ def generate_ass_content(
         )
         registered_styles.add(spk_style_name)
 
+    # Parse keyframes from config if present
+    keyframes_raw = config.get("keyframes") or []
+    keyframes: list[dict[str, Any]] = []
+    if isinstance(keyframes_raw, list):
+        for kf in keyframes_raw:
+            if hasattr(kf, "model_dump"):
+                kf_data = kf.model_dump()
+            elif isinstance(kf, dict):
+                kf_data = dict(kf)
+            else:
+                continue
+            if "time" in kf_data:
+                keyframes.append(kf_data)
+        keyframes.sort(key=lambda k: float(k.get("time", 0.0)))
+
+    metadata_comments = []
+    if keyframes:
+        metadata_comments.append(f"; VoiceHighlighterKeyframes: {json.dumps(keyframes, ensure_ascii=False)}")
+    if speaker_channels:
+        metadata_comments.append(f"; VoiceHighlighterSpeakers: {json.dumps(speaker_channels, ensure_ascii=False)}")
+    if whisper_result and whisper_result.get("segments"):
+        segs_summary = [
+            {"start": round(float(s.get("start", 0)), 2), "end": round(float(s.get("end", 0)), 2), "speaker": s.get("speaker", "SPEAKER_00")}
+            for s in whisper_result["segments"] if "start" in s and "end" in s
+        ]
+        if segs_summary:
+            metadata_comments.append(f"; VoiceHighlighterSegments: {json.dumps(segs_summary, ensure_ascii=False)}")
+    meta_comments_str = ("\n" + "\n".join(metadata_comments)) if metadata_comments else ""
     v4_styles_block = "\n".join(style_lines)
 
     header = f"""[Script Info]
@@ -353,7 +430,7 @@ WrapStyle: 0
 ScaledBorderAndShadow: yes
 YCbCr Matrix: TV.709
 PlayResX: {play_res_x}
-PlayResY: {play_res_y}
+PlayResY: {play_res_y}{meta_comments_str}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
@@ -419,21 +496,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     if not slices:
         return header
 
-    # Parse keyframes from config if present
-    keyframes_raw = config.get("keyframes") or []
-    keyframes: list[dict[str, Any]] = []
-    if isinstance(keyframes_raw, list):
-        for kf in keyframes_raw:
-            if hasattr(kf, "model_dump"):
-                kf_data = kf.model_dump()
-            elif isinstance(kf, dict):
-                kf_data = dict(kf)
-            else:
-                continue
-            if "time" in kf_data:
-                keyframes.append(kf_data)
-        keyframes.sort(key=lambda k: float(k.get("time", 0.0)))
-
     event_lines = []
     prev_event_end = 0.0
 
@@ -471,8 +533,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         kf_box_opacity = float(kf_cfg.get("box_opacity", box_opacity))
         kf_out_w = float(kf_cfg.get("outline_width", outline_width))
 
+        # Determine if multi-speaker is active at this slice timestamp
+        is_multi_for_slice = kf_cfg.get("is_multi_speaker")
+        if is_multi_for_slice is None:
+            is_multi_for_slice = kf_cfg.get("isMultiSpeaker")
+        if is_multi_for_slice is None:
+            is_multi_for_slice = bool(speaker_channels)
+
         # Resolve speaker channel configuration
-        channel = speaker_channels.get(curr_speaker)
+        channel = speaker_channels.get(curr_speaker) if is_multi_for_slice else None
         if channel:
             slice_primary = hex_to_ass_color(channel.get("primary_color", kf_pri_hex), 1.0)
             slice_outline = hex_to_ass_color(channel.get("outline_color", kf_out_hex), 1.0)
@@ -480,7 +549,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             slice_box_bg = hex_to_ass_color(channel.get("box_bg_color", kf_box_bg_hex), kf_box_opacity)
             slice_box_font = hex_to_ass_color(channel.get("box_font_color", kf_box_font_hex), 1.0)
             spk_display_name = channel.get("name", curr_speaker)
-            show_name_prefix = channel.get("show_speaker_name", False)
+            show_name_prefix = channel.get("show_speaker_name", True)
             style_name = f"Speaker_{curr_speaker}" if f"Speaker_{curr_speaker}" in registered_styles else "Default"
         else:
             slice_primary = hex_to_ass_color(kf_pri_hex, 1.0)
@@ -488,7 +557,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             slice_highlight = hex_to_ass_color(kf_hl_hex, 1.0)
             slice_box_bg = hex_to_ass_color(kf_box_bg_hex, kf_box_opacity)
             slice_box_font = hex_to_ass_color(kf_box_font_hex, 1.0)
-            spk_display_name = curr_speaker if curr_speaker != "SPEAKER_00" else ""
+            spk_display_name = ""
             show_name_prefix = False
             style_name = "Default"
 
@@ -552,7 +621,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         dialogue_text = "\\N".join(rendered_lines)
         if show_name_prefix and spk_display_name:
-            dialogue_text = f"[{spk_display_name}]: {dialogue_text}"
+            dialogue_text = f"{dialogue_text}\\N{spk_display_name}"
 
         font_overrides = ""
         kf_fn = kf_cfg.get("font_name")
@@ -587,6 +656,7 @@ def update_ass_formatting(
     ass_content: str,
     config: dict[str, Any] | None = None,
     video_meta: dict[str, Any] | None = None,
+    segments: list[dict[str, Any]] | None = None,
 ) -> str:
     """Synchronize and update ASS subtitle formatting and active word highlight colors.
 
@@ -600,12 +670,21 @@ def update_ass_formatting(
         ass_content: Full raw ASS script content string.
         config: Optional dictionary containing updated styling parameters.
         video_meta: Optional dictionary containing video dimensions (width, height).
+        segments: Optional list of speech segment dictionaries with timestamps and assigned speakers.
 
     Returns:
         Updated ASS script content string with synchronized styles and event tags.
     """
     config = config or {}
-    keyframes_raw = config.get("keyframes") or []
+    existing_meta = extract_ass_metadata(ass_content)
+
+    keyframes_raw = config.get("keyframes")
+    if keyframes_raw is None or len(keyframes_raw) == 0:
+        keyframes_raw = existing_meta.get("keyframes") or []
+
+    if segments is None and existing_meta.get("segments"):
+        segments = existing_meta["segments"]
+
     keyframes: list[dict[str, Any]] = []
     if isinstance(keyframes_raw, list):
         for kf in keyframes_raw:
@@ -652,7 +731,7 @@ def update_ass_formatting(
     box_bg_color_hex = config.get("box_bg_color")
     box_opacity = config.get("box_opacity")
     box_font_color_hex = config.get("box_font_color")
-    speaker_channels = config.get("speaker_channels") or {}
+    speaker_channels = config.get("speaker_channels") or existing_meta.get("speaker_channels") or {}
 
     pos_x = play_res_x // 2
     pos_y = None
@@ -717,6 +796,31 @@ def update_ass_formatting(
         if f_idx is not None and f_idx < len(parts):
             parts[f_idx] = str(value)
 
+    # Ensure all speaker channels across base config and keyframes have a registered Style
+    all_spk_channels = dict(speaker_channels)
+    for kf in keyframes:
+        kf_styling = kf.get("styling") or {}
+        for k_id, k_ch in (kf_styling.get("speaker_channels") or {}).items():
+            if k_id not in all_spk_channels:
+                all_spk_channels[k_id] = k_ch
+
+    if all_spk_channels and "Default" in styles:
+        def_parts = styles["Default"]
+        last_style_idx = max(style_line_indices.values()) if style_line_indices else -1
+        for spk_id, spk_ch in all_spk_channels.items():
+            st_name = f"Speaker_{spk_id}"
+            if st_name not in styles:
+                new_p = list(def_parts)
+                new_p[0] = st_name
+                styles[st_name] = new_p
+                if last_style_idx != -1:
+                    last_style_idx += 1
+                    lines.insert(last_style_idx, f"Style: {','.join(new_p)}")
+                    style_line_indices[st_name] = last_style_idx
+                    for other_name, other_idx in list(style_line_indices.items()):
+                        if other_name != st_name and other_idx >= last_style_idx:
+                            style_line_indices[other_name] = other_idx + 1
+
     resolved_styles = {}
     for st_name, parts in styles.items():
         p = list(parts)
@@ -725,9 +829,9 @@ def update_ass_formatting(
         spk_cfg = {}
         if is_spk and spk_id:
             spk_cfg = (
-                speaker_channels.get(spk_id)
-                or speaker_channels.get(spk_id.replace("SPEAKER_", ""))
-                or speaker_channels.get(f"SPEAKER_{spk_id}")
+                all_spk_channels.get(spk_id)
+                or all_spk_channels.get(spk_id.replace("SPEAKER_", ""))
+                or all_spk_channels.get(f"SPEAKER_{spk_id}")
                 or {}
             )
             if hasattr(spk_cfg, "model_dump"):
@@ -798,8 +902,32 @@ def update_ass_formatting(
         },
     )
 
+    meta_comments = []
+    if keyframes:
+        meta_comments.append(f"; VoiceHighlighterKeyframes: {json.dumps(keyframes, ensure_ascii=False)}")
+    if all_spk_channels:
+        meta_comments.append(f"; VoiceHighlighterSpeakers: {json.dumps(all_spk_channels, ensure_ascii=False)}")
+    if segments:
+        clean_segs = [
+            {"start": round(float(s.get("start", 0)), 2), "end": round(float(s.get("end", 0)), 2), "speaker": s.get("speaker", "SPEAKER_00")}
+            for s in segments if "start" in s and "end" in s
+        ]
+        if clean_segs:
+            meta_comments.append(f"; VoiceHighlighterSegments: {json.dumps(clean_segs, ensure_ascii=False)}")
+
     updated_lines = []
+    meta_inserted = False
     for line in lines:
+        if line.strip().startswith("; VoiceHighlighter"):
+            continue
+
+        if not meta_inserted and (line.strip() == "[V4+ Styles]" or line.strip().startswith("Format:")):
+            if meta_comments:
+                for mc in meta_comments:
+                    updated_lines.append(mc)
+                updated_lines.append("")
+            meta_inserted = True
+
         if line.startswith("Dialogue:"):
             d_parts = line.split(",", 9)
             if len(d_parts) >= 10:
@@ -819,22 +947,139 @@ def update_ass_formatting(
                     except Exception:
                         pass
 
-                d_style = d_parts[3].strip()
-                st_info = resolved_styles.get(d_style, def_res)
-                target_hl = hex_to_ass_color(line_cfg["highlight_color"], 1.0) if line_cfg.get("highlight_color") else st_info["hl"]
-                target_pri = hex_to_ass_color(line_cfg["primary_color"], 1.0) if line_cfg.get("primary_color") else st_info["pri"]
-                target_out = hex_to_ass_color(line_cfg["outline_color"], 1.0) if line_cfg.get("outline_color") else st_info["out"]
-                target_box_bg = hex_to_ass_color(line_cfg["box_bg_color"], float(line_cfg.get("box_opacity", 0.85))) if line_cfg.get("box_bg_color") else st_info["box_bg"]
-                target_box_font = hex_to_ass_color(line_cfg["box_font_color"], 1.0) if line_cfg.get("box_font_color") else st_info["box_font"]
+                # Check if multi-speaker is active for this line
+                is_multi_for_line = line_cfg.get("is_multi_speaker")
+                if is_multi_for_line is None:
+                    is_multi_for_line = line_cfg.get("isMultiSpeaker")
+                if is_multi_for_line is None:
+                    is_multi_for_line = bool(line_cfg.get("speaker_channels") or all_spk_channels)
 
                 d_text = d_parts[9]
+                d_style = d_parts[3].strip()
+
+                if not is_multi_for_line:
+                    # Single speaker: force style to Default and strip speaker prefix tags
+                    d_style = "Default"
+                    d_parts[3] = "Default"
+                    d_parts[4] = ""  # Clear Actor field
+                    st_info = def_res
+                    d_text = re.sub(r'(\{[^}]*\})?(\[[^\]]+\]|\([^\)]+\)):\s*', '', d_text)
+                    target_hl = hex_to_ass_color(line_cfg["highlight_color"], 1.0) if line_cfg.get("highlight_color") else st_info["hl"]
+                    target_pri = hex_to_ass_color(line_cfg["primary_color"], 1.0) if line_cfg.get("primary_color") else st_info["pri"]
+                    target_out = hex_to_ass_color(line_cfg["outline_color"], 1.0) if line_cfg.get("outline_color") else st_info["out"]
+                    target_box_bg = hex_to_ass_color(line_cfg["box_bg_color"], float(line_cfg.get("box_opacity", 0.85))) if line_cfg.get("box_bg_color") else st_info["box_bg"]
+                    target_box_font = hex_to_ass_color(line_cfg["box_font_color"], 1.0) if line_cfg.get("box_font_color") else st_info["box_font"]
+                else:
+                    # Multi-speaker: resolve speaker channel and inject/update speaker prefix
+                    curr_spk_id = None
+                    if d_style.startswith("Speaker_"):
+                        curr_spk_id = d_style.replace("Speaker_", "").strip()
+
+                    actor_val = d_parts[4].strip()
+                    prefix_match = re.search(r'\[([^\]]+)\]:\s*', d_text)
+                    prefix_name = prefix_match.group(1).strip() if prefix_match else None
+
+                    spk_channels_map = line_cfg.get("speaker_channels") or all_spk_channels or {}
+                    target_channel = None
+
+                    if curr_spk_id:
+                        target_channel = (
+                            spk_channels_map.get(curr_spk_id)
+                            or spk_channels_map.get(f"SPEAKER_{curr_spk_id}")
+                            or spk_channels_map.get(curr_spk_id.replace("SPEAKER_", ""))
+                        )
+                    if not target_channel and actor_val:
+                        for ch_id, ch_data in spk_channels_map.items():
+                            ch_dict = ch_data if isinstance(ch_data, dict) else (ch_data.model_dump() if hasattr(ch_data, "model_dump") else {})
+                            if ch_id == actor_val or ch_dict.get("name") == actor_val or ch_dict.get("id") == actor_val:
+                                target_channel = ch_dict
+                                curr_spk_id = ch_id
+                                break
+                    if not target_channel and prefix_name:
+                        for ch_id, ch_data in spk_channels_map.items():
+                            ch_dict = ch_data if isinstance(ch_data, dict) else (ch_data.model_dump() if hasattr(ch_data, "model_dump") else {})
+                            if ch_dict.get("name") == prefix_name:
+                                target_channel = ch_dict
+                                curr_spk_id = ch_id
+                                break
+                    if not target_channel:
+                        segs_pool = segments or line_cfg.get("segments") or config.get("segments") or []
+                        for s_cand in segs_pool:
+                            s_start = float(s_cand.get("start", 0.0))
+                            s_end = float(s_cand.get("end", 0.0))
+                            if s_start - 0.25 <= d_start <= s_end + 0.25:
+                                s_spk = s_cand.get("speaker")
+                                if s_spk:
+                                    s_spk_clean = s_spk if s_spk in spk_channels_map else (
+                                        f"SPEAKER_{s_spk}" if f"SPEAKER_{s_spk}" in spk_channels_map else s_spk.replace("SPEAKER_", "")
+                                    )
+                                    if s_spk_clean in spk_channels_map:
+                                        target_channel = spk_channels_map[s_spk_clean]
+                                        curr_spk_id = s_spk_clean
+                                        break
+                    if not target_channel and spk_channels_map:
+                        first_key = list(spk_channels_map.keys())[0]
+                        first_ch = spk_channels_map[first_key]
+                        target_channel = first_ch if isinstance(first_ch, dict) else (first_ch.model_dump() if hasattr(first_ch, "model_dump") else {})
+                        curr_spk_id = first_key
+
+                    if target_channel:
+                        ch_dict = target_channel if isinstance(target_channel, dict) else (target_channel.model_dump() if hasattr(target_channel, "model_dump") else {})
+                        spk_id_clean = ch_dict.get("id") or curr_spk_id or "SPEAKER_00"
+                        spk_name = ch_dict.get("name") or actor_val or (f"Speaker {spk_id_clean}" if not str(spk_id_clean).startswith("SPEAKER_") else f"Speaker {int(str(spk_id_clean).replace('SPEAKER_', '')) + 1}")
+                        d_style = f"Speaker_{spk_id_clean}"
+                        d_parts[3] = d_style
+                        d_parts[4] = spk_name
+                        st_info = resolved_styles.get(d_style, def_res)
+
+                        ch_hl = ch_dict.get("highlight_color") or line_cfg.get("highlight_color")
+                        target_hl = hex_to_ass_color(ch_hl, 1.0) if ch_hl else st_info["hl"]
+                        ch_pri = ch_dict.get("primary_color") or line_cfg.get("primary_color")
+                        target_pri = hex_to_ass_color(ch_pri, 1.0) if ch_pri else st_info["pri"]
+                        ch_out = ch_dict.get("outline_color") or line_cfg.get("outline_color")
+                        target_out = hex_to_ass_color(ch_out, 1.0) if ch_out else st_info["out"]
+                        ch_box_bg = ch_dict.get("box_bg_color") or line_cfg.get("box_bg_color")
+                        target_box_bg = hex_to_ass_color(ch_box_bg, float(line_cfg.get("box_opacity", 0.85))) if ch_box_bg else st_info["box_bg"]
+                        ch_box_font = ch_dict.get("box_font_color") or line_cfg.get("box_font_color")
+                        target_box_font = hex_to_ass_color(ch_box_font, 1.0) if ch_box_font else st_info["box_font"]
+
+                        show_name = ch_dict.get("show_speaker_name", True)
+                        # Strip existing speaker prefix if any (e.g. "[Name]: ")
+                        d_text = re.sub(r'(^|\{[^}]*\})(\[[^\]]+\]|\([^\)]+\)):\s*', r'\1', d_text)
+                        # Strip existing speaker suffix line if any (e.g. "\NDiane Kearns-Osterweil")
+                        d_text = re.sub(r'\\N(?:\[[^\]]+\]|[A-Za-z0-9 _\-]+)$', '', d_text)
+                        if show_name and spk_name:
+                            d_text = f"{d_text}\\N{spk_name}"
+                    else:
+                        st_info = resolved_styles.get(d_style, def_res)
+                        target_hl = hex_to_ass_color(line_cfg["highlight_color"], 1.0) if line_cfg.get("highlight_color") else st_info["hl"]
+                        target_pri = hex_to_ass_color(line_cfg["primary_color"], 1.0) if line_cfg.get("primary_color") else st_info["pri"]
+                        target_out = hex_to_ass_color(line_cfg["outline_color"], 1.0) if line_cfg.get("outline_color") else st_info["out"]
+                        target_box_bg = hex_to_ass_color(line_cfg["box_bg_color"], float(line_cfg.get("box_opacity", 0.85))) if line_cfg.get("box_bg_color") else st_info["box_bg"]
+                        target_box_font = hex_to_ass_color(line_cfg["box_font_color"], 1.0) if line_cfg.get("box_font_color") else st_info["box_font"]
 
                 if line_pos_y is not None:
-                    d_text = re.sub(
-                        r"\\pos\(\s*\d+\s*,\s*\d+\s*\)",
-                        lambda _: f"\\pos({line_pos_x},{line_pos_y})",
-                        d_text,
-                    )
+                    if re.search(r"\\pos\(\s*\d+\s*,\s*\d+\s*\)", d_text):
+                        d_text = re.sub(
+                            r"\\pos\(\s*\d+\s*,\s*\d+\s*\)",
+                            lambda _: f"\\pos({line_pos_x},{line_pos_y})",
+                            d_text,
+                        )
+                    else:
+                        d_text = f"{{\\an2\\pos({line_pos_x},{line_pos_y})}}" + d_text
+
+                if line_cfg.get("font_size"):
+                    try:
+                        kf_fs = int(line_cfg["font_size"])
+                        if re.search(r"\\fs\d+", d_text):
+                            d_text = re.sub(r"\\fs\d+", f"\\fs{kf_fs}", d_text)
+                    except Exception:
+                        pass
+
+                if line_cfg.get("font_name"):
+                    kf_fn = str(line_cfg["font_name"]).strip()
+                    if re.search(r"\\fn[^}\\]+", d_text):
+                        d_text = re.sub(r"\\fn[^}\\]+", f"\\fn{kf_fn}", d_text)
 
                 def repl_active(match: re.Match) -> str:
                     tag1, word, tag2 = match.group(1), match.group(2), match.group(3)
@@ -881,3 +1126,118 @@ def update_ass_formatting(
 
     return "\n".join(updated_lines) + ("\n" if ass_content.endswith("\n") else "")
 
+
+
+def merge_speaker_channels(
+    ass_path: str | Path,
+    source_id: str,
+    target_id: str,
+) -> dict[str, Any]:
+    """Merge source_id speaker channel into target_id speaker channel within an ASS file.
+
+    Consolidates dialogue lines, styles, timeline keyframes, and metadata comments.
+    Rewrites Style: Speaker_<source_id> to Speaker_<target_id>, Actor field to target name,
+    and updates VoiceHighlighterSegments and VoiceHighlighterSpeakers.
+
+    Args:
+        ass_path: Path to the ASS subtitle file.
+        source_id: ID of the speaker channel being absorbed (e.g. 'SPEAKER_04').
+        target_id: ID of the surviving speaker channel (e.g. 'SPEAKER_03').
+
+    Returns:
+        Dictionary summarizing the merge operation (lines updated, segments updated).
+    """
+    ass_file = Path(ass_path)
+    if not ass_file.exists():
+        raise FileNotFoundError(f"ASS file not found: {ass_path}")
+
+    if source_id == target_id:
+        return {"status": "noop", "message": "Source and target speaker are identical"}
+
+    content_str = ass_file.read_text(encoding="utf-8")
+    lines = content_str.splitlines()
+
+    speakers: dict[str, Any] = {}
+    keyframes: list[dict[str, Any]] = []
+    segments: list[dict[str, Any]] = []
+
+    for line in lines:
+        if line.startswith("; VoiceHighlighterSpeakers:"):
+            try:
+                speakers = json.loads(line.replace("; VoiceHighlighterSpeakers:", "").strip())
+            except Exception:
+                pass
+        elif line.startswith("; VoiceHighlighterKeyframes:"):
+            try:
+                keyframes = json.loads(line.replace("; VoiceHighlighterKeyframes:", "").strip())
+            except Exception:
+                pass
+        elif line.startswith("; VoiceHighlighterSegments:"):
+            try:
+                segments = json.loads(line.replace("; VoiceHighlighterSegments:", "").strip())
+            except Exception:
+                pass
+
+    target_name = speakers.get(target_id, {}).get("name", target_id)
+    source_name = speakers.get(source_id, {}).get("name", source_id)
+
+    # Update segments metadata
+    segs_updated = 0
+    for s in segments:
+        if s.get("speaker") == source_id:
+            s["speaker"] = target_id
+            segs_updated += 1
+
+    # Update speakers metadata: remove source_id
+    if source_id in speakers:
+        del speakers[source_id]
+
+    # Update keyframes metadata: remove source_id from speaker_channels
+    for kf in keyframes:
+        st = kf.get("styling", {})
+        sch = st.get("speaker_channels", {})
+        if source_id in sch:
+            del sch[source_id]
+
+    lines_updated = 0
+    new_lines: list[str] = []
+    for line in lines:
+        if line.startswith(f"Style: Speaker_{source_id},"):
+            # Drop absorbed style definition
+            continue
+        elif line.startswith("; VoiceHighlighterSpeakers:"):
+            new_lines.append(f"; VoiceHighlighterSpeakers: {json.dumps(speakers)}")
+        elif line.startswith("; VoiceHighlighterKeyframes:"):
+            new_lines.append(f"; VoiceHighlighterKeyframes: {json.dumps(keyframes)}")
+        elif line.startswith("; VoiceHighlighterSegments:"):
+            new_lines.append(f"; VoiceHighlighterSegments: {json.dumps(segments)}")
+        elif line.startswith("Dialogue:"):
+            parts = line.split(",", 9)
+            if len(parts) >= 10:
+                d_style = parts[3].strip()
+                d_actor = parts[4].strip()
+                d_text = parts[9]
+
+                is_source = (d_style == f"Speaker_{source_id}") or (d_actor == source_name and d_style != f"Speaker_{target_id}" and source_name != target_name)
+                if is_source:
+                    parts[3] = f"Speaker_{target_id}"
+                    parts[4] = target_name
+                    if source_name and source_name in d_text:
+                        d_text = d_text.replace(f"\\N{source_name}", f"\\N{target_name}")
+                        d_text = d_text.replace(f"[{source_name}]: ", "")
+                    parts[9] = d_text
+                    line = ",".join(parts)
+                    lines_updated += 1
+            new_lines.append(line)
+        else:
+            new_lines.append(line)
+
+    ass_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    return {
+        "status": "success",
+        "source_speaker_id": source_id,
+        "target_speaker_id": target_id,
+        "target_speaker_name": target_name,
+        "dialogues_updated": lines_updated,
+        "segments_updated": segs_updated,
+    }

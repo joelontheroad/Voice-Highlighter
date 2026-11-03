@@ -41,6 +41,8 @@ def isolated_env(tmp_path: Path) -> dict[str, str]:
     env["XDG_CACHE_HOME"] = str(cache_dir)
     env["XDG_DATA_HOME"] = str(data_dir)
     env["NO_COLOR"] = "1"
+    env["CI"] = "true"
+    env["VOICE_HIGHLIGHTER_TESTING"] = "1"
     return env
 
 
@@ -83,7 +85,7 @@ def test_cli_version(isolated_env):
     """Verify single source of version, AGPLv3 mention, and repository URL."""
     res = run_cli("--version", env=isolated_env)
     assert res.returncode == 0
-    assert "1.1.0" in res.stdout
+    assert "1.2.0" in res.stdout
     assert "AGPL" in res.stdout
     assert "https://github.com/joelontheroad/Voice-Highlighter" in res.stdout
 
@@ -336,6 +338,38 @@ def test_reveal_in_folder_headless(tmp_path, monkeypatch):
     assert res["success"] is True
     assert res["headless"] is True
     assert "output.ass" in res["message"] or str(tmp_path) in res["message"]
+
+
+def test_cli_sigint_clean_exit_code_130(isolated_env):
+    """Verify that SIGINT cleanly shuts down the CLI with exit code 130 and restores the terminal."""
+    import signal
+
+    cmd = [sys.executable, "-m", "backend.cli", "serve", "--port", "8695", "--no-browser"]
+    proc = subprocess.Popen(
+        cmd,
+        env=isolated_env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    time.sleep(0.8)
+    proc.send_signal(signal.SIGINT)
+    stdout, stderr = proc.communicate(timeout=3.0)
+
+    assert proc.returncode == 130
+    assert "Shutting down" in stderr or "Voice Highlighter" in stderr or "interrupted" in stderr
+
+
+def test_restore_terminal_routine():
+    """Verify restore_terminal executes safely without throwing exceptions."""
+    from backend.cli import ShutdownSpinner, restore_terminal
+
+    restore_terminal()
+    spinner = ShutdownSpinner("Testing spinner...")
+    spinner.start()
+    time.sleep(0.1)
+    spinner.stop("✓ Test complete\n")
+
 
 
 

@@ -41,17 +41,20 @@ def build_transcription_prompt(
     vocabulary: list[str] | None = None,
     speaker_names: list[str] | None = None,
     media_keywords: list[str] | None = None,
+    include_initial_prompt: bool = False,
 ) -> tuple[str | None, str | None]:
-    """Synthesize high-efficacy initial_prompt and hotwords for Faster-Whisper.
+    """Synthesize high-efficacy hotwords and optional initial_prompt for Faster-Whisper.
 
-    Combines domain terms, proper nouns, and speaker names into natural conversational
-    context sentences that condition the transformer decoder's self-attention prior,
-    while compiling space-separated token prefixes for beam search logit boosting.
+    In Faster-Whisper / CTranslate2, hotwords provides pure beam search logit boosting
+    without polluting the autoregressive token history. Feeding long vocabulary lists into
+    initial_prompt causes catastrophic prompt hallucination loops during pauses and
+    token deduplication that erases real dialogue matching prompt terms.
 
     Args:
         vocabulary: List of user-specified terms, brand names, and specialized jargon.
         speaker_names: List of human-assigned speaker labels from multi-speaker studio.
         media_keywords: Key terms derived from media filename or metadata.
+        include_initial_prompt: Whether to synthesize an initial_prompt string (default False).
 
     Returns:
         Tuple of (initial_prompt, hotwords) where both are strings or None.
@@ -73,7 +76,7 @@ def build_transcription_prompt(
         "speaker_04",
     }
 
-    for term_list in [speaker_names, vocabulary, media_keywords]:
+    for term_list in [vocabulary, speaker_names, media_keywords]:
         if not term_list:
             continue
         for item in term_list:
@@ -90,15 +93,18 @@ def build_transcription_prompt(
     if not all_terms:
         return None, None
 
-    # Faster-Whisper beam search hotword boosting
-    hotwords = " ".join(all_terms)
+    # Faster-Whisper beam search hotword boosting (pure logit bias, zero token history pollution)
+    # CRITICAL: CTranslate2 adds logit bonuses to all hotword tokens during beam search.
+    # Exceeding 6-8 hotwords over-biases the decoder beam search, suppressing real spoken words
+    # during quiet or natural conversational transitions. Limit hotwords to top 6 domain terms.
+    hotwords = " ".join(all_terms[:6])
 
-    # Autoregressive decoder attention conditioning prompt
-    # Limit to first 35 terms to avoid overflowing the 224-token prompt context window
-    terms_phrase = ", ".join(all_terms[:35])
-    initial_prompt = (
-        f"In this video, the discussion covers the following topics and speakers: {terms_phrase}."
-    )
+    initial_prompt = None
+    if include_initial_prompt:
+        terms_phrase = ", ".join(all_terms[:35])
+        initial_prompt = (
+            f"In this video, the discussion covers the following topics and speakers: {terms_phrase}."
+        )
 
     return initial_prompt, hotwords
 
@@ -165,6 +171,7 @@ def run_whisperx_pipeline(
     custom_vocabulary: list[str] | None = None,
     speaker_names: list[str] | None = None,
     media_keywords: list[str] | None = None,
+    target_speakers: int | None = None,
 ) -> dict[str, Any]:
     """Execute WhisperX speech recognition and forced word-level alignment 100% offline.
 
@@ -185,6 +192,7 @@ def run_whisperx_pipeline(
         custom_vocabulary: Optional list of proper nouns, technical jargon, and domain terms.
         speaker_names: Optional human-assigned speaker labels to bias recognition.
         media_keywords: Optional keywords derived from video title or filename.
+        target_speakers: Optional explicit speaker count override (e.g. 4 or 5) for diarization.
 
     Returns:
         Dictionary containing aligned subtitle segments, detected language, and
@@ -200,8 +208,12 @@ def run_whisperx_pipeline(
         vocabulary=custom_vocabulary,
         speaker_names=speaker_names,
         media_keywords=media_keywords,
+        include_initial_prompt=False,
     )
-    asr_options: dict[str, Any] = {}
+    # Prevent silence/pause hallucinations from propagating across VAD chunks
+    asr_options: dict[str, Any] = {
+        "condition_on_previous_text": False,
+    }
     if initial_prompt:
         asr_options["initial_prompt"] = initial_prompt
         print(f"[WhisperX] Priming transformer attention with prompt: {initial_prompt}")
@@ -334,6 +346,7 @@ def run_whisperx_pipeline(
             aligned_result, _ = diarize_whisper_result(
                 audio_wav_path=audio_wav_path,
                 whisper_result=aligned_result,
+                target_speakers=target_speakers,
             )
             print("[Voice Highlighter] Speaker diarization completed successfully.")
         except Exception as diarize_err:

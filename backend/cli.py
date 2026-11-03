@@ -9,10 +9,14 @@ XDG configuration reset, and stream piping support (-).
 """
 
 import argparse
+import atexit
 import json
 import os
 import signal
+import subprocess
 import sys
+import threading
+import time
 from typing import Any
 
 from backend import __license__, __repository__, __version__
@@ -23,6 +27,104 @@ from backend.config import (
 )
 
 DEFAULT_PORT = 8672
+
+_ORIGINAL_TERMIOS: Any = None
+try:
+    if sys.platform != "win32" and hasattr(sys.stdin, "isatty") and sys.stdin.isatty():
+        import termios
+        _ORIGINAL_TERMIOS = termios.tcgetattr(sys.stdin.fileno())
+except Exception:
+    _ORIGINAL_TERMIOS = None
+
+
+def restore_terminal() -> None:
+    """Restore terminal echo, canonical mode, and cursor visibility (Directive 3 & 10).
+
+    Guarantees that the terminal is left fully functional when the process exits,
+    even if interrupted by SIGINT, exceptions, or external tools that disabled echo.
+    """
+    global _ORIGINAL_TERMIOS
+
+    # 1. Reset ANSI attributes and restore cursor visibility (\033[?25h)
+    if hasattr(sys.stderr, "isatty") and sys.stderr.isatty():
+        try:
+            sys.stderr.write("\033[?25h\033[0m")
+            sys.stderr.flush()
+        except Exception:
+            pass
+
+    # 2. Restore captured termios attributes (echo, line buffering)
+    if _ORIGINAL_TERMIOS is not None and hasattr(sys.stdin, "isatty") and sys.stdin.isatty():
+        try:
+            import termios
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, _ORIGINAL_TERMIOS)
+        except Exception:
+            pass
+
+    # 3. Fallback: Run 'stty sane' on Unix platforms to ensure terminal sanity
+    if sys.platform != "win32" and hasattr(sys.stdin, "isatty") and sys.stdin.isatty():
+        try:
+            subprocess.run(
+                ["stty", "sane"],
+                stdin=sys.stdin,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=0.3,
+            )
+        except Exception:
+            pass
+
+
+atexit.register(restore_terminal)
+
+
+class ShutdownSpinner:
+    """Animated Braille spinner for clean, user-visible CLI shutdown progress."""
+
+    FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+    def __init__(self, message: str = "Shutting down Voice Highlighter..."):
+        self.message = message
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        """Start the animated shutdown spinner on a background daemon thread."""
+        if not hasattr(sys.stderr, "isatty") or not sys.stderr.isatty():
+            sys.stderr.write(f"\n[voice-highlighter] {self.message}\n")
+            sys.stderr.flush()
+            return
+
+        def _spin():
+            idx = 0
+            # Hide cursor while spinning
+            sys.stderr.write("\033[?25l")
+            sys.stderr.flush()
+            while not self._stop_event.is_set():
+                frame = self.FRAMES[idx % len(self.FRAMES)]
+                sys.stderr.write(f"\r\033[K\033[1;33m{frame}\033[0m {self.message}")
+                sys.stderr.flush()
+                idx += 1
+                time.sleep(0.08)
+            # Clear line upon stop
+            sys.stderr.write("\r\033[K")
+            sys.stderr.flush()
+
+        self._thread = threading.Thread(target=_spin, daemon=True)
+        self._thread.start()
+
+    def stop(self, final_msg: str | None = "✓ Voice Highlighter stopped cleanly.\n") -> None:
+        """Stop the spinner, emit final success message, and restore terminal state."""
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=0.5)
+        if final_msg:
+            sys.stderr.write(f"\033[1;32m{final_msg}\033[0m" if should_colorize() else final_msg)
+            sys.stderr.flush()
+        restore_terminal()
+
+
+_shutdown_in_progress = False
 
 
 def get_default_port() -> int:
@@ -44,14 +146,26 @@ def get_default_port() -> int:
 
 
 def setup_signal_handlers() -> None:
-    """Register signal handlers to gracefully handle SIGINT and SIGTERM.
+    """Register signal handlers to gracefully handle SIGINT and SIGTERM (Directive 10).
 
-    Catches interruption signals cleanly, flushing file descriptors and exiting
-    with status code 130 without emitting unhandled traceback dumps.
+    Catches interruption signals cleanly, displaying an animated shutdown spinner on stderr,
+    restoring terminal attributes (echo, cursor), and exiting with status code 130 without tracebacks.
     """
     def _sig_handler(signum, frame):
-        sys.stderr.write("\n[voice-highlighter] Process interrupted by user. Exiting.\n")
-        sys.stderr.flush()
+        global _shutdown_in_progress
+        if _shutdown_in_progress:
+            # Second Ctrl+C forces instant exit
+            restore_terminal()
+            sys.stderr.write("\n[voice-highlighter] Process interrupted. Force exiting.\n")
+            sys.stderr.flush()
+            os._exit(130)
+
+        _shutdown_in_progress = True
+        spinner = ShutdownSpinner("Shutting down Voice Highlighter...")
+        spinner.start()
+        time.sleep(0.25)
+        spinner.stop("✓ Voice Highlighter stopped cleanly.\n")
+        restore_terminal()
         sys.exit(130)
 
     signal.signal(signal.SIGINT, _sig_handler)

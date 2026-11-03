@@ -30,24 +30,26 @@ def test_build_transcription_prompt_deduplication_and_casing():
     vocab = ["Katie Kam", "katie kam", "PostgreSQL", "postgresql", "carburetor"]
     prompt, hotwords = build_transcription_prompt(vocabulary=vocab)
 
-    assert prompt is not None
+    # By default, initial_prompt is None to prevent Faster-Whisper hallucinations
+    assert prompt is None
     assert hotwords is not None
-
-    # Should contain exactly one occurrence of Katie Kam and PostgreSQL
-    assert "Katie Kam" in prompt
-    assert prompt.count("Katie Kam") == 1
-    assert "PostgreSQL" in prompt
-    assert prompt.count("PostgreSQL") == 1
-    assert "carburetor" in prompt
-
-    # Hotwords string check
     assert hotwords == "Katie Kam PostgreSQL carburetor"
+
+    # When explicitly requested, initial_prompt contains the terms
+    prompt_opt, hotwords_opt = build_transcription_prompt(vocabulary=vocab, include_initial_prompt=True)
+    assert prompt_opt is not None
+    assert "Katie Kam" in prompt_opt
+    assert prompt_opt.count("Katie Kam") == 1
+    assert "PostgreSQL" in prompt_opt
+    assert prompt_opt.count("PostgreSQL") == 1
+    assert "carburetor" in prompt_opt
+    assert hotwords_opt == "Katie Kam PostgreSQL carburetor"
 
 
 def test_build_transcription_prompt_filters_generic_speakers():
     """Verify generic speaker tags (e.g. 'Speaker 1', 'SPEAKER_00') are excluded from vocabulary conditioning."""
     speakers = ["Speaker 1", "speaker_00", "Katie Kam", "Speaker 2", "Dr. Joel"]
-    prompt, hotwords = build_transcription_prompt(speaker_names=speakers)
+    prompt, hotwords = build_transcription_prompt(speaker_names=speakers, include_initial_prompt=True)
 
     assert prompt is not None
     assert hotwords is not None
@@ -70,6 +72,7 @@ def test_build_transcription_prompt_combines_sources():
         vocabulary=vocab,
         speaker_names=speakers,
         media_keywords=keywords,
+        include_initial_prompt=True,
     )
 
     assert prompt is not None
@@ -98,7 +101,7 @@ def test_style_preset_custom_vocabulary_schema():
 
 @patch("backend.transcriber.get_transcription_device", return_value=("cpu", "int8", "CPU"))
 def test_run_whisperx_pipeline_passes_asr_options(mock_device):
-    """Verify run_whisperx_pipeline passes synthesized asr_options to whisperx.load_model."""
+    """Verify run_whisperx_pipeline passes hotwords and disables condition_on_previous_text."""
     import sys
 
     mock_whisperx = MagicMock()
@@ -122,12 +125,11 @@ def test_run_whisperx_pipeline_passes_asr_options(mock_device):
         assert "asr_options" in call_kwargs
         asr_opts = call_kwargs["asr_options"]
         assert asr_opts is not None
-        assert "initial_prompt" in asr_opts
-        assert "Katie Kam" in asr_opts["initial_prompt"]
-        assert "carburetor" in asr_opts["initial_prompt"]
-        assert "Joel" in asr_opts["initial_prompt"]
+        assert asr_opts.get("condition_on_previous_text") is False
         assert "hotwords" in asr_opts
         assert "Katie Kam" in asr_opts["hotwords"]
+        assert "carburetor" in asr_opts["hotwords"]
+        assert "Joel" in asr_opts["hotwords"]
 
 
 def test_transcribe_request_accepts_custom_vocabulary():

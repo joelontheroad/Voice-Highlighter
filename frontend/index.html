@@ -63,7 +63,7 @@
         <div>
           <div class="brand-title-row">
             <h1 class="app-title">Voice Highlighter</h1>
-            <span class="app-version-badge" id="appVersionBadge">v1.1.0</span>
+            <span class="app-version-badge" id="appVersionBadge">v1.2.0</span>
           </div>
           <p class="app-subtitle">Word-level animated subtitle generator powered by WhisperX</p>
         </div>
@@ -351,6 +351,32 @@
             <div class="mini-pill-selector" id="socialDeviceSelector">
               <button type="button" class="mini-pill-btn active" data-device="mobile">📱 Mobile App</button>
               <button type="button" class="mini-pill-btn" data-device="web">💻 Web Browser</button>
+            </div>
+          </div>
+
+          <!-- Instagram Surface Mode Selector (Visible when Instagram is active) -->
+          <div class="social-tool-row ig-sub-row hidden" id="igSurfaceRow">
+            <span class="social-tool-label">IG Surface:</span>
+            <div class="mini-pill-selector" id="igSurfaceSelector">
+              <button type="button" class="mini-pill-btn active" data-ig-surface="reels" id="btnIgSurfaceReels" title="Instagram Reels / Stories (9:16 Full Screen)">9:16 Reels</button>
+              <button type="button" class="mini-pill-btn" data-ig-surface="feed" id="btnIgSurfaceFeed" title="Instagram Home Feed In-Scroll Crop (4:5 Portrait, 1080x1350)">4:5 Feed Crop</button>
+              <button type="button" class="mini-pill-btn" data-ig-surface="grid" id="btnIgSurfaceGrid" title="Instagram Profile Grid Preview (1:1 Square, 1080x1080)">1:1 Profile Grid</button>
+              <button type="button" class="mini-pill-btn" data-ig-surface="all" id="btnIgSurfaceAll" title="Simultaneous Multi-Ratio Safe Zones Guide">All Safe Zones</button>
+            </div>
+          </div>
+
+          <!-- Instagram Options & Quick Actions Row -->
+          <div class="social-tool-row ig-sub-row hidden" id="igOptionsRow">
+            <span class="social-tool-label">IG Guides:</span>
+            <div class="ig-options-wrap">
+              <label class="ig-checkbox-label" for="chkIgMaskLetterbox">
+                <input type="checkbox" id="chkIgMaskLetterbox" checked>
+                <span>Darken Cropped Areas</span>
+              </label>
+              <button type="button" class="btn-ig-micro" id="btnIgAutoSafe" title="Quickly position subtitle inside Instagram's Universal Safe Center">
+                🎯 Auto-Fit to Safe Center
+              </button>
+              <div class="ig-collision-indicator hidden" id="igCollisionIndicator" role="status" aria-live="polite"></div>
             </div>
           </div>
         </div>
@@ -887,7 +913,7 @@
               </button>
               <button type="button" class="segment-btn" id="btnModeMultiSpeaker" role="tab" aria-selected="false">
                 <span class="segment-icon">👥</span>
-                <span>Multi-Speaker (1–5 Voices)</span>
+                <span>Multi-Speaker (1–7 Voices)</span>
               </button>
             </div>
           </div>
@@ -898,17 +924,19 @@
               <div class="speaker-header-left">
                 <span class="speaker-header-title">👥 Multi-Speaker Voice Studio</span>
               </div>
-              <div class="speaker-count-selector" id="speakerCountSelector" aria-label="Select number of voices">
-                <span class="count-selector-label">Voices:</span>
-                <button type="button" class="count-pill-btn" data-count="2">2</button>
-                <button type="button" class="count-pill-btn" data-count="3">3</button>
-                <button type="button" class="count-pill-btn" data-count="4">4</button>
-                <button type="button" class="count-pill-btn active" data-count="5">5</button>
+              <div class="speaker-count-selector" id="speakerCountSelector" aria-label="Select maximum number of voices (up to 7)">
+                <span class="count-selector-label" title="Adaptive voice limit (up to 7 voices)">Max Voices:</span>
+                <button type="button" class="count-pill-btn" data-count="2" title="Up to 2 voices">2</button>
+                <button type="button" class="count-pill-btn" data-count="3" title="Up to 3 voices">3</button>
+                <button type="button" class="count-pill-btn" data-count="4" title="Up to 4 voices">4</button>
+                <button type="button" class="count-pill-btn" data-count="5" title="Up to 5 voices">5</button>
+                <button type="button" class="count-pill-btn" data-count="6" title="Up to 6 voices">6</button>
+                <button type="button" class="count-pill-btn active" data-count="7" title="Up to 7 voices">7</button>
               </div>
             </div>
 
             <div class="speaker-tabs-bar" id="speakerTabsBar" role="tablist" aria-label="Speaker Channels">
-              <!-- Dynamically populated speaker tabs (Speaker 1 through 5) -->
+              <!-- Dynamically populated speaker tabs (Speaker 1 through 7) -->
             </div>
 
             <div class="speaker-channel-meta" id="speakerChannelMeta">
@@ -921,7 +949,7 @@
 
               <!-- Acoustic Voice Snippet Audio Player (Track B) -->
               <div class="speaker-sample-player-row" id="speakerSamplePlayerRow" style="margin-top: 10px; display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.28); padding: 8px 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.08);">
-                <button type="button" class="btn btn-secondary btn-sm" id="btnPlaySpeakerSample" style="display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 5px 12px; font-size: 0.8rem; font-weight: 600; min-width: 86px; border-radius: 4px;" disabled title="Play representative 2-second voice snippet">
+                <button type="button" class="btn btn-secondary btn-sm" id="btnPlaySpeakerSample" style="display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 5px 12px; font-size: 0.8rem; font-weight: 600; min-width: 86px; border-radius: 4px;" disabled title="Play representative 5-second voice snippet">
                   <span id="speakerSamplePlayIcon">▶</span>
                   <span id="speakerSamplePlayText">Listen</span>
                 </button>
@@ -933,8 +961,11 @@
 
               <div class="form-row-2" style="margin-top: 10px;">
                 <div class="form-group" style="margin-bottom: 0;">
-                  <label for="inputSpeakerDisplayName" style="font-size: 0.75rem;">Display Name</label>
-                  <input type="text" id="inputSpeakerDisplayName" class="text-input" style="padding: 5px 8px; font-size: 0.82rem;" value="Speaker 1" placeholder="e.g. Host, Guest, Speaker 5">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <label for="inputSpeakerDisplayName" style="font-size: 0.75rem; margin-bottom: 0;">Display Name</label>
+                    <button type="button" class="mini-btn" id="btnTriggerMergeModal" title="Merge this voice into another speaker channel" style="font-size: 0.7rem; padding: 1px 6px; border: 1px solid rgba(255,255,255,0.15);">🔗 Merge...</button>
+                  </div>
+                  <input type="text" id="inputSpeakerDisplayName" class="text-input" style="padding: 5px 8px; font-size: 0.82rem; margin-top: 4px;" value="Speaker 1" placeholder="e.g. Host, Guest, Speaker 5">
                 </div>
                 <div class="form-group" style="margin-bottom: 0;">
                   <label for="colorSpeakerHighlight" style="font-size: 0.75rem;">Active Word Color</label>
@@ -965,7 +996,7 @@
               </div>
 
               <div class="speaker-guide-tip">
-                💡 <strong>Assigning lines:</strong> In <strong>Step 2 (Verify & Edit Words)</strong>, click any subtitle line's speaker badge to assign it to Speaker 1–5.
+                💡 <strong>Voice Channels:</strong> Automatically detects up to 7 distinct voices without mathematically forcing unnecessary splits. Click <strong>Listen</strong> to hear each speaker, customize their Display Name, or click <strong>🔗 Merge...</strong> to combine duplicate channels.
               </div>
             </div>
           </div>
@@ -1173,13 +1204,44 @@
   <!-- Application Footer with AGPL-3.0 Section 13 Source Notice -->
   <footer class="app-footer">
     <div class="app-footer-container">
-      <span>Voice Highlighter Studio <strong id="footerVersion">v1.1.0</strong> &bull; Word-Level AI Subtitling</span>
+      <span>Voice Highlighter Studio <strong id="footerVersion">v1.2.0</strong> &bull; Word-Level AI Subtitling</span>
       <span>&bull;</span>
       <a href="https://github.com/joelontheroad/Voice-Highlighter" target="_blank" rel="noopener noreferrer" class="source-code-link">Source Code (GNU AGPLv3)</a>
     </div>
   </footer>
 
   <script src="app.js?v=5.1"></script>
+
+  <!-- Speaker Channel Merge Confirmation Modal -->
+  <div class="modal-overlay hidden" id="modalMergeSpeaker" role="dialog" aria-modal="true" aria-labelledby="modalMergeTitle">
+    <div class="modal-card" style="max-width: 480px;">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <span class="modal-icon">👥</span>
+          <div>
+            <h2 id="modalMergeTitle">Merge Speaker Channels?</h2>
+            <p class="modal-subtitle" id="modalMergeSubtitle">Consolidate duplicate voices into one channel</p>
+          </div>
+        </div>
+        <div class="modal-header-actions">
+          <button type="button" class="modal-close-btn" id="btnCloseMergeModal" aria-label="Close dialog">&times;</button>
+        </div>
+      </div>
+      <div class="modal-body" style="padding: 16px 20px;">
+        <p id="modalMergeMessage" style="font-size: 0.95rem; line-height: 1.5; color: var(--text-primary, #e2e8f0); margin-bottom: 12px;"></p>
+        <div id="modalMergeSelectWrap" class="hidden" style="margin-bottom: 12px;">
+          <label for="selectMergeTarget" style="font-size: 0.8rem; display: block; margin-bottom: 4px; color: var(--text-secondary, #94a3b8);">Merge into surviving speaker:</label>
+          <select id="selectMergeTarget" class="select-input" style="width: 100%; padding: 6px 10px;"></select>
+        </div>
+        <p style="font-size: 0.85rem; color: var(--text-muted, #94a3b8); margin-bottom: 0;">This will update all subtitles, timing segments, and styling on disk to use the target speaker channel.</p>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--border-color, rgba(255,255,255,0.08));">
+        <button type="button" id="btnCancelMerge" class="btn btn-secondary">Cancel</button>
+        <button type="button" id="btnConfirmMerge" class="btn btn-primary-gradient">Yes, Merge Voices</button>
+      </div>
+    </div>
+  </div>
+
 </body>
 </html>
 

@@ -34,7 +34,7 @@ class SpeakerChannel(BaseModel):
     outline_color: str = Field(default="#000000", description="Text outline border color (Hex)")
     box_bg_color: str = Field(default="#000000", description="Background pill/box color (Hex)")
     box_font_color: str = Field(default="#FFFFFF", description="Text color inside box badge (Hex)")
-    show_speaker_name: bool = Field(default=False, description="Whether to prefix dialogue with speaker name")
+    show_speaker_name: bool = Field(default=True, description="Whether to prefix dialogue with speaker name")
 
 
 class KeyframeConfig(BaseModel):
@@ -513,6 +513,66 @@ def reset_all_configuration() -> None:
         },
     )
     save_preset(ensemble_quintet_preset, allow_builtin=True)
+
+    ensemble_septet_preset = StylePreset(
+        name="ensemble-septet",
+        description="7-speaker studio ensemble preset with distinct color channels (Yellow, Cyan, Pink, Green, Purple, Orange, Lavender)",
+        font_name="Montserrat",
+        font_size=58,
+        bold=True,
+        speaker_channels={
+            "SPEAKER_00": SpeakerChannel(
+                id="SPEAKER_00",
+                name="Speaker 1",
+                primary_color="#FFFFFF",
+                highlight_color="#FFDF00",
+                outline_color="#000000",
+            ),
+            "SPEAKER_01": SpeakerChannel(
+                id="SPEAKER_01",
+                name="Speaker 2",
+                primary_color="#FFFFFF",
+                highlight_color="#00E5FF",
+                outline_color="#000000",
+            ),
+            "SPEAKER_02": SpeakerChannel(
+                id="SPEAKER_02",
+                name="Speaker 3",
+                primary_color="#FFFFFF",
+                highlight_color="#FF007F",
+                outline_color="#000000",
+            ),
+            "SPEAKER_03": SpeakerChannel(
+                id="SPEAKER_03",
+                name="Speaker 4",
+                primary_color="#FFFFFF",
+                highlight_color="#00FF66",
+                outline_color="#000000",
+            ),
+            "SPEAKER_04": SpeakerChannel(
+                id="SPEAKER_04",
+                name="Speaker 5",
+                primary_color="#FFFFFF",
+                highlight_color="#B026FF",
+                outline_color="#000000",
+            ),
+            "SPEAKER_05": SpeakerChannel(
+                id="SPEAKER_05",
+                name="Speaker 6",
+                primary_color="#FFFFFF",
+                highlight_color="#FF9900",
+                outline_color="#000000",
+            ),
+            "SPEAKER_06": SpeakerChannel(
+                id="SPEAKER_06",
+                name="Speaker 7",
+                primary_color="#FFFFFF",
+                highlight_color="#D8B4FE",
+                outline_color="#000000",
+            ),
+        },
+    )
+    save_preset(ensemble_septet_preset, allow_builtin=True)
 
     laser_karaoke_preset = StylePreset(
         name="laser-karaoke",
